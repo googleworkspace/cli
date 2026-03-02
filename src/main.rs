@@ -20,10 +20,10 @@
 //! interactive prompts, and integration with Model Armor.
 
 mod auth;
-mod auth_commands;
+pub(crate) mod auth_commands;
 mod client;
 mod commands;
-mod credential_store;
+pub(crate) mod credential_store;
 mod discovery;
 mod error;
 mod executor;
@@ -35,6 +35,7 @@ mod schema;
 mod services;
 mod setup;
 mod setup_tui;
+mod token_storage;
 
 use error::{print_error_json, GwsError};
 

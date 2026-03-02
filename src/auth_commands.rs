@@ -155,7 +155,9 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         secret,
         yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
     )
-    .persist_tokens_to_disk(&temp_path)
+    .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
+        temp_path.clone(),
+    )))
     .force_account_selection(true) // Adds prompt=consent so Google always returns a refresh_token
     .flow_delegate(Box::new(CliFlowDelegate))
     .build()
@@ -202,7 +204,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             "status": "success",
             "message": "Authentication successful. Encrypted credentials saved.",
             "credentials_file": enc_path.display().to_string(),
-            "encryption": "AES-256-GCM (key derived from hostname + username)",
+            "encryption": "AES-256-GCM (key secured by OS Keyring or local `.encryption_key`)",
             "scopes": scopes,
         });
         println!(

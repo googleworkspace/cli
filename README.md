@@ -79,6 +79,12 @@ gws schema drive.files.list
 # Dynamic help for any resource
 gws drive files --help
 gws drive files list --help
+
+# Preview a request without sending it
+gws chat spaces messages create \
+  --params '{"parent": "spaces/xyz"}' \
+  --json '{"text": "Hello world"}' \
+  --dry-run
 ```
 
 ## Authentication
@@ -87,20 +93,18 @@ The CLI supports three primary authentication workflows depending on your enviro
 
 ### 1. Interactive Auth (Local Desktop)
 
-For interactive use on your personal machine where a web browser is available. By default, credentials are encrypted at rest using AES-256-GCM.
+For interactive use on your personal machine where a web browser is available. 
 
-**Google Cloud Setup:**
-1. Create a project: `gcloud projects create my-gws-cli`
-2. Enable Workspace APIs: `gcloud services enable --project my-gws-cli drive.googleapis.com ...`
-3. Create an OAuth consent screen at [Credentials/Consent](https://console.cloud.google.com/apis/credentials/consent).
-4. Create an OAuth **Desktop app** Client ID at [Credentials](https://console.cloud.google.com/apis/credentials).
+**Security**: By default, credentials and access tokens are encrypted at rest using AES-256-GCM. The encryption key is stored securely in your OS Keyring (Apple Keychain, Secret Service, or Windows Credential Manager). If a keyring is unavailable (e.g., headless Linux), it falls back to a strictly permissioned (`0600`) local key file.
 
-**Login:**
+**Google Cloud Setup & Login:**
+The CLI includes a built-in setup wizard to help you configure your Google Cloud Project, enable APIs, and generate the necessary OAuth credentials. Note that this requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated (`gcloud auth login`).
+
 ```bash
-export GOOGLE_WORKSPACE_CLI_CLIENT_ID=your_client_id.apps.googleusercontent.com
-export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=your_client_secret
+# Run the interactive setup and login wizard
+gws setup
 
-# Opens browser for OAuth2 consent
+# Or login directly if you already have client_secret.json configured
 gws auth login
 
 # Or login with custom scopes
@@ -163,7 +167,7 @@ The CLI evaluates authentication sources in the following strict order:
 |----------|--------|------------|
 | 1 (highest) | Raw access token | `GOOGLE_WORKSPACE_CLI_TOKEN` env var |
 | 2 | Credentials file (user or service account) | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var |
-| 3 | Encrypted credentials | `~/.config/gws/credentials.enc` (created by `gws auth login`) |
+| 3 | Encrypted credentials & token cache | `~/.config/gws/credentials.enc` and `token_cache.json` (created by `gws auth login`, secured via OS Keyring) |
 | 4 | Plaintext credentials | `~/.config/gws/credentials.json` |
 | — | No auth | Proceeds unauthenticated; shows error if the API rejects |
 

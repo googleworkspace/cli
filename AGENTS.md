@@ -61,5 +61,5 @@ ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears th
 ## Environment Variables
 
 - `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)
-- `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to encrypted then plaintext credentials in `~/.config/gws/`)
+- `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`)
 - Supports `.env` files via `dotenvy`

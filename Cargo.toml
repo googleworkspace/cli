@@ -50,6 +50,8 @@ derive_builder = "0.20.2"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
 chrono = "0.4.44"
+keyring = "3.6.3"
+async-trait = "0.1.89"
 
 
 # The profile that 'cargo dist' will build with

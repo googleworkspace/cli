@@ -70,7 +70,9 @@ async fn get_token_inner(
         Credential::AuthorizedUser(secret) => {
             let token_cache = config_dir.join("token_cache.json");
             let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
-                .persist_tokens_to_disk(&token_cache)
+                .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
+                    token_cache,
+                )))
                 .build()
                 .await
                 .context("Failed to build authorized user authenticator")?;
@@ -83,8 +85,10 @@ async fn get_token_inner(
         }
         Credential::ServiceAccount(key) => {
             let token_cache = config_dir.join("service_account_token_cache.json");
-            let mut builder = yup_oauth2::ServiceAccountAuthenticator::builder(key)
-                .persist_tokens_to_disk(&token_cache);
+            let mut builder =
+                yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(Box::new(
+                    crate::token_storage::EncryptedTokenStorage::new(token_cache),
+                ));
 
             // Check for impersonation
             if let Some(user) = impersonated_user {

@@ -16,27 +16,111 @@ use std::path::PathBuf;
 
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
-use sha2::{Digest, Sha256};
 
-/// Derives an AES-256 key from hostname + username.
-fn derive_key() -> [u8; 32] {
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "unknown-host".to_string());
+use keyring::Entry;
+use rand::RngCore;
+use std::sync::OnceLock;
+
+/// Returns the encryption key derived from the OS keyring, or falls back to a local file.
+/// Generates a random 256-bit key and stores it securely if it doesn't exist.
+fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+
+    if let Some(key) = KEY.get() {
+        return Ok(*key);
+    }
 
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
 
-    let mut hasher = Sha256::new();
-    hasher.update(format!("gws-cli:{hostname}:{username}"));
-    hasher.finalize().into()
+    let entry = Entry::new("gws-cli", &username);
+
+    if let Ok(entry) = entry {
+        match entry.get_password() {
+            Ok(b64_key) => {
+                use base64::{engine::general_purpose::STANDARD, Engine as _};
+                if let Ok(decoded) = STANDARD.decode(&b64_key) {
+                    if decoded.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&decoded);
+                        let _ = KEY.set(arr);
+                        return Ok(arr);
+                    }
+                }
+            }
+            Err(keyring::Error::NoEntry) => {
+                // Generate a random 32-byte key
+                let mut key = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut key);
+
+                use base64::{engine::general_purpose::STANDARD, Engine as _};
+                let b64_key = STANDARD.encode(key);
+
+                if entry.set_password(&b64_key).is_ok() {
+                    let _ = KEY.set(key);
+                    return Ok(key);
+                }
+            }
+            Err(_) => {} // Fallthrough to file storage
+        }
+    }
+
+    // Fallback: Local file `.encryption_key`
+    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
+    if key_file.exists() {
+        if let Ok(b64_key) = std::fs::read_to_string(&key_file) {
+            use base64::{engine::general_purpose::STANDARD, Engine as _};
+            if let Ok(decoded) = STANDARD.decode(b64_key.trim()) {
+                if decoded.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&decoded);
+                    let _ = KEY.set(arr);
+                    return Ok(arr);
+                }
+            }
+        }
+    }
+
+    // Generate new key and save to local file
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let b64_key = STANDARD.encode(key);
+
+    if let Some(parent) = key_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        if let Ok(mut file) = options.open(&key_file) {
+            use std::io::Write;
+            let _ = file.write_all(b64_key.as_bytes());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::write(&key_file, b64_key);
+    }
+
+    let _ = KEY.set(key);
+    Ok(key)
 }
 
 /// Encrypts plaintext bytes using AES-256-GCM with a machine-derived key.
 /// Returns nonce (12 bytes) || ciphertext.
 pub fn encrypt(plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let key = derive_key();
+    let key = get_or_create_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("Failed to create cipher: {e}"))?;
 
@@ -57,7 +141,7 @@ pub fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("Encrypted data too short");
     }
 
-    let key = derive_key();
+    let key = get_or_create_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("Failed to create cipher: {e}"))?;
 
@@ -82,16 +166,27 @@ pub fn save_encrypted(json: &str) -> anyhow::Result<PathBuf> {
     let path = encrypted_credentials_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
 
     let encrypted = encrypt(json.as_bytes())?;
-    std::fs::write(&path, encrypted)?;
 
-    // Set file permissions to 600 on Unix
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        let mut file = options.open(&path)?;
+        use std::io::Write;
+        file.write_all(&encrypted)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, encrypted)?;
     }
 
     Ok(path)
@@ -205,15 +300,15 @@ mod tests {
     }
 
     #[test]
-    fn derive_key_is_deterministic() {
-        let key1 = derive_key();
-        let key2 = derive_key();
+    fn get_or_create_key_is_deterministic() {
+        let key1 = get_or_create_key().unwrap();
+        let key2 = get_or_create_key().unwrap();
         assert_eq!(key1, key2);
     }
 
     #[test]
-    fn derive_key_produces_256_bits() {
-        let key = derive_key();
+    fn get_or_create_key_produces_256_bits() {
+        let key = get_or_create_key().unwrap();
         assert_eq!(key.len(), 32);
     }
 }
