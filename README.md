@@ -1,6 +1,6 @@
 # gws — Google Workspace CLI
 
-A CLI that generates its entire command surface dynamically from Google Discovery Service JSON documents.
+A CLI that generates its entire command surface dynamically from Google Discovery Service JSON documents. Includes skills for AI agents.
 
 ![Demo](docs/demo.gif)
 
