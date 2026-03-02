@@ -30,6 +30,9 @@ npx skills add github:googleworkspace/cli
 Or add specific skills by path:
 
 ```bash
+# Add the shared skill (authentication, etc.)
+npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-shared
+
 # Add only Google Drive and Gmail skills
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
