@@ -16,7 +16,8 @@
     "url": "https://github.com/googleworkspace/cli/issues"
   },
   "scripts": {
-    "test": "cargo test"
+    "test": "cargo test",
+    "prepare": "lefthook install"
   },
   "engines": {
     "node": ">=18"
@@ -35,6 +36,7 @@
     "skills"
   ],
   "devDependencies": {
-    "@changesets/cli": "^2.29.8"
+    "@changesets/cli": "^2.29.8",
+    "lefthook": "^2.1.2"
   }
 }

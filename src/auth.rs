@@ -307,6 +307,9 @@ mod tests {
     }
     #[tokio::test]
     async fn test_get_token_from_env_var() {
+        // Save the old token
+        let old_token = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN").ok();
+
         // Set the token env var
         unsafe {
             std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
@@ -315,7 +318,11 @@ mod tests {
         let result = get_token(&["https://www.googleapis.com/auth/drive"]).await;
 
         unsafe {
-            std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
+            if let Some(t) = old_token {
+                std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", t);
+            } else {
+                std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
+            }
         }
 
         assert!(result.is_ok());

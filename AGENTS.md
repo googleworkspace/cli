@@ -7,6 +7,9 @@
 > [!IMPORTANT]
 > **Dynamic Discovery**: This project does NOT use generated Rust crates (e.g., `google-drive3`) for API interaction. Instead, it fetches the Discovery JSON at runtime and builds `clap` commands dynamically. When adding a new service, you only need to register it in `src/services.rs` and verify the Discovery URL pattern in `src/discovery.rs`. Do NOT add new crates to `Cargo.toml` for standard Google APIs.
 
+> [!NOTE]
+> **Package Manager**: Use `pnpm` instead of `npm` for Node.js package management in this repository.
+
 ## Build & Test
 
 ```bash
