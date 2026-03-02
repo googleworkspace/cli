@@ -77,75 +77,81 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         return Ok(());
     }
 
-    // 2. Fetch metadata for each message
-    let mut results: Vec<Value> = Vec::with_capacity(messages.len());
+    // 2. Fetch metadata for each message concurrently
+    use futures_util::stream::{self, StreamExt};
 
-    for msg in messages {
-        let msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        if msg_id.is_empty() {
-            continue;
-        }
+    // Collect message IDs upfront (owned) to avoid lifetime issues in async closures
+    let msg_ids: Vec<String> = messages
+        .iter()
+        .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
 
-        let get_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
-            msg_id
-        );
+    let results: Vec<Value> = stream::iter(msg_ids)
+        .map(|msg_id| {
+            let client = &client;
+            let token = &token;
+            async move {
+                let get_url = format!(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
+                    msg_id
+                );
 
-        let get_resp = client
-            .get(&get_url)
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to get message {msg_id}: {e}")))?;
+                let get_resp = crate::client::send_with_retry(|| {
+                    client.get(&get_url).bearer_auth(token)
+                })
+                .await
+                .ok()?;
 
-        if !get_resp.status().is_success() {
-            continue;
-        }
-
-        let msg_json: Value = match get_resp.json().await {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let headers = msg_json
-            .get("payload")
-            .and_then(|p| p.get("headers"))
-            .and_then(|h| h.as_array());
-
-        let mut from = String::new();
-        let mut subject = String::new();
-        let mut date = String::new();
-
-        if let Some(headers) = headers {
-            for h in headers {
-                let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                match name {
-                    "From" => from = value.to_string(),
-                    "Subject" => subject = value.to_string(),
-                    "Date" => date = value.to_string(),
-                    _ => {}
+                if !get_resp.status().is_success() {
+                    return None;
                 }
+
+                let msg_json: Value = get_resp.json().await.ok()?;
+
+                let headers = msg_json
+                    .get("payload")
+                    .and_then(|p| p.get("headers"))
+                    .and_then(|h| h.as_array());
+
+                let mut from = String::new();
+                let mut subject = String::new();
+                let mut date = String::new();
+
+                if let Some(headers) = headers {
+                    for h in headers {
+                        let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                        match name {
+                            "From" => from = value.to_string(),
+                            "Subject" => subject = value.to_string(),
+                            "Date" => date = value.to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+
+                let mut entry = json!({
+                    "id": msg_id,
+                    "from": from,
+                    "subject": subject,
+                    "date": date,
+                });
+
+                if show_labels {
+                    let labels = msg_json
+                        .get("labelIds")
+                        .cloned()
+                        .unwrap_or(Value::Array(vec![]));
+                    entry["labels"] = labels;
+                }
+
+                Some(entry)
             }
-        }
-
-        let mut entry = json!({
-            "id": msg_id,
-            "from": from,
-            "subject": subject,
-            "date": date,
-        });
-
-        if show_labels {
-            let labels = msg_json
-                .get("labelIds")
-                .cloned()
-                .unwrap_or(Value::Array(vec![]));
-            entry["labels"] = labels;
-        }
-
-        results.push(entry);
-    }
+        })
+        .buffer_unordered(10)
+        .filter_map(|r| async { r })
+        .collect()
+        .await;
 
     // 3. Output
     let result_count = results.len();

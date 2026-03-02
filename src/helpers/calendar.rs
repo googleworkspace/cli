@@ -262,76 +262,108 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         .cloned()
         .unwrap_or_default();
 
-    // 2. For each calendar, list events
-    let mut all_events: Vec<Value> = Vec::new();
+    // 2. For each calendar, fetch events concurrently
+    use futures_util::stream::{self, StreamExt};
 
-    for cal in &calendars {
-        let cal_id = cal.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let cal_summary = cal
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or(cal_id);
-
-        // Apply calendar filter
-        if let Some(filter) = calendar_filter {
-            if !cal_summary.contains(filter.as_str()) && cal_id != filter.as_str() {
-                continue;
-            }
-        }
-
-        let events_url = format!(
-            "https://www.googleapis.com/calendar/v3/calendars/{}/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=50",
-            urlencoded(cal_id),
-            urlencoded(&time_min),
-            urlencoded(&time_max),
-        );
-
-        let resp = client.get(&events_url).bearer_auth(&token).send().await;
-        let resp = match resp {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
-        };
-
-        let events_json: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        if let Some(items) = events_json.get("items").and_then(|i| i.as_array()) {
-            for event in items {
-                let start = event
-                    .get("start")
-                    .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let end = event
-                    .get("end")
-                    .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let summary = event
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(No title)")
-                    .to_string();
-                let location = event
-                    .get("location")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                all_events.push(json!({
-                    "start": start,
-                    "end": end,
-                    "summary": summary,
-                    "calendar": cal_summary,
-                    "location": location,
-                }));
-            }
-        }
+    // Pre-filter calendars and collect owned data to avoid lifetime issues
+    struct CalInfo {
+        id: String,
+        summary: String,
     }
+    let filtered_calendars: Vec<CalInfo> = calendars
+        .iter()
+        .filter_map(|cal| {
+            let cal_id = cal.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let cal_summary = cal
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or(cal_id);
+
+            // Apply calendar filter
+            if let Some(filter) = calendar_filter {
+                if !cal_summary.contains(filter.as_str()) && cal_id != filter.as_str() {
+                    return None;
+                }
+            }
+
+            Some(CalInfo {
+                id: cal_id.to_string(),
+                summary: cal_summary.to_string(),
+            })
+        })
+        .collect();
+
+    let mut all_events: Vec<Value> = stream::iter(filtered_calendars)
+        .map(|cal| {
+            let client = &client;
+            let token = &token;
+            let time_min = &time_min;
+            let time_max = &time_max;
+            async move {
+                let events_url = format!(
+                    "https://www.googleapis.com/calendar/v3/calendars/{}/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=50",
+                    urlencoded(&cal.id),
+                    urlencoded(time_min),
+                    urlencoded(time_max),
+                );
+
+                let resp = crate::client::send_with_retry(|| {
+                    client.get(&events_url).bearer_auth(token)
+                })
+                .await;
+
+                let resp = match resp {
+                    Ok(r) if r.status().is_success() => r,
+                    _ => return vec![],
+                };
+
+                let events_json: Value = match resp.json().await {
+                    Ok(v) => v,
+                    Err(_) => return vec![],
+                };
+
+                let mut events = Vec::new();
+                if let Some(items) = events_json.get("items").and_then(|i| i.as_array()) {
+                    for event in items {
+                        let start = event
+                            .get("start")
+                            .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let end = event
+                            .get("end")
+                            .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let summary = event
+                            .get("summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(No title)")
+                            .to_string();
+                        let location = event
+                            .get("location")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        events.push(json!({
+                            "start": start,
+                            "end": end,
+                            "summary": summary,
+                            "calendar": cal.summary,
+                            "location": location,
+                        }));
+                    }
+                }
+                events
+            }
+        })
+        .buffer_unordered(5)
+        .flat_map(stream::iter)
+        .collect()
+        .await;
 
     // 3. Sort by start time
     all_events.sort_by(|a, b| {
