@@ -309,7 +309,9 @@ mod tests {
             _ => panic!("Expected AuthorizedUser"),
         }
     }
+
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_get_token_from_env_var() {
         // Save the old token
         let old_token = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN").ok();
@@ -334,6 +336,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_get_token_env_var_empty_falls_through() {
         // An empty token should not short-circuit — it should be ignored
         // and fall through to normal credential loading.

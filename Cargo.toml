@@ -60,4 +60,5 @@ inherits = "release"
 lto = "thin"
 
 [dev-dependencies]
+serial_test = "3.4.0"
 tempfile = "3"
