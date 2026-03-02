@@ -962,9 +962,6 @@ fn is_app_only_scope(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     /// Helper to run resolve_scopes in tests (async).
     fn run_resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String> {
@@ -1039,13 +1036,17 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolve_client_credentials_from_env_vars() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        }
         let result = resolve_client_credentials();
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
         let (id, secret, _project_id) = result.unwrap();
         assert_eq!(id, "test-id");
         assert_eq!(secret, "test-secret");
@@ -1053,10 +1054,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolve_client_credentials_missing_env_vars_uses_config() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
         // Result depends on whether client_secret.json exists on the machine
         let result = resolve_client_credentials();
         if crate::oauth_config::client_config_path().exists() {
@@ -1078,25 +1081,31 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn plain_credentials_path_defaults_to_config_dir() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         // Without env var, should be in config dir
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        }
         let path = plain_credentials_path();
         assert!(path.ends_with("credentials.json"));
         assert!(path.starts_with(config_dir()));
     }
 
     #[test]
+    #[serial_test::serial]
     fn plain_credentials_path_respects_env_var() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        std::env::set_var(
-            "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
-            "/tmp/test-creds.json",
-        );
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
+                "/tmp/test-creds.json",
+            );
+        }
         let path = plain_credentials_path();
         assert_eq!(path, PathBuf::from("/tmp/test-creds.json"));
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        }
     }
 
     #[test]
@@ -1129,10 +1138,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolve_credentials_fails_without_env_vars_or_config() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
         // When no env vars AND no client_secret.json on disk, should fail
         let result = resolve_client_credentials();
         if !crate::oauth_config::client_config_path().exists() {
@@ -1147,16 +1158,20 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn resolve_credentials_uses_env_vars_when_present() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        }
 
         let result = resolve_client_credentials();
 
         // Clean up immediately
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
 
         let (id, secret, _) = result.unwrap();
         assert_eq!(id, "test-id");
