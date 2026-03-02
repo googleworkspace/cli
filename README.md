@@ -139,8 +139,7 @@ gws drive files list
 If your service account has Domain-Wide Delegation enabled, you can impersonate a Workspace user (e.g., an admin) to perform actions on their behalf.
 
 ```bash
-export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
-gws admin users list --domain example.com
+export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=user@example.com
 ```
 
 ### 4. Pre-obtained Access Token (CI/CD or External)
@@ -169,34 +168,6 @@ The CLI evaluates authentication sources in the following strict order:
 | — | No auth | Proceeds unauthenticated; shows error if the API rejects |
 
 *(Note: Environment variables can also be set via a `.env` file in the working directory.)*
-
-## Supported Services
-
-
-| Command              | API                   | Version      | Aliases     |
-| -------------------- | --------------------- | ------------ | ----------- |
-| `gws drive`          | Drive                 | v3           |             |
-| `gws sheets`         | Sheets                | v4           |             |
-| `gws gmail`          | Gmail                 | v1           |             |
-| `gws calendar`       | Calendar              | v3           |             |
-| `gws admin`          | Admin SDK (Directory) | directory_v1 | `directory` |
-| `gws admin-reports`  | Admin SDK (Reports)   | reports_v1   | `reports`   |
-| `gws docs`           | Docs                  | v1           |             |
-| `gws slides`         | Slides                | v1           |             |
-| `gws tasks`          | Tasks                 | v1           |             |
-| `gws people`         | People                | v1           |             |
-| `gws chat`           | Chat                  | v1           |             |
-| `gws vault`          | Vault                 | v1           |             |
-| `gws groupssettings` | Groups Settings       | v1           |             |
-| `gws reseller`       | Reseller              | v1           |             |
-| `gws licensing`      | Licensing             | v1           |             |
-| `gws apps-script`    | Apps Script           | v1           | `script`    |
-| `gws classroom`      | Classroom             | v1           |             |
-| `gws cloudidentity`  | Cloud Identity        | v1           |             |
-| `gws alertcenter`    | Alert Center          | v1beta1      |             |
-| `gws forms`          | Forms                 | v1           |             |
-| `gws keep`           | Keep                  | v1           |             |
-| `gws meet`           | Meet                  | v2           |             |
 
 ## Architecture
 

@@ -1110,7 +1110,7 @@ mod tests {
         let result = handle_auth_command(&args).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            GwsError::Validation(msg) => assert!(msg.contains("login|setup|status|logout")),
+            GwsError::Validation(msg) => assert!(msg.contains("login|setup|status|export|logout")),
             other => panic!("Expected Validation error, got: {other:?}"),
         }
     }
