@@ -31,3 +31,28 @@ All submissions, including submissions by project members, require review. We
 use GitHub pull requests for this purpose. Consult
 [GitHub Help](https://help.github.com/articles/about-pull-requests/) for more
 information on using pull requests.
+
+### Updating CI Smoketest Credentials
+
+If the OAuth refresh token used in the GitHub Actions smoketest expires or needs additional scopes, you can generate a new one and update the repository secret using the GitHub CLI (`gh`).
+
+1. **Set the credentials file path to output plaintext JSON**:
+   ```bash
+   export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=smoketest-creds.json
+   ```
+
+2. **Authenticate with the required scopes**:
+   ```bash
+   cargo run -- auth login --scopes https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/presentations.readonly,https://www.googleapis.com/auth/tasks.readonly
+   ```
+
+3. **Export and set the GitHub actions secret**:
+   ```bash
+   cargo run --quiet -- auth export --unmasked | base64 | gh secret set GOOGLE_CREDENTIALS_JSON
+   ```
+
+4. **Clean up**:
+   ```bash
+   rm smoketest-creds.json
+   unset GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE
+   ```
