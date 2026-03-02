@@ -19,6 +19,9 @@
     "test": "cargo test",
     "prepare": "lefthook install"
   },
+  "publishConfig": {
+    "provenance": true
+  },
   "engines": {
     "node": ">=18"
   },

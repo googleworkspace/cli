@@ -51,11 +51,11 @@ ratatui = "0.30.0"
 crossterm = "0.29.0"
 chrono = "0.4.44"
 
+
 # The profile that 'cargo dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
 
 [dev-dependencies]
 tempfile = "3"
