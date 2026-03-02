@@ -164,7 +164,7 @@ pub async fn execute_method(
 
     loop {
         // Build request
-        let client = crate::client::build_client();
+        let client = crate::client::build_client()?;
         let mut request = match method.http_method.as_str() {
             "GET" => client.get(&full_url),
             "POST" => client.post(&full_url),

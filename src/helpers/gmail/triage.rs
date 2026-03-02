@@ -37,17 +37,14 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         .await
         .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
 
     // 1. List message IDs
-    let list_url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q={}&maxResults={}",
-        urlencoded(query),
-        max
-    );
+    let list_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
 
     let list_resp = client
-        .get(&list_url)
+        .get(list_url)
+        .query(&[("q", query), ("maxResults", &max.to_string())])
         .bearer_auth(&token)
         .send()
         .await
@@ -164,26 +161,4 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
     );
 
     Ok(())
-}
-
-fn urlencoded(s: &str) -> String {
-    s.replace(' ', "+")
-        .replace('"', "%22")
-        .replace(':', "%3A")
-        .replace('(', "%28")
-        .replace(')', "%29")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_urlencoded() {
-        assert_eq!(urlencoded("is:unread"), "is%3Aunread");
-        assert_eq!(
-            urlencoded("from:test@example.com"),
-            "from%3Atest@example.com"
-        );
-    }
 }

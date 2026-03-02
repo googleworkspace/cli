@@ -291,7 +291,7 @@ The report will be available at `target/llvm-cov/html/index.html`.
  
  ```bash
  # Sanitize a specific command
- gws gmail users.messages get --params '...' \
+ gws gmail users messages get --params '...' \
    --sanitize "projects/P/locations/L/templates/T"
  ```
  

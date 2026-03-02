@@ -699,7 +699,7 @@ async fn configure_consent_screen(
     app_name: &str,
     support_email: &str,
 ) -> Result<(), GwsError> {
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
 
     // Check if consent screen already exists
     let check_url = format!(

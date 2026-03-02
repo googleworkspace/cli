@@ -254,7 +254,7 @@ pub async fn sanitize_text(template: &str, text: &str) -> Result<SanitizationRes
         .await
         .context("Failed to get auth token for Model Armor")?;
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
@@ -285,7 +285,7 @@ async fn model_armor_post(url: &str, body: &str) -> Result<(), GwsError> {
         .await
         .context("Failed to get auth token")?;
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
     let resp = client
         .post(url)
         .header("Authorization", format!("Bearer {token}"))

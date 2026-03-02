@@ -82,7 +82,7 @@ pub(super) async fn handle_subscribe(
         std::fs::create_dir_all(dir).context("Failed to create output dir")?;
     }
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
 
     // Get Pub/Sub token
     let pubsub_token = auth::get_token(&[PUBSUB_SCOPE])

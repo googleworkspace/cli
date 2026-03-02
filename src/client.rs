@@ -1,6 +1,6 @@
 use reqwest::header::{HeaderMap, HeaderValue};
 
-pub fn build_client() -> reqwest::Client {
+pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
     let mut headers = HeaderMap::new();
     let name = env!("CARGO_PKG_NAME");
     let version = env!("CARGO_PKG_VERSION");
@@ -14,5 +14,7 @@ pub fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .default_headers(headers)
         .build()
-        .expect("Failed to build HTTP client")
+        .map_err(|e| {
+            crate::error::GwsError::Other(anyhow::anyhow!("Failed to build HTTP client: {e}"))
+        })
 }

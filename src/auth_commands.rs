@@ -301,22 +301,13 @@ fn run_discovery_scope_picker(
     // Collect all short names for hierarchical dedup of Full Access template
     let all_shorts: Vec<&str> = relevant_scopes
         .iter()
-        .filter(|e| {
-            !e.url.contains("/auth/chat.app.")
-                && !e.url.contains("/auth/chat.bot")
-                && !e.url.contains("/auth/chat.import")
-                && !e.url.contains("/auth/keep")
-        })
+        .filter(|e| !is_app_only_scope(&e.url))
         .map(|e| e.short.as_str())
         .collect();
 
     for entry in relevant_scopes {
         // Skip app-only scopes that can't be used with user OAuth
-        if entry.url.contains("/auth/chat.app.")
-            || entry.url.contains("/auth/chat.bot")
-            || entry.url.contains("/auth/chat.import")
-            || entry.url.contains("/auth/keep")
-        {
+        if is_app_only_scope(&entry.url) {
             continue;
         }
 
@@ -379,11 +370,7 @@ fn run_discovery_scope_picker(
     let mut valid_scope_indices: Vec<usize> = Vec::new();
     for (idx, entry) in relevant_scopes.iter().enumerate() {
         // Skip app-only scopes from the picker entirely
-        if entry.url.contains("/auth/chat.app.")
-            || entry.url.contains("/auth/chat.bot")
-            || entry.url.contains("/auth/chat.import")
-            || entry.url.contains("/auth/keep")
-        {
+        if is_app_only_scope(&entry.url) {
             continue;
         }
 
@@ -439,19 +426,11 @@ fn run_discovery_scope_picker(
 
             let mut selected: Vec<String> = Vec::new();
 
-            // Helper: check if a scope is an app-only scope that can't be used with user OAuth
-            let is_app_only = |url: &str| -> bool {
-                url.contains("/auth/chat.app.")
-                    || url.contains("/auth/chat.bot")
-                    || url.contains("/auth/chat.import")
-                    || url.contains("/auth/keep")
-            };
-
             if full && !recommended && !readonly {
                 // Full Access: include all non-app-only scopes
                 // (hierarchical dedup is applied in post-processing below)
                 for entry in relevant_scopes {
-                    if is_app_only(&entry.url) {
+                    if is_app_only_scope(&entry.url) {
                         continue;
                     }
                     selected.push(entry.url.to_string());
@@ -459,7 +438,7 @@ fn run_discovery_scope_picker(
             } else if recommended && !full && !readonly {
                 // Recommended: non-restricted + readonly, but exclude admin.* scopes
                 for entry in relevant_scopes {
-                    if is_app_only(&entry.url) {
+                    if is_app_only_scope(&entry.url) {
                         continue;
                     }
                     if entry.short.starts_with("admin.") {
@@ -472,7 +451,7 @@ fn run_discovery_scope_picker(
                 }
             } else if readonly && !full && !recommended {
                 for entry in relevant_scopes {
-                    if is_app_only(&entry.url) {
+                    if is_app_only_scope(&entry.url) {
                         continue;
                     }
                     if entry.is_readonly {

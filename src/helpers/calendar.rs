@@ -230,7 +230,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     let time_min = epoch_to_rfc3339(time_min_epoch);
     let time_max = epoch_to_rfc3339(time_max_epoch);
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
     let calendar_filter = matches.get_one::<String>("calendar");
 
     // 1. List all calendars
@@ -355,48 +355,8 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
 }
 
 fn epoch_to_rfc3339(epoch: u64) -> String {
-    // Simple UTC RFC3339 from epoch seconds
-    let secs_per_day = 86400u64;
-    let days_since_epoch = epoch / secs_per_day;
-    let time_of_day = epoch % secs_per_day;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    // Calculate year/month/day from days since 1970-01-01
-    let mut days = days_since_epoch as i64;
-    let mut year: i64 = 1970;
-
-    loop {
-        let days_in_year = if is_leap(year) { 366 } else { 365 };
-        if days < days_in_year {
-            break;
-        }
-        days -= days_in_year;
-        year += 1;
-    }
-
-    let month_days: &[i64] = if is_leap(year) {
-        &[31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 1;
-    for &md in month_days {
-        if days < md {
-            break;
-        }
-        days -= md;
-        month += 1;
-    }
-    let day = days + 1;
-
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
-}
-
-fn is_leap(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    use chrono::{DateTime, Utc, TimeZone};
+    Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
 }
 
 fn urlencoded(s: &str) -> String {

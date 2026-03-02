@@ -49,6 +49,7 @@ base64 = "0.22.1"
 derive_builder = "0.20.2"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
+chrono = "0.4.44"
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
