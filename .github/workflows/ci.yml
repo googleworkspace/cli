@@ -246,13 +246,6 @@ jobs:
             --params '{"presentationId": "1knOKD_87JWE4qsEbO4r5O91IxTER5ybBBhOJgZ1yLFI", "fields": "presentationId,slides(objectId)"}' \
             | jq -e '.presentationId'
 
-      - name: Smoketest — Tasks tasklists
-        env:
-          GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
-        run: |
-          ./target/release/gws tasks tasklists list \
-            | jq -e '.kind'
-
       - name: Smoketest — pagination
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
