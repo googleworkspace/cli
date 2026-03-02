@@ -11,7 +11,7 @@ pub(super) async fn handle_watch(
         std::fs::create_dir_all(dir).context("Failed to create output dir")?;
     }
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
 
     // Get tokens
     let gmail_token = auth::get_token(&[GMAIL_SCOPE])

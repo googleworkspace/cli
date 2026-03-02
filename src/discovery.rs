@@ -211,7 +211,7 @@ pub async fn fetch_discovery_document(
 
     let url = format!("https://www.googleapis.com/discovery/v1/apis/{service}/{version}/rest");
 
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
     let resp = client.get(&url).send().await?;
 
     let body = if resp.status().is_success() {

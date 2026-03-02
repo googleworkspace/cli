@@ -30,7 +30,7 @@ pub(super) async fn handle_renew(
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
     let config = parse_renew_args(matches)?;
-    let client = crate::client::build_client();
+    let client = crate::client::build_client()?;
     let ws_token = auth::get_token(&[WORKSPACE_EVENTS_SCOPE])
         .await
         .map_err(|e| GwsError::Auth(format!("Failed to get token: {e}")))?;
