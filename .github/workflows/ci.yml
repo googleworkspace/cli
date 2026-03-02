@@ -219,16 +219,16 @@ jobs:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
           ./target/release/gws drive files list \
-            --params '{"pageSize": 1, "fields": "files(id,mimeType)"}' \
+            --params '{"pageSize": 1, "fields": "files(id)"}' \
             | jq -e '.files'
 
-      - name: Smoketest — Gmail labels
+      - name: Smoketest — Gmail messages
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          ./target/release/gws gmail users labels list \
-            --params '{"userId": "me", "fields": "labels(id,type)"}' \
-            | jq -e '.labels'
+          ./target/release/gws gmail users messages list \
+            --params '{"userId": "me", "maxResults": 1, "fields": "messages(id)"}' \
+            | jq -e '.messages'
 
       - name: Smoketest — Calendar events
         env:

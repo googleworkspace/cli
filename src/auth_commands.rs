@@ -64,13 +64,14 @@ fn token_cache_path() -> PathBuf {
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     if args.is_empty() {
         return Err(GwsError::Validation(
-            "Usage: gws auth <login|setup|status|logout>\n\n\
+            "Usage: gws auth <login|setup|status|export|logout>\n\n\
               login   Authenticate via OAuth2 (opens browser)\n\
                       --readonly   Request read-only scopes\n\
                       --scopes     Comma-separated custom scopes\n\
               setup   Configure GCP project + OAuth client (requires gcloud)\n\
                       --project    Use a specific GCP project\n\
               status  Show current authentication state\n\
+              export  Print decrypted credentials to stdout\n\
               logout  Clear saved credentials and token cache"
                 .to_string(),
         ));
@@ -80,9 +81,13 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "login" => handle_login(&args[1..]).await,
         "setup" => crate::setup::run_setup(&args[1..]).await,
         "status" => handle_status().await,
+        "export" => {
+            let unmasked = args.len() > 1 && args[1] == "--unmasked";
+            handle_export(unmasked).await
+        }
         "logout" => handle_logout(),
         other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, logout"
+            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
         ))),
     }
 }
@@ -211,6 +216,42 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         Err(GwsError::Auth(
             "OAuth flow completed but no token was returned.".to_string(),
         ))
+    }
+}
+
+async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
+    let enc_path = credential_store::encrypted_credentials_path();
+    if !enc_path.exists() {
+        return Err(GwsError::Auth(
+            "No encrypted credentials found. Run 'gws auth login' first.".to_string(),
+        ));
+    }
+
+    match credential_store::load_encrypted() {
+        Ok(contents) => {
+            if unmasked {
+                println!("{}", contents);
+            } else {
+                if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(obj) = creds.as_object_mut() {
+                        if let Some(serde_json::Value::String(s)) = obj.get("client_secret") {
+                            obj.insert("client_secret".to_string(), json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])));
+                        }
+                        if let Some(serde_json::Value::String(s)) = obj.get("refresh_token") {
+                            obj.insert("refresh_token".to_string(), json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])));
+                        }
+                    }
+                    println!("{}", serde_json::to_string_pretty(&creds).unwrap());
+                } else {
+                    println!("{}", contents);
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(GwsError::Auth(format!(
+            "Failed to decrypt credentials: {}. May have been created on a different machine.",
+            e
+        ))),
     }
 }
 
