@@ -83,9 +83,82 @@ gws drive files list --help
 
 ## Authentication
 
+The CLI supports three primary authentication workflows depending on your environment.
+
+### 1. Interactive Auth (Local Desktop)
+
+For interactive use on your personal machine where a web browser is available. By default, credentials are encrypted at rest using AES-256-GCM.
+
+**Google Cloud Setup:**
+1. Create a project: `gcloud projects create my-gws-cli`
+2. Enable Workspace APIs: `gcloud services enable --project my-gws-cli drive.googleapis.com ...`
+3. Create an OAuth consent screen at [Credentials/Consent](https://console.cloud.google.com/apis/credentials/consent).
+4. Create an OAuth **Desktop app** Client ID at [Credentials](https://console.cloud.google.com/apis/credentials).
+
+**Login:**
+```bash
+export GOOGLE_WORKSPACE_CLI_CLIENT_ID=your_client_id.apps.googleusercontent.com
+export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=your_client_secret
+
+# Opens browser for OAuth2 consent
+gws auth login
+
+# Or login with custom scopes
+gws auth login --scopes "https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly"
+```
+
+### 2. Headless & CI/CD Auth (Export Flow)
+
+For remote servers, SSH sessions, or CI/CD pipelines where a browser is unavailable, use the export flow. 
+
+1. On your **local machine** (with a browser), complete the Interactive Auth steps above.
+2. Export your credentials to a portable JSON format:
+   ```bash
+   gws auth export --unmasked > credentials.json
+   ```
+3. On your **headless machine**, securely transfer `credentials.json` and point the CLI to it. The CLI will automatically use this payload to mint fresh access tokens.
+   ```bash
+   export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
+   
+   # Commands now work headlessly!
+   gws drive files list
+   ```
+
+*Note: You can also strictly provide a short-lived access token directly via environment variable (e.g. `export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)`), though this token will naturally expire in ~1 hour.*
+
+### 3. Service Account Auth (Server-to-Server)
+
+For automated programmatic access. Point `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` to your service account JSON key file. No login step is required.
+
+```bash
+export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
+gws drive files list
+```
+
+**Domain-Wide Delegation (Impersonation)**
+If your service account has Domain-Wide Delegation enabled, you can impersonate a Workspace user (e.g., an admin) to perform actions on their behalf.
+
+```bash
+export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
+gws admin users list --domain example.com
+```
+
+### 4. Pre-obtained Access Token (CI/CD or External)
+
+The simplest way to authenticate if you already possess a short-lived access token. This is often used in CI/CD pipelines where another tool (like `gcloud`) mints the token for the environment.
+
+```bash
+# Obtain a token using the gcloud CLI
+export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
+gws drive files list
+```
+*(Note: These raw access tokens typically expire in ~1 hour).*
+
+---
+
 ### Auth Precedence Order
 
-The CLI tries authentication sources in the following order:
+The CLI evaluates authentication sources in the following strict order:
 
 | Priority | Source | How to set |
 |----------|--------|------------|
@@ -95,117 +168,7 @@ The CLI tries authentication sources in the following order:
 | 4 | Plaintext credentials | `~/.config/gws/credentials.json` |
 | — | No auth | Proceeds unauthenticated; shows error if the API rejects |
 
-Environment variables can also be set via a `.env` file in the working directory.
-
-#### Using a pre-obtained token
-
-The simplest way to authenticate — useful in CI/CD or when a token is obtained externally:
-
-```bash
-export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
-gws drive files list --params '{"pageSize": 10}'
-```
-
-### Managing Auth with the CLI
-
-**Credential storage:** When you run `gws auth login`, credentials are encrypted at rest using AES-256-GCM with a key derived from your hostname and username. This means the encrypted file (`~/.config/gws/credentials.enc`) can't be used on a different machine. Plaintext credentials via `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` are also supported.
-
-```bash
-# Login — opens browser for OAuth2 consent
-# Requires GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET
-gws auth login
-
-# Login with read-only scopes
-gws auth login --readonly
-
-# Login with custom scopes
-gws auth login --scopes "https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly"
-
-# Check current auth state
-gws auth status
-
-# Logout — clears saved credentials and token cache
-gws auth logout
-```
-
-Set your OAuth client credentials in `.env` or as environment variables:
-
-```bash
-GOOGLE_WORKSPACE_CLI_CLIENT_ID=your_client_id.apps.googleusercontent.com
-GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=your_client_secret
-```
-
-Create an OAuth client ID at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials). Choose **Desktop app** as the application type.
-
-### Google Cloud Setup
-
-```bash
-# 1. Create a project (or use an existing one)
-gcloud projects create my-gws-cli --name="GWS CLI"
-gcloud config set project my-gws-cli
-
-# 2. Enable all Google Workspace APIs
-gcloud services enable --project my-gws-cli \
-  drive.googleapis.com \
-  sheets.googleapis.com \
-  gmail.googleapis.com \
-  calendar-json.googleapis.com \
-  docs.googleapis.com \
-  slides.googleapis.com \
-  tasks.googleapis.com \
-  people.googleapis.com \
-  chat.googleapis.com \
-  vault.googleapis.com \
-  groupssettings.googleapis.com \
-  reseller.googleapis.com \
-  licensing.googleapis.com \
-  script.googleapis.com \
-  admin.googleapis.com \
-  classroom.googleapis.com \
-  cloudidentity.googleapis.com \
-  alertcenter.googleapis.com \
-  forms.googleapis.com \
-  keep.googleapis.com \
-  meet.googleapis.com
-
-# 3. Create an OAuth consent screen (choose "External" or "Internal")
-#    Visit: https://console.cloud.google.com/apis/credentials/consent
-
-# 4. Create an OAuth Desktop client ID
-#    Visit: https://console.cloud.google.com/apis/credentials
-#    Choose "Desktop app" as the application type
-
-# 5. Set your client credentials
-export GOOGLE_WORKSPACE_CLI_CLIENT_ID=your_client_id.apps.googleusercontent.com
-export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=your_client_secret
-
-# 6. Login
-gws auth login
-```
-
-
-
-### Service Account & Domain-Wide Delegation
-
-To use a Service Account, point `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` to your service account JSON key file. No login step is required.
-
-```bash
-export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
-# Commands will authenticate using the service account key
-gws drive files list
-```
-
-**Domain-Wide Delegation (Impersonation)**
-
-If your service account has Domain-Wide Delegation enabled, you can impersonate a user (e.g., an admin) to perform actions on their behalf.
-
-```bash
-export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
-export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
-
-# Now commands will run as admin@example.com
-gws users list --domain example.com
-```
+*(Note: Environment variables can also be set via a `.env` file in the working directory.)*
 
 ## Supported Services
 

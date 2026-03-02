@@ -219,7 +219,7 @@ jobs:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
           ./target/release/gws drive files list \
-            --params '{"pageSize": 1, "fields": "files(id)"}' \
+            --params '{"pageSize": 1, "fields": "files(id,mimeType)"}' \
             | jq -e '.files'
 
       - name: Smoketest — Gmail messages

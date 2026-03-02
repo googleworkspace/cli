@@ -230,27 +230,30 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
     match credential_store::load_encrypted() {
         Ok(contents) => {
             if unmasked {
-                println!("{}", contents);
-            } else {
-                if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    if let Some(obj) = creds.as_object_mut() {
-                        if let Some(serde_json::Value::String(s)) = obj.get("client_secret") {
-                            obj.insert("client_secret".to_string(), json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])));
-                        }
-                        if let Some(serde_json::Value::String(s)) = obj.get("refresh_token") {
-                            obj.insert("refresh_token".to_string(), json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])));
-                        }
+                println!("{contents}");
+            } else if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(obj) = creds.as_object_mut() {
+                    if let Some(serde_json::Value::String(s)) = obj.get("client_secret") {
+                        obj.insert(
+                            "client_secret".to_string(),
+                            json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])),
+                        );
                     }
-                    println!("{}", serde_json::to_string_pretty(&creds).unwrap());
-                } else {
-                    println!("{}", contents);
+                    if let Some(serde_json::Value::String(s)) = obj.get("refresh_token") {
+                        obj.insert(
+                            "refresh_token".to_string(),
+                            json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])),
+                        );
+                    }
                 }
+                println!("{}", serde_json::to_string_pretty(&creds).unwrap());
+            } else {
+                println!("{contents}");
             }
             Ok(())
         }
         Err(e) => Err(GwsError::Auth(format!(
-            "Failed to decrypt credentials: {}. May have been created on a different machine.",
-            e
+            "Failed to decrypt credentials: {e}. May have been created on a different machine.",
         ))),
     }
 }
