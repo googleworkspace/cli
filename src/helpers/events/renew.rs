@@ -145,59 +145,11 @@ fn parse_duration(s: &str) -> Result<u64, GwsError> {
     }
 }
 
-/// Rough RFC 3339 timestamp parsing to Unix seconds.
+/// Parse an RFC 3339 timestamp to Unix seconds.
 fn parse_rfc3339_rough(s: &str) -> Option<u64> {
-    // Format: 2026-02-13T10:00:00Z or similar
-    // Very rough — just extract year/month/day/hour/min/sec
-    let parts: Vec<&str> = s.split('T').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-
-    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
-    let time_str = parts[1].trim_end_matches('Z').trim_end_matches("+00:00");
-    let time_parts: Vec<u32> = time_str
-        .split(':')
-        .filter_map(|p| p.split('.').next()?.parse().ok())
-        .collect();
-
-    if date_parts.len() != 3 || time_parts.len() < 3 {
-        return None;
-    }
-
-    // Rough calculation (not accounting for leap years precisely)
-    let year = date_parts[0] as u64;
-    let month = date_parts[1] as u64;
-    let day = date_parts[2] as u64;
-    let hour = time_parts[0] as u64;
-    let min = time_parts[1] as u64;
-    let sec = time_parts[2] as u64;
-
-    // Days from year 0 to epoch (1970)
-    let days_in_months: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut total_days: u64 = 0;
-
-    for y in 1970..year {
-        total_days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-            366
-        } else {
-            365
-        };
-    }
-
-    for m in 1..month {
-        total_days += days_in_months[(m - 1) as usize];
-        if m == 2
-            && year.is_multiple_of(4)
-            && (!year.is_multiple_of(100) || year.is_multiple_of(400))
-        {
-            total_days += 1;
-        }
-    }
-
-    total_days += day - 1;
-
-    Some(total_days * 86400 + hour * 3600 + min * 60 + sec)
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp() as u64)
 }
 
 #[cfg(test)]
