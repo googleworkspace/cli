@@ -1,0 +1,12 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 🤖 WHAT IS GWS?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ A single CLI for ALL Google Workspace APIs.
+
+ Perfect for:
+
+  🤖 AI agents
+  📜 Shell scripts
+  ⚡ Power users
+  📊 Automation

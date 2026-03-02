@@ -1,0 +1,8 @@
+{
+  "filterConfig": {
+    "piAndJailbreakFilterSettings": {
+      "filterEnforcement": "ENABLED",
+      "confidenceLevel": "LOW_AND_ABOVE"
+    }
+  }
+}

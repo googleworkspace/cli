@@ -1,0 +1,40 @@
+{
+  "name": "@googleworkspace/cli",
+  "version": "0.1.0",
+  "description": "Google Workspace CLI — dynamic command surface from Discovery Service",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/googleworkspace/cli.git"
+  },
+  "author": {
+    "name": "Justin Poehnelt",
+    "email": "justin.poehnelt@mgail.com"
+  },
+  "homepage": "https://github.com/googleworkspace/cli",
+  "bugs": {
+    "url": "https://github.com/googleworkspace/cli/issues"
+  },
+  "scripts": {
+    "test": "cargo test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@10.0.0",
+  "keywords": [
+    "cli",
+    "rust",
+    "google-workspace",
+    "google",
+    "drive",
+    "gmail",
+    "sheets",
+    "calendar",
+    "discovery-api",
+    "skills"
+  ],
+  "devDependencies": {
+    "@changesets/cli": "^2.29.8"
+  }
+}

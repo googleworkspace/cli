@@ -1,0 +1,10 @@
+# Codeowners
+
+# Core engine code strictly requires your review
+# Isolates agents to `skills/` or `src/helpers/` unless absolutely necessary
+/src/main.rs @jpoehnelt
+/src/executor.rs @jpoehnelt
+/src/discovery.rs @jpoehnelt
+/src/commands.rs @jpoehnelt
+/src/auth.rs @jpoehnelt
+/src/schema.rs @jpoehnelt

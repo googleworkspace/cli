@@ -1,0 +1,8 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ♾️  Paginate all pages
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ --page-all streams NDJSON
+ from every page.
+ Pipe to jq for processing.
+
