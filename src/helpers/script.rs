@@ -15,8 +15,8 @@
 use super::Helper;
 use crate::auth;
 use crate::error::GwsError;
-use anyhow::Context;
 use crate::executor;
+use anyhow::Context;
 use clap::{Arg, ArgMatches, Command};
 use serde_json::json;
 use std::fs;
@@ -48,7 +48,8 @@ impl Helper for ScriptHelper {
                         .help("Directory containing script files (defaults to current dir)")
                         .value_name("DIR"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws script +push --script SCRIPT_ID
   gws script +push --script SCRIPT_ID --dir ./src
@@ -56,7 +57,8 @@ EXAMPLES:
 TIPS:
   Supports .gs, .js, .html, and appsscript.json files.
   Skips hidden files and node_modules automatically.
-  This replaces ALL files in the project."),
+  This replaces ALL files in the project.",
+                ),
         );
         cmd
     }

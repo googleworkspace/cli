@@ -51,13 +51,12 @@ pub(super) async fn handle_send(
         &pagination,
         None,
         &crate::helpers::modelarmor::SanitizeMode::Warn,
-                    &crate::formatter::OutputFormat::default(),
+        &crate::formatter::OutputFormat::default(),
     )
     .await?;
 
     Ok(())
 }
-
 
 /// Helper to create a raw MIME email string.
 fn create_raw_message(to: &str, subject: &str, body: &str) -> String {
@@ -108,7 +107,6 @@ mod tests {
         assert_eq!(decoded, raw);
     }
 
-
     fn make_matches_send(args: &[&str]) -> ArgMatches {
         let cmd = Command::new("test")
             .arg(Arg::new("to").long("to"))
@@ -133,5 +131,4 @@ mod tests {
         assert_eq!(config.subject, "Hi");
         assert_eq!(config.body_text, "Body");
     }
-
 }

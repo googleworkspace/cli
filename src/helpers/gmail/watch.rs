@@ -8,8 +8,7 @@ pub(super) async fn handle_watch(
     let config = parse_watch_args(matches);
 
     if let Some(ref dir) = config.output_dir {
-        std::fs::create_dir_all(dir)
-            .context("Failed to create output dir")?;
+        std::fs::create_dir_all(dir).context("Failed to create output dir")?;
     }
 
     let client = crate::client::build_client();
@@ -86,9 +85,7 @@ pub(super) async fn handle_watch(
                 eprintln!("You may need to manually grant publisher access:");
                 eprintln!(
                     "  gcloud pubsub topics add-iam-policy-binding {} \\",
-                    t.split('/')
-                        .rfind(|s| !s.is_empty())
-                        .unwrap_or(&t)
+                    t.split('/').rfind(|s| !s.is_empty()).unwrap_or(&t)
                 );
                 eprintln!(
                     "    --member=serviceAccount:gmail-api-push@system.gserviceaccount.com \\"
@@ -285,10 +282,7 @@ async fn watch_pull_loop(
             });
         }
 
-        let pull_response: Value = resp
-            .json()
-            .await
-            .context("Failed to parse pull response")?;
+        let pull_response: Value = resp.json().await.context("Failed to parse pull response")?;
 
         let (ack_ids, max_history_id) = process_pull_response(&pull_response);
 
@@ -505,7 +499,6 @@ fn extract_message_ids_from_history(history_body: &Value) -> Vec<String> {
     result
 }
 
-
 #[derive(Clone)]
 struct WatchConfig {
     project: Option<String>,
@@ -544,7 +537,6 @@ fn parse_watch_args(matches: &ArgMatches) -> WatchConfig {
         output_dir: matches.get_one::<String>("output-dir").cloned(),
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -610,7 +602,6 @@ mod tests {
         assert!(ack_ids.contains(&"ack2".to_string()));
         assert_eq!(max_history, 12345);
     }
-
 
     fn make_matches_watch(args: &[&str]) -> ArgMatches {
         let cmd = Command::new("test")
@@ -718,10 +709,7 @@ mod tests {
         let output = apply_sanitization_result(msg, &config, &result, "msg1").unwrap();
         // Warn mode adds the `_sanitization` metadata.
         assert!(output.get("_sanitization").is_some());
-        assert_eq!(
-            output["_sanitization"]["filterMatchState"],
-            "MATCH_FOUND"
-        );
+        assert_eq!(output["_sanitization"]["filterMatchState"], "MATCH_FOUND");
     }
 
     #[test]
@@ -742,5 +730,4 @@ mod tests {
         assert_eq!(output, msg);
         assert!(output.get("_sanitization").is_none());
     }
-
 }

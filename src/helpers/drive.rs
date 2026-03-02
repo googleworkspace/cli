@@ -51,7 +51,8 @@ impl Helper for DriveHelper {
                         .help("Target filename (defaults to source filename)")
                         .value_name("NAME"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws drive +upload ./report.pdf
   gws drive +upload ./report.pdf --parent FOLDER_ID
@@ -59,7 +60,8 @@ EXAMPLES:
 
 TIPS:
   MIME type is detected automatically.
-  Filename is inferred from the local path unless --name is given."),
+  Filename is inferred from the local path unless --name is given.",
+                ),
         );
         cmd
     }

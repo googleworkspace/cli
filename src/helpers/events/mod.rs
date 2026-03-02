@@ -30,18 +30,23 @@ pub(super) use std::pin::Pin;
 
 pub struct EventsHelper;
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
-pub(super) const WORKSPACE_EVENTS_SCOPE: &str = "https://www.googleapis.com/auth/chat.spaces.readonly";
+pub(super) const WORKSPACE_EVENTS_SCOPE: &str =
+    "https://www.googleapis.com/auth/chat.spaces.readonly";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectId(pub String);
 impl std::fmt::Display for ProjectId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriptionName(pub String);
 impl std::fmt::Display for SubscriptionName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -175,14 +180,16 @@ TIPS:
                         .value_name("DURATION")
                         .default_value("1h"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws events +renew --name subscriptions/SUB_ID
   gws events +renew --all --within 2d
 
 TIPS:
   Subscriptions expire if not renewed periodically.
-  Use --all with a cron job to keep subscriptions alive."),
+  Use --all with a cron job to keep subscriptions alive.",
+                ),
         );
 
         cmd

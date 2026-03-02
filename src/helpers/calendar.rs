@@ -122,7 +122,8 @@ TIPS:
                         .help("Filter to specific calendar name or ID")
                         .value_name("NAME"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws calendar +agenda
   gws calendar +agenda --today
@@ -131,7 +132,8 @@ EXAMPLES:
 
 TIPS:
   Read-only — never modifies events.
-  Queries all calendars by default; use --calendar to filter."),
+  Queries all calendars by default; use --calendar to filter.",
+                ),
         );
         cmd
     }
@@ -209,7 +211,8 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     } else if matches.get_flag("week") {
         7
     } else {
-        matches.get_one::<String>("days")
+        matches
+            .get_one::<String>("days")
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(1)
     };
@@ -248,7 +251,9 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         });
     }
 
-    let list_json: Value = list_resp.json().await
+    let list_json: Value = list_resp
+        .json()
+        .await
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse calendar list: {e}")))?;
 
     let calendars = list_json
@@ -262,7 +267,10 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
 
     for cal in &calendars {
         let cal_id = cal.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let cal_summary = cal.get("summary").and_then(|v| v.as_str()).unwrap_or(cal_id);
+        let cal_summary = cal
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or(cal_id);
 
         // Apply calendar filter
         if let Some(filter) = calendar_filter {
@@ -339,7 +347,10 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         "timeMax": time_max,
     });
 
-    println!("{}", crate::formatter::format_value(&output, &output_format));
+    println!(
+        "{}",
+        crate::formatter::format_value(&output, &output_format)
+    );
     Ok(())
 }
 

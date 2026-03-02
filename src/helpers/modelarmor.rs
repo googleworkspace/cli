@@ -265,7 +265,10 @@ pub async fn sanitize_text(template: &str, text: &str) -> Result<SanitizationRes
         .context("Model Armor request failed")?;
 
     let status = resp.status();
-    let resp_text = resp.text().await.context("Failed to read Model Armor response")?;
+    let resp_text = resp
+        .text()
+        .await
+        .context("Failed to read Model Armor response")?;
 
     if !status.is_success() {
         return Err(GwsError::Other(anyhow::anyhow!(
@@ -293,10 +296,7 @@ async fn model_armor_post(url: &str, body: &str) -> Result<(), GwsError> {
         .context("HTTP request failed")?;
 
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .context("Failed to read response")?;
+    let text = resp.text().await.context("Failed to read response")?;
 
     println!("{text}");
 
@@ -586,8 +586,8 @@ pub fn build_sanitize_request_data(
 
 pub fn parse_sanitize_response(resp_text: &str) -> Result<SanitizationResult, GwsError> {
     // Parse the response to extract sanitizationResult
-    let parsed: serde_json::Value = serde_json::from_str(resp_text)
-        .context("Failed to parse Model Armor response")?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(resp_text).context("Failed to parse Model Armor response")?;
 
     let result = parsed.get("sanitizationResult").ok_or_else(|| {
         GwsError::Other(anyhow::anyhow!(
@@ -595,8 +595,8 @@ pub fn parse_sanitize_response(resp_text: &str) -> Result<SanitizationResult, Gw
         ))
     })?;
 
-    let res = serde_json::from_value(result.clone())
-        .context("Failed to parse sanitization result")?;
+    let res =
+        serde_json::from_value(result.clone()).context("Failed to parse sanitization result")?;
     Ok(res)
 }
 
@@ -615,8 +615,8 @@ fn parse_sanitize_args(matches: &ArgMatches, data_field: &str) -> Result<String,
         // Note: We removed the TTY check to avoid adding 'atty' or 'is-terminal' dependency.
         // This means it will block on stdin if no input is provided, which is standard CLI behavior.
 
-        let stdin_text = std::io::read_to_string(std::io::stdin())
-            .context("Failed to read stdin")?;
+        let stdin_text =
+            std::io::read_to_string(std::io::stdin()).context("Failed to read stdin")?;
 
         if stdin_text.trim().is_empty() {
             return Err(GwsError::Validation(

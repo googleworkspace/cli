@@ -30,7 +30,10 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
     let filter = parse_filter(args);
 
     // Generate gws-shared skill if no filter or "shared" is in the filter
-    if filter.as_ref().is_none_or(|f| "shared".contains(f.as_str())) {
+    if filter
+        .as_ref()
+        .is_none_or(|f| "shared".contains(f.as_str()))
+    {
         generate_shared_skill(output_path)?;
     }
 
@@ -39,7 +42,10 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
 
         let skill_name = format!("gws-{alias}");
 
-        eprintln!("Generating skills for {alias} ({}/{})...", entry.api_name, entry.version);
+        eprintln!(
+            "Generating skills for {alias} ({}/{})...",
+            entry.api_name, entry.version
+        );
 
         // Fetch discovery doc
         let doc = match discovery::fetch_discovery_document(entry.api_name, entry.version).await {
@@ -128,9 +134,8 @@ fn write_skill(base: &Path, name: &str, content: &str) -> Result<(), GwsError> {
         GwsError::Validation(format!("Failed to create dir {}: {e}", dir.display()))
     })?;
     let path = dir.join("SKILL.md");
-    std::fs::write(&path, content).map_err(|e| {
-        GwsError::Validation(format!("Failed to write {}: {e}", path.display()))
-    })?;
+    std::fs::write(&path, content)
+        .map_err(|e| GwsError::Validation(format!("Failed to write {}: {e}", path.display())))?;
     Ok(())
 }
 
@@ -166,9 +171,7 @@ metadata:
 
     // Title
     let api_version = entry.version;
-    out.push_str(&format!(
-        "# {alias} ({api_version})\n\n"
-    ));
+    out.push_str(&format!("# {alias} ({api_version})\n\n"));
 
     out.push_str(
         "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n",
@@ -254,17 +257,21 @@ fn render_helper_skill(
     let mut out = String::new();
 
     let about_raw = cmd.get_about().map(|s| s.to_string()).unwrap_or_default();
-    let about = about_raw
-        .strip_prefix("[Helper] ")
-        .unwrap_or(&about_raw);
+    let about = about_raw.strip_prefix("[Helper] ").unwrap_or(&about_raw);
 
     let short = cmd_name.trim_start_matches('+');
 
     // Determine if write command
     let is_write = matches!(
         short,
-        "send" | "write" | "upload" | "push" | "insert" | "append"
-            | "create-template" | "subscribe"
+        "send"
+            | "write"
+            | "upload"
+            | "push"
+            | "insert"
+            | "append"
+            | "create-template"
+            | "subscribe"
     );
     let category = if alias == "modelarmor" {
         "security"
@@ -303,7 +310,10 @@ metadata:
     out.push_str(&format!("```bash\ngws {alias} {cmd_name}"));
 
     // Show required args inline
-    let args: Vec<_> = cmd.get_arguments().filter(|a| a.get_id() != "help").collect();
+    let args: Vec<_> = cmd
+        .get_arguments()
+        .filter(|a| a.get_id() != "help")
+        .collect();
     for arg in &args {
         if arg.is_required_set() {
             if let Some(long) = arg.get_long() {

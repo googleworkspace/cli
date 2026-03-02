@@ -46,13 +46,15 @@ impl Helper for ChatHelper {
                         .required(true)
                         .value_name("TEXT"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws chat +send --space spaces/AAAAxxxx --text 'Hello team!'
 
 TIPS:
   Use 'gws chat spaces list' to find space names.
-  For cards or threaded replies, use the raw API instead."),
+  For cards or threaded replies, use the raw API instead.",
+                ),
         );
         cmd
     }

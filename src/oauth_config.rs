@@ -70,8 +70,7 @@ pub fn save_client_config(
             project_id: project_id.to_string(),
             auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
             token_uri: "https://oauth2.googleapis.com/token".to_string(),
-            auth_provider_x509_cert_url:
-                "https://www.googleapis.com/oauth2/v1/certs".to_string(),
+            auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs".to_string(),
             redirect_uris: vec!["http://localhost".to_string()],
         },
     };
@@ -120,8 +119,8 @@ mod tests {
                 project_id: "my-project".to_string(),
                 auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
                 token_uri: "https://oauth2.googleapis.com/token".to_string(),
-                auth_provider_x509_cert_url:
-                    "https://www.googleapis.com/oauth2/v1/certs".to_string(),
+                auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs"
+                    .to_string(),
                 redirect_uris: vec!["http://localhost".to_string()],
             },
         };
@@ -132,7 +131,10 @@ mod tests {
         let data = std::fs::read_to_string(&path).unwrap();
         let loaded: ClientSecretFile = serde_json::from_str(&data).unwrap();
 
-        assert_eq!(loaded.installed.client_id, "test-id.apps.googleusercontent.com");
+        assert_eq!(
+            loaded.installed.client_id,
+            "test-id.apps.googleusercontent.com"
+        );
         assert_eq!(loaded.installed.client_secret, "GOCSPX-test");
         assert_eq!(loaded.installed.project_id, "my-project");
     }

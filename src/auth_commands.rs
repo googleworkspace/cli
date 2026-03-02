@@ -94,9 +94,8 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
         &'a self,
         url: &'a str,
         _need_code: bool,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+    {
         Box::pin(async move {
             eprintln!("Open this URL in your browser to authenticate:\n");
             eprintln!("  {url}\n");
@@ -303,14 +302,21 @@ fn run_discovery_scope_picker(
     let all_shorts: Vec<&str> = relevant_scopes
         .iter()
         .filter(|e| {
-            !e.url.contains("/auth/chat.app.") && !e.url.contains("/auth/chat.bot") && !e.url.contains("/auth/chat.import") && !e.url.contains("/auth/keep")
+            !e.url.contains("/auth/chat.app.")
+                && !e.url.contains("/auth/chat.bot")
+                && !e.url.contains("/auth/chat.import")
+                && !e.url.contains("/auth/keep")
         })
         .map(|e| e.short.as_str())
         .collect();
 
     for entry in relevant_scopes {
         // Skip app-only scopes that can't be used with user OAuth
-        if entry.url.contains("/auth/chat.app.") || entry.url.contains("/auth/chat.bot") || entry.url.contains("/auth/chat.import") || entry.url.contains("/auth/keep") {
+        if entry.url.contains("/auth/chat.app.")
+            || entry.url.contains("/auth/chat.bot")
+            || entry.url.contains("/auth/chat.import")
+            || entry.url.contains("/auth/keep")
+        {
             continue;
         }
 
@@ -333,7 +339,9 @@ fn run_discovery_scope_picker(
         // For "Full Access": skip if a broader scope exists (hierarchical dedup)
         // e.g. "drive.metadata" is subsumed by "drive", "calendar.events" by "calendar"
         let is_subsumed = all_shorts.iter().any(|&other| {
-            other != entry.short && entry.short.starts_with(other) && entry.short.as_bytes().get(other.len()) == Some(&b'.')
+            other != entry.short
+                && entry.short.starts_with(other)
+                && entry.short.as_bytes().get(other.len()) == Some(&b'.')
         });
         if !is_subsumed {
             all_scopes.push(entry.short.to_string());
@@ -371,7 +379,11 @@ fn run_discovery_scope_picker(
     let mut valid_scope_indices: Vec<usize> = Vec::new();
     for (idx, entry) in relevant_scopes.iter().enumerate() {
         // Skip app-only scopes from the picker entirely
-        if entry.url.contains("/auth/chat.app.") || entry.url.contains("/auth/chat.bot") || entry.url.contains("/auth/chat.import") || entry.url.contains("/auth/keep") {
+        if entry.url.contains("/auth/chat.app.")
+            || entry.url.contains("/auth/chat.bot")
+            || entry.url.contains("/auth/chat.import")
+            || entry.url.contains("/auth/keep")
+        {
             continue;
         }
 
@@ -429,7 +441,10 @@ fn run_discovery_scope_picker(
 
             // Helper: check if a scope is an app-only scope that can't be used with user OAuth
             let is_app_only = |url: &str| -> bool {
-                url.contains("/auth/chat.app.") || url.contains("/auth/chat.bot") || url.contains("/auth/chat.import") || url.contains("/auth/keep")
+                url.contains("/auth/chat.app.")
+                    || url.contains("/auth/chat.bot")
+                    || url.contains("/auth/chat.import")
+                    || url.contains("/auth/keep")
             };
 
             if full && !recommended && !readonly {
@@ -450,8 +465,7 @@ fn run_discovery_scope_picker(
                     if entry.short.starts_with("admin.") {
                         continue;
                     }
-                    if entry.is_readonly
-                        || entry.classification != ScopeClassification::Restricted
+                    if entry.is_readonly || entry.classification != ScopeClassification::Restricted
                     {
                         selected.push(entry.url.to_string());
                     }
@@ -498,7 +512,9 @@ fn run_discovery_scope_picker(
                     // Check if any OTHER selected scope is a prefix of this one
                     // e.g. "drive" is a prefix of "drive.metadata" → drop "drive.metadata"
                     let is_subsumed = shorts.iter().any(|&other| {
-                        other != short && short.starts_with(other) && short.as_bytes().get(other.len()) == Some(&b'.')
+                        other != short
+                            && short.starts_with(other)
+                            && short.as_bytes().get(other.len()) == Some(&b'.')
                     });
                     if is_subsumed {
                         continue;
@@ -651,156 +667,159 @@ async fn handle_status() -> Result<(), GwsError> {
     // Try to read and show masked info from encrypted credentials
     // Skip real credential/network access in test builds
     if !cfg!(test) {
-    if has_encrypted {
-        match credential_store::load_encrypted() {
-            Ok(contents) => {
-                if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    if let Some(client_id) = creds.get("client_id").and_then(|v| v.as_str()) {
-                        let masked = if client_id.len() > 12 {
-                            format!(
-                                "{}...{}",
-                                &client_id[..8],
-                                &client_id[client_id.len() - 4..]
-                            )
-                        } else {
-                            client_id.to_string()
-                        };
-                        output["client_id"] = json!(masked);
+        if has_encrypted {
+            match credential_store::load_encrypted() {
+                Ok(contents) => {
+                    if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                        if let Some(client_id) = creds.get("client_id").and_then(|v| v.as_str()) {
+                            let masked = if client_id.len() > 12 {
+                                format!(
+                                    "{}...{}",
+                                    &client_id[..8],
+                                    &client_id[client_id.len() - 4..]
+                                )
+                            } else {
+                                client_id.to_string()
+                            };
+                            output["client_id"] = json!(masked);
+                        }
+                        output["has_refresh_token"] = json!(creds
+                            .get("refresh_token")
+                            .and_then(|v| v.as_str())
+                            .is_some());
                     }
-                    output["has_refresh_token"] = json!(creds
-                        .get("refresh_token")
-                        .and_then(|v| v.as_str())
-                        .is_some());
+                    output["encryption_valid"] = json!(true);
                 }
-                output["encryption_valid"] = json!(true);
-            }
-            Err(_) => {
-                output["encryption_valid"] = json!(false);
-                output["encryption_error"] =
-                    json!("Could not decrypt. May have been created on a different machine.");
-            }
-        }
-    } else if has_plain {
-        match tokio::fs::read_to_string(&plain_path).await {
-            Ok(contents) => {
-                if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    if let Some(client_id) = creds.get("client_id").and_then(|v| v.as_str()) {
-                        let masked = if client_id.len() > 12 {
-                            format!(
-                                "{}...{}",
-                                &client_id[..8],
-                                &client_id[client_id.len() - 4..]
-                            )
-                        } else {
-                            client_id.to_string()
-                        };
-                        output["client_id"] = json!(masked);
-                    }
-                    output["has_refresh_token"] = json!(creds.get("refresh_token").is_some());
+                Err(_) => {
+                    output["encryption_valid"] = json!(false);
+                    output["encryption_error"] =
+                        json!("Could not decrypt. May have been created on a different machine.");
                 }
             }
-            Err(_) => {
-                output["credentials_readable"] = json!(false);
+        } else if has_plain {
+            match tokio::fs::read_to_string(&plain_path).await {
+                Ok(contents) => {
+                    if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                        if let Some(client_id) = creds.get("client_id").and_then(|v| v.as_str()) {
+                            let masked = if client_id.len() > 12 {
+                                format!(
+                                    "{}...{}",
+                                    &client_id[..8],
+                                    &client_id[client_id.len() - 4..]
+                                )
+                            } else {
+                                client_id.to_string()
+                            };
+                            output["client_id"] = json!(masked);
+                        }
+                        output["has_refresh_token"] = json!(creds.get("refresh_token").is_some());
+                    }
+                }
+                Err(_) => {
+                    output["credentials_readable"] = json!(false);
+                }
             }
         }
-    }
     } // end !cfg!(test)
 
     // If we have credentials, try to get live info (user, scopes, APIs)
     // Skip all network calls and subprocess spawning in test builds
     if !cfg!(test) {
-    let creds_json_str = if has_encrypted {
-        credential_store::load_encrypted().ok()
-    } else if has_plain {
-        tokio::fs::read_to_string(&plain_path).await.ok()
-    } else {
-        None
-    };
+        let creds_json_str = if has_encrypted {
+            credential_store::load_encrypted().ok()
+        } else if has_plain {
+            tokio::fs::read_to_string(&plain_path).await.ok()
+        } else {
+            None
+        };
 
-    if let Some(creds_str) = creds_json_str {
-        if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&creds_str) {
-            let client_id = creds.get("client_id").and_then(|v| v.as_str());
-            let client_secret = creds.get("client_secret").and_then(|v| v.as_str());
-            let refresh_token = creds.get("refresh_token").and_then(|v| v.as_str());
+        if let Some(creds_str) = creds_json_str {
+            if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&creds_str) {
+                let client_id = creds.get("client_id").and_then(|v| v.as_str());
+                let client_secret = creds.get("client_secret").and_then(|v| v.as_str());
+                let refresh_token = creds.get("refresh_token").and_then(|v| v.as_str());
 
-            if let (Some(cid), Some(csec), Some(rt)) = (client_id, client_secret, refresh_token) {
-                // Exchange refresh token for access token
-                let http_client = reqwest::Client::new();
-                let token_resp = http_client
-                    .post("https://oauth2.googleapis.com/token")
-                    .form(&[
-                        ("client_id", cid),
-                        ("client_secret", csec),
-                        ("refresh_token", rt),
-                        ("grant_type", "refresh_token"),
-                    ])
-                    .send()
-                    .await;
+                if let (Some(cid), Some(csec), Some(rt)) = (client_id, client_secret, refresh_token)
+                {
+                    // Exchange refresh token for access token
+                    let http_client = reqwest::Client::new();
+                    let token_resp = http_client
+                        .post("https://oauth2.googleapis.com/token")
+                        .form(&[
+                            ("client_id", cid),
+                            ("client_secret", csec),
+                            ("refresh_token", rt),
+                            ("grant_type", "refresh_token"),
+                        ])
+                        .send()
+                        .await;
 
-                if let Ok(resp) = token_resp {
-                    if let Ok(token_json) = resp.json::<serde_json::Value>().await {
-                        if let Some(access_token) =
-                            token_json.get("access_token").and_then(|v| v.as_str())
-                        {
-                            output["token_valid"] = json!(true);
-
-                            // Get user info
-                            if let Ok(user_resp) = http_client
-                                .get("https://www.googleapis.com/oauth2/v1/userinfo")
-                                .bearer_auth(access_token)
-                                .send()
-                                .await
+                    if let Ok(resp) = token_resp {
+                        if let Ok(token_json) = resp.json::<serde_json::Value>().await {
+                            if let Some(access_token) =
+                                token_json.get("access_token").and_then(|v| v.as_str())
                             {
-                                if let Ok(user_json) = user_resp.json::<serde_json::Value>().await {
-                                    if let Some(email) =
-                                        user_json.get("email").and_then(|v| v.as_str())
-                                    {
-                                        output["user"] = json!(email);
-                                    }
-                                }
-                            }
+                                output["token_valid"] = json!(true);
 
-                            // Get granted scopes via tokeninfo
-                            let tokeninfo_url = format!(
-                                "https://oauth2.googleapis.com/tokeninfo?access_token={}",
-                                access_token
-                            );
-                            if let Ok(info_resp) = http_client.get(&tokeninfo_url).send().await {
-                                if let Ok(info_json) =
-                                    info_resp.json::<serde_json::Value>().await
+                                // Get user info
+                                if let Ok(user_resp) = http_client
+                                    .get("https://www.googleapis.com/oauth2/v1/userinfo")
+                                    .bearer_auth(access_token)
+                                    .send()
+                                    .await
                                 {
-                                    if let Some(scope_str) =
-                                        info_json.get("scope").and_then(|v| v.as_str())
+                                    if let Ok(user_json) =
+                                        user_resp.json::<serde_json::Value>().await
                                     {
-                                        let scopes: Vec<&str> =
-                                            scope_str.split(' ').collect();
-                                        output["scopes"] = json!(scopes);
-                                        output["scope_count"] = json!(scopes.len());
+                                        if let Some(email) =
+                                            user_json.get("email").and_then(|v| v.as_str())
+                                        {
+                                            output["user"] = json!(email);
+                                        }
                                     }
                                 }
-                            }
-                        } else {
-                            output["token_valid"] = json!(false);
-                            if let Some(err) =
-                                token_json.get("error_description").and_then(|v| v.as_str())
-                            {
-                                output["token_error"] = json!(err);
+
+                                // Get granted scopes via tokeninfo
+                                let tokeninfo_url = format!(
+                                    "https://oauth2.googleapis.com/tokeninfo?access_token={}",
+                                    access_token
+                                );
+                                if let Ok(info_resp) = http_client.get(&tokeninfo_url).send().await
+                                {
+                                    if let Ok(info_json) =
+                                        info_resp.json::<serde_json::Value>().await
+                                    {
+                                        if let Some(scope_str) =
+                                            info_json.get("scope").and_then(|v| v.as_str())
+                                        {
+                                            let scopes: Vec<&str> = scope_str.split(' ').collect();
+                                            output["scopes"] = json!(scopes);
+                                            output["scope_count"] = json!(scopes.len());
+                                        }
+                                    }
+                                }
+                            } else {
+                                output["token_valid"] = json!(false);
+                                if let Some(err) =
+                                    token_json.get("error_description").and_then(|v| v.as_str())
+                                {
+                                    output["token_error"] = json!(err);
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    // Show enabled APIs if we have a project_id
-    if let Some(pid) = output.get("project_id").and_then(|v| v.as_str()) {
-        let enabled = crate::setup::get_enabled_apis(pid);
-        if !enabled.is_empty() {
-            output["enabled_apis"] = json!(enabled);
-            output["enabled_api_count"] = json!(enabled.len());
+        // Show enabled APIs if we have a project_id
+        if let Some(pid) = output.get("project_id").and_then(|v| v.as_str()) {
+            let enabled = crate::setup::get_enabled_apis(pid);
+            if !enabled.is_empty() {
+                output["enabled_apis"] = json!(enabled);
+                output["enabled_api_count"] = json!(enabled.len());
+            }
         }
-    }
     } // end !cfg!(test)
 
     println!(
@@ -867,15 +886,42 @@ struct ScopeEntry {
 }
 
 const SCOPE_ENTRIES: &[ScopeEntry] = &[
-    ScopeEntry { scope: "https://www.googleapis.com/auth/drive", label: "Google Drive" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/spreadsheets", label: "Google Sheets" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/gmail.modify", label: "Gmail" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/calendar", label: "Google Calendar" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/documents", label: "Google Docs" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/presentations", label: "Google Slides" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/tasks", label: "Google Tasks" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/pubsub", label: "Cloud Pub/Sub" },
-    ScopeEntry { scope: "https://www.googleapis.com/auth/cloud-platform", label: "Cloud Platform" },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/drive",
+        label: "Google Drive",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/spreadsheets",
+        label: "Google Sheets",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/gmail.modify",
+        label: "Gmail",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/calendar",
+        label: "Google Calendar",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/documents",
+        label: "Google Docs",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/presentations",
+        label: "Google Slides",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/tasks",
+        label: "Google Tasks",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/pubsub",
+        label: "Cloud Pub/Sub",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/cloud-platform",
+        label: "Cloud Platform",
+    },
 ];
 
 // (parse_scopes removed — replaced by resolve_scopes above)
@@ -981,7 +1027,10 @@ mod tests {
         // Result depends on whether client_secret.json exists on the machine
         let result = resolve_client_credentials();
         if crate::oauth_config::client_config_path().exists() {
-            assert!(result.is_ok(), "Should succeed when client_secret.json exists");
+            assert!(
+                result.is_ok(),
+                "Should succeed when client_secret.json exists"
+            );
         } else {
             assert!(result.is_err());
             let err_msg = result.unwrap_err().to_string();

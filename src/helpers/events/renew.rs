@@ -49,10 +49,7 @@ pub(super) async fn handle_renew(
             .await
             .context("Failed to reactivate subscription")?;
 
-        let body: Value = resp
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let body: Value = resp.json().await.context("Failed to parse response")?;
 
         println!(
             "{}",
@@ -69,10 +66,7 @@ pub(super) async fn handle_renew(
             .await
             .context("Failed to list subscriptions")?;
 
-        let body: Value = resp
-            .json()
-            .await
-            .context("Failed to parse response")?;
+        let body: Value = resp.json().await.context("Failed to parse response")?;
 
         let mut renewed = 0;
         if let Some(subs) = body.get("subscriptions").and_then(|s| s.as_array()) {
@@ -127,7 +121,6 @@ fn filter_subscriptions_to_renew(subs: &[Value], now_secs: u64, within_secs: u64
     }
     result
 }
-
 
 /// Parses a duration string like "1h", "30m", "2d" into seconds.
 fn parse_duration(s: &str) -> Result<u64, GwsError> {
@@ -207,7 +200,6 @@ fn parse_rfc3339_rough(s: &str) -> Option<u64> {
     Some(total_days * 86400 + hour * 3600 + min * 60 + sec)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,7 +211,6 @@ mod tests {
             .arg(Arg::new("within").long("within").default_value("1h"));
         cmd.try_get_matches_from(args).unwrap()
     }
-
 
     #[test]
     fn test_parse_duration_hours() {
@@ -255,7 +246,6 @@ mod tests {
         let ts2 = parse_rfc3339_rough("2026-02-13T10:00:01Z").unwrap();
         assert_eq!(ts2, ts + 1);
     }
-
 
     #[test]
     fn test_parse_renew_args_name() {

@@ -203,7 +203,13 @@ fn json_to_yaml(value: &Value, indent: usize) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
             if s.contains('\n') || s.contains(':') || s.contains('#') {
-                format!("|\n{}", s.lines().map(|l| format!("{prefix}  {l}")).collect::<Vec<_>>().join("\n"))
+                format!(
+                    "|\n{}",
+                    s.lines()
+                        .map(|l| format!("{prefix}  {l}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
             } else {
                 format!("\"{s}\"")
             }

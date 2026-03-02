@@ -51,13 +51,15 @@ impl Helper for SheetsHelper {
                         .help("JSON array of rows, e.g. '[[\"a\",\"b\"],[\"c\",\"d\"]]'")
                         .value_name("JSON"),
                 )
-                .after_help(r#"EXAMPLES:
+                .after_help(
+                    r#"EXAMPLES:
   gws sheets +append --spreadsheet ID --values 'Alice,100,true'
   gws sheets +append --spreadsheet ID --json-values '[["a","b"],["c","d"]]'
 
 TIPS:
   Use --values for simple single-row appends.
-  Use --json-values for bulk multi-row inserts."#),
+  Use --json-values for bulk multi-row inserts."#,
+                ),
         );
 
         cmd = cmd.subcommand(
@@ -77,14 +79,16 @@ TIPS:
                         .required(true)
                         .value_name("RANGE"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws sheets +read --spreadsheet ID --range 'Sheet1!A1:D10'
   gws sheets +read --spreadsheet ID --range Sheet1
 
 TIPS:
   Read-only — never modifies the spreadsheet.
-  For advanced options, use the raw values.get API."),
+  For advanced options, use the raw values.get API.",
+                ),
         );
 
         cmd
@@ -268,10 +272,7 @@ pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
     let values = if let Some(json_str) = matches.get_one::<String>("json-values") {
         // Parse JSON array of rows
         if let Ok(parsed) = serde_json::from_str::<Vec<Vec<String>>>(json_str) {
-            parsed
-                .into_iter()
-                .flatten()
-                .collect()
+            parsed.into_iter().flatten().collect()
         } else {
             // Treat as single row JSON array
             serde_json::from_str::<Vec<String>>(json_str).unwrap_or_default()

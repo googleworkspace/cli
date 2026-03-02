@@ -14,7 +14,7 @@
 
 //! JSON Schema Validation & Reference Resolution
 //!
-//! Provides utilities to validate JSON payloads against the Google API Discovery Document 
+//! Provides utilities to validate JSON payloads against the Google API Discovery Document
 //! schemas before dispatching requests. This ensures immediate client-side feedback
 //! for invalid API payloads.
 

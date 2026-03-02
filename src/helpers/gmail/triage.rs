@@ -158,7 +158,10 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         "query": query,
     });
 
-    println!("{}", crate::formatter::format_value(&output, &output_format));
+    println!(
+        "{}",
+        crate::formatter::format_value(&output, &output_format)
+    );
 
     Ok(())
 }
@@ -178,6 +181,9 @@ mod tests {
     #[test]
     fn test_urlencoded() {
         assert_eq!(urlencoded("is:unread"), "is%3Aunread");
-        assert_eq!(urlencoded("from:test@example.com"), "from%3Atest@example.com");
+        assert_eq!(
+            urlencoded("from:test@example.com"),
+            "from%3Atest@example.com"
+        );
     }
 }

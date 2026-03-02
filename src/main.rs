@@ -16,7 +16,7 @@
 //!
 //! A dynamic, schema-driven CLI for Google Workspace APIs.
 //! This tool dynamically parses Google API Discovery Documents to construct CLI commands.
-//! It supports deep schema validation, OAuth / Service Account authentication, 
+//! It supports deep schema validation, OAuth / Service Account authentication,
 //! interactive prompts, and integration with Model Armor.
 
 mod auth;
@@ -30,11 +30,11 @@ mod executor;
 mod formatter;
 mod generate_skills;
 mod helpers;
+mod oauth_config;
 mod schema;
 mod services;
 mod setup;
 mod setup_tui;
-mod oauth_config;
 
 use error::{print_error_json, GwsError};
 
@@ -209,7 +209,10 @@ fn parse_pagination_config(matches: &clap::ArgMatches) -> executor::PaginationCo
     }
 }
 
-pub fn parse_service_and_version(args: &[String], first_arg: &str) -> Result<(String, String), GwsError> {
+pub fn parse_service_and_version(
+    args: &[String],
+    first_arg: &str,
+) -> Result<(String, String), GwsError> {
     let mut service_arg = first_arg;
     let mut version_override: Option<String> = None;
 

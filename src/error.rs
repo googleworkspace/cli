@@ -37,8 +37,6 @@ pub enum GwsError {
     Other(#[from] anyhow::Error),
 }
 
-
-
 impl GwsError {
     pub fn to_json(&self) -> serde_json::Value {
         match self {

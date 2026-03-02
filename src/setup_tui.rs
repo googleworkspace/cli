@@ -74,7 +74,8 @@ pub fn wrap_text(text: &str, max_width: u16) -> Vec<String> {
         for word in paragraph.split_whitespace() {
             if current_line.is_empty() {
                 current_line.push_str(word);
-            } else if current_line.chars().count() + 1 + word.chars().count() <= max_width as usize {
+            } else if current_line.chars().count() + 1 + word.chars().count() <= max_width as usize
+            {
                 current_line.push(' ');
                 current_line.push_str(word);
             } else {
@@ -153,7 +154,7 @@ impl PickerState {
                 let current_selected = !self.items[i].selected;
                 let is_template = self.items[i].is_template;
                 let template_selects = self.items[i].template_selects.clone();
-                
+
                 self.items[i].selected = current_selected;
 
                 if is_template {
@@ -178,7 +179,7 @@ impl PickerState {
                             item.selected = false;
                         }
                     }
-                    
+
                     // Handle readonly/superset interdependency
                     // Only deselect the counterpart when we are SELECTING an item
                     if current_selected {
@@ -200,7 +201,11 @@ impl PickerState {
     }
 
     fn toggle_all(&mut self) {
-        let all_non_fixed_selected = self.items.iter().filter(|i| !i.is_fixed).all(|item| item.selected);
+        let all_non_fixed_selected = self
+            .items
+            .iter()
+            .filter(|i| !i.is_fixed)
+            .all(|item| item.selected);
         for item in &mut self.items {
             if !item.is_fixed {
                 item.selected = !all_non_fixed_selected;
@@ -355,7 +360,7 @@ fn run_picker_loop(
                 ));
             }
             let title = Paragraph::new(Line::from(title_spans))
-            .block(Block::default().borders(Borders::BOTTOM));
+                .block(Block::default().borders(Borders::BOTTOM));
             frame.render_widget(title, chunks[0]);
 
             // List items
@@ -364,7 +369,11 @@ fn run_picker_loop(
                 .iter()
                 .map(|item| {
                     let checkbox = if state.multiselect {
-                        if item.selected { "[x] " } else { "[ ] " }
+                        if item.selected {
+                            "[x] "
+                        } else {
+                            "[ ] "
+                        }
                     } else if item.selected {
                         "◉ "
                     } else {
@@ -422,7 +431,7 @@ fn run_picker_loop(
             help_spans.push(Span::raw("Cancel"));
 
             let help = Paragraph::new(Line::from(help_spans))
-            .block(Block::default().borders(Borders::TOP));
+                .block(Block::default().borders(Borders::TOP));
             frame.render_widget(help, chunks[2]);
 
             // Additional help text at the bottom of the list area if provided
@@ -570,7 +579,7 @@ impl SetupWizard {
                 help_spans.push(Span::raw("Cancel"));
 
                 let help = Paragraph::new(Line::from(help_spans))
-                .block(Block::default().borders(Borders::TOP));
+                    .block(Block::default().borders(Borders::TOP));
                 frame.render_widget(help, chunks[2]);
             })?;
 
@@ -660,11 +669,8 @@ impl SetupWizard {
             } else {
                 vec![]
             };
-            let chunks = Layout::vertical([
-                Constraint::Length(step_height),
-                Constraint::Min(0),
-            ])
-            .split(area);
+            let chunks =
+                Layout::vertical([Constraint::Length(step_height), Constraint::Min(0)]).split(area);
             Self::render_steps(frame, chunks[0], &steps_snapshot, &msg_lines);
         })?;
         Ok(())
@@ -723,10 +729,7 @@ impl SetupWizard {
                         Span::styled(num, Style::default().fg(Color::Red)),
                         Span::raw(" "),
                         Span::styled(&step.label, Style::default().fg(Color::Red)),
-                        Span::styled(
-                            format!(" — {detail}"),
-                            Style::default().fg(Color::Red),
-                        ),
+                        Span::styled(format!(" — {detail}"), Style::default().fg(Color::Red)),
                     ])),
                 }
             })
@@ -735,9 +738,10 @@ impl SetupWizard {
         if !msg_lines.is_empty() {
             items.push(ListItem::new(Line::from(vec![Span::raw("")])));
             for line in msg_lines {
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("  {line}"), Style::default().fg(Color::Cyan)),
-                ])));
+                items.push(ListItem::new(Line::from(vec![Span::styled(
+                    format!("  {line}"),
+                    Style::default().fg(Color::Cyan),
+                )])));
             }
         }
 
@@ -786,7 +790,11 @@ impl SetupWizard {
             Span::styled(&picker.title, Style::default().fg(Color::Cyan).bold()),
             Span::raw("  "),
             Span::styled(
-                format!("{}/{} selected", picker.selected_count(), picker.items.len()),
+                format!(
+                    "{}/{} selected",
+                    picker.selected_count(),
+                    picker.items.len()
+                ),
                 Style::default().fg(Color::DarkGray),
             ),
         ]);
@@ -813,14 +821,20 @@ impl SetupWizard {
         area: ratatui::layout::Rect,
         input: &mut InputState,
     ) {
-        let title_line = Line::from(vec![
-            Span::styled(&input.title, Style::default().fg(Color::Cyan).bold()),
-        ]);
+        let title_line = Line::from(vec![Span::styled(
+            &input.title,
+            Style::default().fg(Color::Cyan).bold(),
+        )]);
 
         let p = Paragraph::new(Line::from(vec![
             Span::raw("> "),
             Span::styled(&input.value, Style::default().fg(Color::White)),
-            Span::styled("█", Style::default().fg(Color::Gray).add_modifier(Modifier::RAPID_BLINK)),
+            Span::styled(
+                "█",
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::RAPID_BLINK),
+            ),
         ]))
         .block(
             Block::default()
@@ -841,13 +855,14 @@ mod tests {
         labels
             .iter()
             .map(|&s| SelectItem {
-            label: s.to_string(),
-            description: format!("Desc {s}"),
-            selected: false,
-            is_fixed: false,
-            is_template: false,
-            template_selects: vec![],
-        }).collect()
+                label: s.to_string(),
+                description: format!("Desc {s}"),
+                selected: false,
+                is_fixed: false,
+                is_template: false,
+                template_selects: vec![],
+            })
+            .collect()
     }
 
     /// Helper: feed a sequence of key presses into a PickerState,
@@ -948,10 +963,10 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Char(' '),  // select Gmail
-                KeyCode::Down,       // move to Drive
-                KeyCode::Char(' '),  // select Drive
-                KeyCode::Enter,      // confirm
+                KeyCode::Char(' '), // select Gmail
+                KeyCode::Down,      // move to Drive
+                KeyCode::Char(' '), // select Drive
+                KeyCode::Enter,     // confirm
             ],
         );
         match result {
@@ -972,9 +987,9 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Char('a'),  // select all
-                KeyCode::Down,       // move to B
-                KeyCode::Char(' '),  // deselect B
+                KeyCode::Char('a'), // select all
+                KeyCode::Down,      // move to B
+                KeyCode::Char(' '), // deselect B
                 KeyCode::Enter,
             ],
         );
@@ -997,11 +1012,11 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Char('j'),  // -> B
-                KeyCode::Char('j'),  // -> C
-                KeyCode::Char(' '),  // select C
-                KeyCode::Char('k'),  // -> B
-                KeyCode::Char(' '),  // select B
+                KeyCode::Char('j'), // -> B
+                KeyCode::Char('j'), // -> C
+                KeyCode::Char(' '), // select C
+                KeyCode::Char('k'), // -> B
+                KeyCode::Char(' '), // select B
                 KeyCode::Enter,
             ],
         );
@@ -1024,8 +1039,8 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Up,         // wrap to B
-                KeyCode::Char(' '),  // select B
+                KeyCode::Up,        // wrap to B
+                KeyCode::Char(' '), // select B
                 KeyCode::Enter,
             ],
         );
@@ -1056,8 +1071,8 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Char(' '),  // select A
-                KeyCode::Char(' '),  // deselect A
+                KeyCode::Char(' '), // select A
+                KeyCode::Char(' '), // deselect A
                 KeyCode::Enter,
             ],
         );
@@ -1077,8 +1092,8 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Char('a'),  // all on
-                KeyCode::Char('a'),  // all off
+                KeyCode::Char('a'), // all on
+                KeyCode::Char('a'), // all off
                 KeyCode::Enter,
             ],
         );
@@ -1286,7 +1301,10 @@ mod tests {
 
         // Toggle all off
         state.handle_key(KeyCode::Char('a'));
-        assert!(state.items[0].selected, "Fixed still selected even after toggle-all-off");
+        assert!(
+            state.items[0].selected,
+            "Fixed still selected even after toggle-all-off"
+        );
         assert!(!state.items[1].selected, "A deselected");
         assert!(!state.items[2].selected, "B deselected");
     }
@@ -1303,8 +1321,8 @@ mod tests {
         let result = run_keys(
             &mut state,
             &[
-                KeyCode::Down,  // -> B
-                KeyCode::Down,  // -> C
+                KeyCode::Down, // -> B
+                KeyCode::Down, // -> C
                 KeyCode::Enter,
             ],
         );
@@ -1453,9 +1471,15 @@ mod tests {
 
         assert!(state.items[0].selected, "Recommended template selected");
         assert!(state.items[2].selected, "gmail selected by template");
-        assert!(!state.items[3].selected, "gmail.readonly NOT in recommended");
+        assert!(
+            !state.items[3].selected,
+            "gmail.readonly NOT in recommended"
+        );
         assert!(state.items[4].selected, "drive selected by template");
-        assert!(!state.items[5].selected, "drive.readonly NOT in recommended");
+        assert!(
+            !state.items[5].selected,
+            "drive.readonly NOT in recommended"
+        );
     }
 
     #[test]
@@ -1513,7 +1537,10 @@ mod tests {
         assert!(!state.items[0].selected, "Recommended deselected");
         // Individual items should NOT change when deselecting a template
         // (only selecting a template applies its selections)
-        assert!(state.items[2].selected, "gmail still selected after template deselect");
+        assert!(
+            state.items[2].selected,
+            "gmail still selected after template deselect"
+        );
     }
 
     // ── Readonly/superset scope interaction tests ──────────────
@@ -1536,7 +1563,10 @@ mod tests {
         state.handle_key(KeyCode::Char(' ')); // select gmail
 
         assert!(state.items[2].selected, "gmail selected");
-        assert!(!state.items[3].selected, "gmail.readonly deselected (superset wins)");
+        assert!(
+            !state.items[3].selected,
+            "gmail.readonly deselected (superset wins)"
+        );
     }
 
     #[test]
@@ -1556,7 +1586,10 @@ mod tests {
         state.handle_key(KeyCode::Char(' ')); // select gmail.readonly
 
         assert!(state.items[3].selected, "gmail.readonly selected");
-        assert!(!state.items[2].selected, "gmail deselected (readonly overrides)");
+        assert!(
+            !state.items[2].selected,
+            "gmail deselected (readonly overrides)"
+        );
     }
 
     #[test]
@@ -1581,7 +1614,10 @@ mod tests {
         state.handle_key(KeyCode::Char(' ')); // deselect gmail
 
         assert!(!state.items[2].selected, "gmail deselected");
-        assert!(!state.items[3].selected, "gmail.readonly was never selected");
+        assert!(
+            !state.items[3].selected,
+            "gmail.readonly was never selected"
+        );
     }
 
     // ── wrap_text tests ────────────────────────────────────────

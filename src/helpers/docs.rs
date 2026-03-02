@@ -46,13 +46,15 @@ impl Helper for DocsHelper {
                         .required(true)
                         .value_name("TEXT"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws docs +write --document DOC_ID --text 'Hello, world!'
 
 TIPS:
   Text is inserted at the end of the document body.
-  For rich formatting, use the raw batchUpdate API instead."),
+  For rich formatting, use the raw batchUpdate API instead.",
+                ),
         );
         cmd
     }

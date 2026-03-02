@@ -16,7 +16,7 @@
 //! Discovery Document Parsing and Management
 //!
 //! Handles fetching, caching, and parsing Google API Discovery Documents.
-//! These JSON schemas define the shapes of API requests and responses, forming 
+//! These JSON schemas define the shapes of API requests and responses, forming
 //! the foundation of the dynamically generated CLI commands.
 
 use std::collections::HashMap;

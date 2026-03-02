@@ -33,7 +33,6 @@ use std::pin::Pin;
 
 pub struct GmailHelper;
 
-
 pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
 
@@ -68,14 +67,16 @@ impl Helper for GmailHelper {
                         .required(true)
                         .value_name("TEXT"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
 
 TIPS:
   Handles RFC 2822 formatting and base64 encoding automatically.
   For HTML bodies, attachments, or CC/BCC, use the raw API instead:
-    gws gmail users messages send --json '...' "),
+    gws gmail users messages send --json '...' ",
+                ),
         );
 
         cmd = cmd.subcommand(
@@ -100,7 +101,8 @@ TIPS:
                         .help("Include label names in output")
                         .action(ArgAction::SetTrue),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws gmail +triage
   gws gmail +triage --max 5 --query 'from:boss'
@@ -109,7 +111,8 @@ EXAMPLES:
 
 TIPS:
   Read-only — never modifies your mailbox.
-  Defaults to table output format."),
+  Defaults to table output format.",
+                ),
         );
 
         cmd = cmd.subcommand(
@@ -178,7 +181,8 @@ TIPS:
                         .help("Write each message to a separate JSON file in this directory")
                         .value_name("DIR"),
                 )
-                .after_help("\
+                .after_help(
+                    "\
 EXAMPLES:
   gws gmail +watch --project my-gcp-project
   gws gmail +watch --project my-project --label-ids INBOX --once
@@ -188,7 +192,8 @@ EXAMPLES:
 TIPS:
   Gmail watch expires after 7 days — re-run to renew.
   Without --cleanup, Pub/Sub resources persist for reconnection.
-  Press Ctrl-C to stop gracefully."),
+  Press Ctrl-C to stop gracefully.",
+                ),
         );
 
         cmd
@@ -220,7 +225,6 @@ TIPS:
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {

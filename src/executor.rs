@@ -116,9 +116,10 @@ pub async fn execute_method(
                 && param_def.location.as_deref() == Some("path")
                 && !params.contains_key(param_name)
             {
-                return Err(GwsError::Validation(
-                    format!("Required path parameter {} is missing. Provide it via --params", param_name)
-                ));
+                return Err(GwsError::Validation(format!(
+                    "Required path parameter {} is missing. Provide it via --params",
+                    param_name
+                )));
             }
         }
     }
@@ -154,7 +155,10 @@ pub async fn execute_method(
             "body": body,
             "is_multipart_upload": is_upload,
         });
-        println!("{}", crate::formatter::format_value(&dry_run_info, output_format));
+        println!(
+            "{}",
+            crate::formatter::format_value(&dry_run_info, output_format)
+        );
         return Ok(());
     }
 
@@ -216,10 +220,7 @@ pub async fn execute_method(
         }
 
         // Send request
-        let response = request
-            .send()
-            .await
-            .context("HTTP request failed")?;
+        let response = request.send().await.context("HTTP request failed")?;
 
         let status = response.status();
         let content_type = response
@@ -293,7 +294,10 @@ pub async fn execute_method(
 
                 if pagination.page_all {
                     // Paginated mode: compact output per page
-                    println!("{}", crate::formatter::format_value_compact(&json_val, output_format));
+                    println!(
+                        "{}",
+                        crate::formatter::format_value_compact(&json_val, output_format)
+                    );
                 } else {
                     // Single request: formatted output
                     println!(
@@ -343,17 +347,14 @@ pub async fn execute_method(
             let mut total_bytes: u64 = 0;
 
             while let Some(chunk) = stream.next().await {
-                let chunk = chunk
-                    .context("Failed to read response chunk")?;
+                let chunk = chunk.context("Failed to read response chunk")?;
                 file.write_all(&chunk)
                     .await
                     .context("Failed to write to file")?;
                 total_bytes += chunk.len() as u64;
             }
 
-            file.flush()
-                .await
-                .context("Failed to flush file")?;
+            file.flush().await.context("Failed to flush file")?;
 
             let result = json!({
                 "status": "success",
@@ -361,10 +362,7 @@ pub async fn execute_method(
                 "mimeType": content_type,
                 "bytes": total_bytes,
             });
-            println!(
-                "{}",
-                crate::formatter::format_value(&result, output_format)
-            );
+            println!("{}", crate::formatter::format_value(&result, output_format));
         }
 
         // Break out of pagination loop (continue is handled above)
@@ -1077,154 +1075,157 @@ mod tests {
     }
 }
 
-    #[tokio::test]
-    async fn test_execute_method_dry_run() {
-        let mut schemas = HashMap::new();
-        let mut properties = HashMap::new();
-        properties.insert(
-            "name".to_string(),
-            crate::discovery::JsonSchemaProperty {
-                prop_type: Some("string".to_string()),
-                ..Default::default()
-            },
-        );
-        schemas.insert(
-            "File".to_string(),
-            crate::discovery::JsonSchema {
-                schema_type: Some("object".to_string()),
-                properties,
-                ..Default::default()
-            },
-        );
-
-        let doc = RestDescription {
-            root_url: "https://example.googleapis.com/".to_string(),
-            service_path: "v1/".to_string(),
-            schemas,
+#[tokio::test]
+async fn test_execute_method_dry_run() {
+    let mut schemas = HashMap::new();
+    let mut properties = HashMap::new();
+    properties.insert(
+        "name".to_string(),
+        crate::discovery::JsonSchemaProperty {
+            prop_type: Some("string".to_string()),
             ..Default::default()
-        };
-
-        let mut parameters = HashMap::new();
-        parameters.insert(
-            "fileId".to_string(),
-            crate::discovery::MethodParameter {
-                location: Some("path".to_string()),
-                required: true,
-                ..Default::default()
-            },
-        );
-
-        let method = RestMethod {
-            http_method: "POST".to_string(),
-            id: Some("example.files.create".to_string()),
-            path: "files/{fileId}".to_string(),
-            parameter_order: vec!["fileId".to_string()],
-            parameters,
-            request: Some(crate::discovery::SchemaRef {
-                schema_ref: Some("File".to_string()),
-                parameter_name: None,
-            }),
+        },
+    );
+    schemas.insert(
+        "File".to_string(),
+        crate::discovery::JsonSchema {
+            schema_type: Some("object".to_string()),
+            properties,
             ..Default::default()
-        };
+        },
+    );
 
-        let params_json = r#"{"fileId": "123"}"#;
-        let body_json = r#"{"name": "test.txt"}"#;
+    let doc = RestDescription {
+        root_url: "https://example.googleapis.com/".to_string(),
+        service_path: "v1/".to_string(),
+        schemas,
+        ..Default::default()
+    };
 
-        let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
-        let pagination = PaginationConfig::default();
-
-        let result = execute_method(
-            &doc,
-            &method,
-            Some(params_json),
-            Some(body_json),
-            None,
-            AuthMethod::None,
-            None,
-            None,
-            true, // dry_run
-            &pagination,
-            None,
-            &sanitize_mode,
-            &crate::formatter::OutputFormat::default(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_execute_method_missing_path_param() {
-        // Same setup but missing required fileId in params
-        let mut parameters = HashMap::new();
-        parameters.insert(
-            "fileId".to_string(),
-            crate::discovery::MethodParameter {
-                location: Some("path".to_string()),
-                required: true,
-                ..Default::default()
-            },
-        );
-        let doc = RestDescription::default();
-        let method = RestMethod {
-            http_method: "POST".to_string(),
-            path: "files/{fileId}".to_string(),
-            parameter_order: vec!["fileId".to_string()],
-            parameters,
+    let mut parameters = HashMap::new();
+    parameters.insert(
+        "fileId".to_string(),
+        crate::discovery::MethodParameter {
+            location: Some("path".to_string()),
+            required: true,
             ..Default::default()
-        };
-        
-        let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
-        let result = execute_method(
-            &doc,
-            &method,
-            None, // No params provided
-            None,
-            None,
-            AuthMethod::None,
-            None,
-            None,
-            true,
-            &PaginationConfig::default(),
-            None,
-            &sanitize_mode,
-            &crate::formatter::OutputFormat::default(),
-        )
-        .await;
+        },
+    );
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Required path parameter"));
-    }
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        id: Some("example.files.create".to_string()),
+        path: "files/{fileId}".to_string(),
+        parameter_order: vec!["fileId".to_string()],
+        parameters,
+        request: Some(crate::discovery::SchemaRef {
+            schema_ref: Some("File".to_string()),
+            parameter_name: None,
+        }),
+        ..Default::default()
+    };
 
-    #[test]
-    fn test_handle_error_response_non_json() {
-        let err = handle_error_response(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal Server Error Text",
-            &AuthMethod::OAuth,
-        )
-        .unwrap_err();
-        match err {
-            GwsError::Api {
-                code,
-                message,
-                reason,
-            } => {
-                assert_eq!(code, 500);
-                assert_eq!(message, "Internal Server Error Text");
-                assert_eq!(reason, "httpError");
-            }
-            _ => panic!("Expected Api error"),
+    let params_json = r#"{"fileId": "123"}"#;
+    let body_json = r#"{"name": "test.txt"}"#;
+
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let pagination = PaginationConfig::default();
+
+    let result = execute_method(
+        &doc,
+        &method,
+        Some(params_json),
+        Some(body_json),
+        None,
+        AuthMethod::None,
+        None,
+        None,
+        true, // dry_run
+        &pagination,
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_execute_method_missing_path_param() {
+    // Same setup but missing required fileId in params
+    let mut parameters = HashMap::new();
+    parameters.insert(
+        "fileId".to_string(),
+        crate::discovery::MethodParameter {
+            location: Some("path".to_string()),
+            required: true,
+            ..Default::default()
+        },
+    );
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "files/{fileId}".to_string(),
+        parameter_order: vec!["fileId".to_string()],
+        parameters,
+        ..Default::default()
+    };
+
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let result = execute_method(
+        &doc,
+        &method,
+        None, // No params provided
+        None,
+        None,
+        AuthMethod::None,
+        None,
+        None,
+        true,
+        &PaginationConfig::default(),
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Required path parameter"));
+}
+
+#[test]
+fn test_handle_error_response_non_json() {
+    let err = handle_error_response(
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal Server Error Text",
+        &AuthMethod::OAuth,
+    )
+    .unwrap_err();
+    match err {
+        GwsError::Api {
+            code,
+            message,
+            reason,
+        } => {
+            assert_eq!(code, 500);
+            assert_eq!(message, "Internal Server Error Text");
+            assert_eq!(reason, "httpError");
         }
+        _ => panic!("Expected Api error"),
     }
+}
 
-    #[test]
-    fn test_get_value_type_helper() {
-        assert_eq!(get_value_type(&json!(null)), "null");
-        assert_eq!(get_value_type(&json!(true)), "boolean");
-        assert_eq!(get_value_type(&json!(42)), "integer");
-        assert_eq!(get_value_type(&json!(3.5)), "number (float)");
-        assert_eq!(get_value_type(&json!("string")), "string");
-        assert_eq!(get_value_type(&json!([1, 2])), "array");
-        assert_eq!(get_value_type(&json!({"a": 1})), "object");
-    }
+#[test]
+fn test_get_value_type_helper() {
+    assert_eq!(get_value_type(&json!(null)), "null");
+    assert_eq!(get_value_type(&json!(true)), "boolean");
+    assert_eq!(get_value_type(&json!(42)), "integer");
+    assert_eq!(get_value_type(&json!(3.5)), "number (float)");
+    assert_eq!(get_value_type(&json!("string")), "string");
+    assert_eq!(get_value_type(&json!([1, 2])), "array");
+    assert_eq!(get_value_type(&json!({"a": 1})), "object");
+}

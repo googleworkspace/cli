@@ -15,7 +15,7 @@
 //! Authentication and Credential Management
 //!
 //! Handles obtaining OAuth 2.0 access tokens and Service Account tokens.
-//! Supports local user flow (via a loopback server) and Application Default Credentials, 
+//! Supports local user flow (via a loopback server) and Application Default Credentials,
 //! with token caching to minimize repeated authentication overhead.
 
 use std::path::PathBuf;
@@ -147,8 +147,8 @@ async fn load_credentials_inner(
 
     // 2. Encrypted credentials (always AuthorizedUser for now)
     if enc_path.exists() {
-        let json_str =
-            credential_store::load_encrypted_from_path(enc_path).context("Failed to decrypt credentials")?;
+        let json_str = credential_store::load_encrypted_from_path(enc_path)
+            .context("Failed to decrypt credentials")?;
 
         let creds: serde_json::Value =
             serde_json::from_str(&json_str).context("Failed to parse decrypted credentials")?;
@@ -294,13 +294,9 @@ mod tests {
         }"#;
         file.write_all(json.as_bytes()).unwrap();
 
-        let res = load_credentials_inner(
-            None,
-            &PathBuf::from("/also/missing"),
-            file.path(),
-        )
-        .await
-        .unwrap();
+        let res = load_credentials_inner(None, &PathBuf::from("/also/missing"), file.path())
+            .await
+            .unwrap();
 
         match res {
             Credential::AuthorizedUser(secret) => {
@@ -312,11 +308,15 @@ mod tests {
     #[tokio::test]
     async fn test_get_token_from_env_var() {
         // Set the token env var
-        unsafe { std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token"); }
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
+        }
 
         let result = get_token(&["https://www.googleapis.com/auth/drive"]).await;
 
-        unsafe { std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN"); }
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
+        }
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "my-test-token");
@@ -327,7 +327,9 @@ mod tests {
         // An empty token should not short-circuit — it should be ignored
         // and fall through to normal credential loading.
         // We test with non-existent credential paths to ensure fallthrough.
-        unsafe { std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", ""); }
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "");
+        }
 
         let result = load_credentials_inner(
             None,
@@ -336,11 +338,16 @@ mod tests {
         )
         .await;
 
-        unsafe { std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN"); }
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
+        }
 
         // Should fall through to normal credential loading, which fails
         // because we pointed at non-existent paths
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No credentials found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No credentials found"));
     }
 }
