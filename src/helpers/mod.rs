@@ -63,3 +63,78 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// URL safety helpers
+// ---------------------------------------------------------------------------
+
+/// Percent-encode a value for use as a single URL path segment (e.g., file ID,
+/// calendar ID, message ID). All non-alphanumeric characters are encoded.
+pub(crate) fn encode_path_segment(s: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+}
+
+/// Validate a multi-segment resource name (e.g., `spaces/ABC`, `subscriptions/123`).
+/// Rejects path traversal and control characters while preserving the intentional
+/// `/`-delimited structure. Returns the validated name or an error with a clear
+/// message suitable for LLM callers.
+pub(crate) fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
+    if s.is_empty() {
+        return Err(GwsError::Validation(
+            "Resource name must not be empty".to_string(),
+        ));
+    }
+    if s.contains("..") {
+        return Err(GwsError::Validation(format!(
+            "Resource name must not contain '..': {s}"
+        )));
+    }
+    if s.contains('\0') || s.chars().any(|c| c.is_control()) {
+        return Err(GwsError::Validation(format!(
+            "Resource name contains invalid characters: {s}"
+        )));
+    }
+    Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_path_segment_email() {
+        let encoded = encode_path_segment("user@gmail.com");
+        assert!(!encoded.contains('@'));
+        assert!(!encoded.contains('.'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_plain_id() {
+        assert_eq!(encode_path_segment("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_validate_resource_name_valid() {
+        assert!(validate_resource_name("spaces/ABC123").is_ok());
+        assert!(validate_resource_name("subscriptions/my-sub").is_ok());
+        assert!(validate_resource_name("@default").is_ok());
+    }
+
+    #[test]
+    fn test_validate_resource_name_traversal() {
+        assert!(validate_resource_name("../../etc/passwd").is_err());
+        assert!(validate_resource_name("spaces/../other").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_control_chars() {
+        assert!(validate_resource_name("spaces/\0bad").is_err());
+        assert!(validate_resource_name("spaces/\nbad").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_empty() {
+        assert!(validate_resource_name("").is_err());
+    }
+}

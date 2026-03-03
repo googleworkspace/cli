@@ -37,6 +37,7 @@ pub(super) async fn handle_renew(
 
     if let Some(name) = config.name {
         // Reactivate a specific subscription
+        let name = crate::helpers::validate_resource_name(&name)?;
         eprintln!("Reactivating subscription: {name}");
         let resp = client
             .post(format!(
@@ -78,6 +79,7 @@ pub(super) async fn handle_renew(
             let to_renew = filter_subscriptions_to_renew(subs, now, within_secs);
 
             for name in to_renew {
+                let name = crate::helpers::validate_resource_name(&name)?;
                 eprintln!("Renewing {name}...");
                 let _ = client
                     .post(format!(

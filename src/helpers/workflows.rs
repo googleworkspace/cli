@@ -19,7 +19,6 @@ use super::Helper;
 use crate::auth;
 use crate::error::GwsError;
 use clap::{Arg, ArgMatches, Command};
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
@@ -376,7 +375,7 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let events_url = format!(
         "https://www.googleapis.com/calendar/v3/calendars/{}/events",
-        utf8_percent_encode(calendar_id, NON_ALPHANUMERIC),
+        crate::helpers::encode_path_segment(calendar_id),
     );
     let events_json = get_json(
         &client,
@@ -452,7 +451,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
     // 1. Fetch the email
     let msg_url = format!(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
-        utf8_percent_encode(message_id, NON_ALPHANUMERIC),
+        crate::helpers::encode_path_segment(message_id),
     );
     let msg_json = get_json(
         &client,
@@ -488,6 +487,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
         "notes": format!("From email: {}\n\n{}", message_id, snippet),
     });
 
+    let tasklist = crate::helpers::validate_resource_name(tasklist)?;
     let task_url = format!(
         "https://tasks.googleapis.com/tasks/v1/lists/{}/tasks",
         tasklist,
@@ -612,7 +612,7 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
     // 1. Fetch file metadata from Drive
     let file_url = format!(
         "https://www.googleapis.com/drive/v3/files/{}",
-        utf8_percent_encode(file_id, NON_ALPHANUMERIC),
+        crate::helpers::encode_path_segment(file_id),
     );
     let file_json = get_json(
         &client,
@@ -637,6 +637,7 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
         .unwrap_or_else(|| format!("📎 {file_name}\n{file_link}"));
 
     let chat_body = json!({ "text": msg_text });
+    let space = crate::helpers::validate_resource_name(space)?;
     let chat_url = format!("https://chat.googleapis.com/v1/{}/messages", space);
 
     let chat_resp = client
