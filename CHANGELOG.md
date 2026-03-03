@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.1.2
+
+### Patch Changes
+
+- 3cd4d52: Fix release pipeline to sync Cargo.toml version with changesets and create git tags for private packages
+
 ## 0.1.1
 
 ### Patch Changes
