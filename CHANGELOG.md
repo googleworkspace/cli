@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.1.5
+
+### Patch Changes
+
+- d29f41e: Fix README typography and spacing
+
 ## 0.1.4
 
 ### Patch Changes
