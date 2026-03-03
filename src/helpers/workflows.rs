@@ -298,6 +298,10 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         ],
     )
     .await
+    .map_err(|e| {
+        eprintln!("Warning: Failed to fetch calendar events: {e}");
+        e
+    })
     .unwrap_or(json!({}));
     let events = events_json
         .get("items")
@@ -324,6 +328,10 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         &[("showCompleted", "false"), ("maxResults", "20")],
     )
     .await
+    .map_err(|e| {
+        eprintln!("Warning: Failed to fetch tasks: {e}");
+        e
+    })
     .unwrap_or(json!({}));
     let tasks = tasks_json
         .get("items")
@@ -554,6 +562,10 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         ],
     )
     .await
+    .map_err(|e| {
+        eprintln!("Warning: Failed to fetch calendar events: {e}");
+        e
+    })
     .unwrap_or(json!({}));
     let events = events_json
         .get("items")
@@ -579,6 +591,10 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         &[("q", "is:unread"), ("maxResults", "1")],
     )
     .await
+    .map_err(|e| {
+        eprintln!("Warning: Failed to fetch unread email count: {e}");
+        e
+    })
     .unwrap_or(json!({}));
     let unread_estimate = gmail_json
         .get("resultSizeEstimate")
