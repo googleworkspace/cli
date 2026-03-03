@@ -228,9 +228,15 @@ TIPS:
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn get_json(client: &reqwest::Client, url: &str, token: &str) -> Result<Value, GwsError> {
+async fn get_json(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, GwsError> {
     let resp = client
         .get(url)
+        .query(query)
         .bearer_auth(token)
         .send()
         .await
@@ -279,14 +285,20 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
     let time_max = epoch_to_rfc3339(day_end);
 
     // Fetch today's events
-    let events_url = format!(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=25",
-        urlencoded(&time_min),
-        urlencoded(&time_max),
-    );
-    let events_json = get_json(&client, &events_url, &token)
-        .await
-        .unwrap_or(json!({}));
+    let events_json = get_json(
+        &client,
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        &token,
+        &[
+            ("timeMin", time_min.as_str()),
+            ("timeMax", time_max.as_str()),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("maxResults", "25"),
+        ],
+    )
+    .await
+    .unwrap_or(json!({}));
     let events = events_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -305,10 +317,14 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         .collect();
 
     // Fetch open tasks
-    let tasks_url = "https://tasks.googleapis.com/tasks/v1/lists/@default/tasks?showCompleted=false&maxResults=20";
-    let tasks_json = get_json(&client, tasks_url, &token)
-        .await
-        .unwrap_or(json!({}));
+    let tasks_json = get_json(
+        &client,
+        "https://tasks.googleapis.com/tasks/v1/lists/@default/tasks",
+        &token,
+        &[("showCompleted", "false"), ("maxResults", "20")],
+    )
+    .await
+    .unwrap_or(json!({}));
     let tasks = tasks_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -358,11 +374,21 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
     );
 
     let events_url = format!(
-        "https://www.googleapis.com/calendar/v3/calendars/{}/events?timeMin={}&singleEvents=true&orderBy=startTime&maxResults=1",
-        urlencoded(calendar_id),
-        urlencoded(&now_rfc),
+        "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+        calendar_id,
     );
-    let events_json = get_json(&client, &events_url, &token).await?;
+    let events_json = get_json(
+        &client,
+        &events_url,
+        &token,
+        &[
+            ("timeMin", now_rfc.as_str()),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("maxResults", "1"),
+        ],
+    )
+    .await?;
     let items = events_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -424,10 +450,16 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
 
     // 1. Fetch the email
     let msg_url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=Subject",
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
         message_id,
     );
-    let msg_json = get_json(&client, &msg_url, &token).await?;
+    let msg_json = get_json(
+        &client,
+        &msg_url,
+        &token,
+        &[("format", "metadata"), ("metadataHeaders", "Subject")],
+    )
+    .await?;
 
     let subject = msg_json
         .get("payload")
@@ -508,14 +540,20 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
     let time_max = epoch_to_rfc3339(week_end);
 
     // Fetch this week's events
-    let events_url = format!(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=50",
-        urlencoded(&time_min),
-        urlencoded(&time_max),
-    );
-    let events_json = get_json(&client, &events_url, &token)
-        .await
-        .unwrap_or(json!({}));
+    let events_json = get_json(
+        &client,
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        &token,
+        &[
+            ("timeMin", time_min.as_str()),
+            ("timeMax", time_max.as_str()),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("maxResults", "50"),
+        ],
+    )
+    .await
+    .unwrap_or(json!({}));
     let events = events_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -533,11 +571,14 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         .collect();
 
     // Fetch unread email count
-    let gmail_url =
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread&maxResults=1";
-    let gmail_json = get_json(&client, gmail_url, &token)
-        .await
-        .unwrap_or(json!({}));
+    let gmail_json = get_json(
+        &client,
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        &token,
+        &[("q", "is:unread"), ("maxResults", "1")],
+    )
+    .await
+    .unwrap_or(json!({}));
     let unread_estimate = gmail_json
         .get("resultSizeEstimate")
         .and_then(|v| v.as_u64())
@@ -568,11 +609,14 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
     let custom_msg = matches.get_one::<String>("message");
 
     // 1. Fetch file metadata from Drive
-    let file_url = format!(
-        "https://www.googleapis.com/drive/v3/files/{}?fields=id,name,webViewLink",
-        file_id,
-    );
-    let file_json = get_json(&client, &file_url, &token).await?;
+    let file_url = format!("https://www.googleapis.com/drive/v3/files/{}", file_id,);
+    let file_json = get_json(
+        &client,
+        &file_url,
+        &token,
+        &[("fields", "id,name,webViewLink")],
+    )
+    .await?;
     let file_name = file_json
         .get("name")
         .and_then(|v| v.as_str())
@@ -627,14 +671,6 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
 fn epoch_to_rfc3339(epoch: u64) -> String {
     use chrono::{TimeZone, Utc};
     Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
-}
-
-fn urlencoded(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('@', "%40")
-        .replace('+', "%2B")
-        .replace(':', "%3A")
 }
 
 #[cfg(test)]

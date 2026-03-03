@@ -301,14 +301,21 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
             let time_max = &time_max;
             async move {
                 let events_url = format!(
-                    "https://www.googleapis.com/calendar/v3/calendars/{}/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=50",
-                    urlencoded(&cal.id),
-                    urlencoded(time_min),
-                    urlencoded(time_max),
+                    "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+                    cal.id,
                 );
 
                 let resp = crate::client::send_with_retry(|| {
-                    client.get(&events_url).bearer_auth(token)
+                    client
+                        .get(&events_url)
+                        .query(&[
+                            ("timeMin", time_min.as_str()),
+                            ("timeMax", time_max.as_str()),
+                            ("singleEvents", "true"),
+                            ("orderBy", "startTime"),
+                            ("maxResults", "50"),
+                        ])
+                        .bearer_auth(token)
                 })
                 .await;
 
@@ -389,14 +396,6 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
 fn epoch_to_rfc3339(epoch: u64) -> String {
     use chrono::{TimeZone, Utc};
     Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
-}
-
-fn urlencoded(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('@', "%40")
-        .replace('+', "%2B")
-        .replace(':', "%3A")
 }
 
 fn build_insert_request(
