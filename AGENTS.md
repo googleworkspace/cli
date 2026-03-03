@@ -18,6 +18,20 @@ cargo clippy -- -D warnings  # Lint check
 cargo test           # Run tests
 ```
 
+## Changesets
+
+Every PR must include a changeset file. Create one at `.changeset/<descriptive-name>.md`:
+
+```markdown
+---
+"@googleworkspace/cli": patch
+---
+
+Brief description of the change
+```
+
+Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes. The CI policy check will fail without a changeset.
+
 ## Architecture
 
 The CLI uses a **two-phase argument parsing** strategy:
