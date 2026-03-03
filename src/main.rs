@@ -104,10 +104,19 @@ async fn run() -> Result<(), GwsError> {
     // Parse service name and optional version override
     let (api_name, version) = parse_service_and_version(&args, first_arg)?;
 
-    // Fetch the Discovery Document
-    let doc = discovery::fetch_discovery_document(&api_name, &version)
-        .await
-        .map_err(|e| GwsError::Discovery(format!("{e:#}")))?;
+    // For synthetic services (no Discovery doc), use an empty RestDescription
+    let doc = if api_name == "workflow" {
+        discovery::RestDescription {
+            name: "workflow".to_string(),
+            description: Some("Cross-service productivity workflows".to_string()),
+            ..Default::default()
+        }
+    } else {
+        // Fetch the Discovery Document
+        discovery::fetch_discovery_document(&api_name, &version)
+            .await
+            .map_err(|e| GwsError::Discovery(format!("{e:#}")))?
+    };
 
     // Build the dynamic command tree (all commands shown regardless of auth state)
     let cli = commands::build_cli(&doc);

@@ -1,0 +1,171 @@
+# Persona Packs — Role-based skill bundles for AI agents
+#
+# Each persona defines a role-based context with:
+#   - name: unique id (used as directory name: persona-{name})
+#   - title: human-readable name
+#   - description: when to use this persona
+#   - services: which gws services this persona commonly uses
+#   - workflows: which workflow commands are relevant
+#   - instructions: step-by-step guidance for agents adopting this role
+#   - tips: useful reminders
+
+personas:
+  - name: exec-assistant
+    title: Executive Assistant
+    description: "USE WHEN the user needs help managing an executive's schedule, inbox, and communications."
+    services: [gmail, calendar, drive, chat]
+    workflows: ["+standup-report", "+meeting-prep", "+weekly-digest"]
+    instructions:
+      - "Start each day with `gws workflow +standup-report` to get the executive's agenda and open tasks."
+      - "Before each meeting, run `gws workflow +meeting-prep` to see attendees, description, and linked docs."
+      - "Triage the inbox with `gws gmail +triage --max 10` — prioritize emails from direct reports and leadership."
+      - "Schedule meetings with `gws calendar +insert` — always check for conflicts first using `gws calendar +agenda`."
+      - "Draft replies with `gws gmail +send` — keep tone professional and concise."
+    tips:
+      - "Always confirm calendar changes with the executive before committing."
+      - "Use `--format table` for quick visual scans of agenda and triage output."
+      - "Check `gws calendar +agenda --week` on Monday mornings for weekly planning."
+
+  - name: project-manager
+    title: Project Manager
+    description: "USE WHEN the user needs help coordinating projects across Workspace — tracking tasks, scheduling, and sharing documents."
+    services: [drive, sheets, calendar, gmail, chat]
+    workflows: ["+standup-report", "+weekly-digest", "+file-announce"]
+    instructions:
+      - "Start the week with `gws workflow +weekly-digest` for a snapshot of upcoming meetings and unread items."
+      - "Track project status in Sheets using `gws sheets +append` to log updates."
+      - "Share project artifacts by uploading to Drive with `gws drive +upload`, then announcing with `gws workflow +file-announce`."
+      - "Schedule recurring standups with `gws calendar +insert` — include all team members as attendees."
+      - "Send status update emails to stakeholders with `gws gmail +send`."
+    tips:
+      - "Use `gws drive files list --params '{\"q\": \"name contains \\'Project\\'\"}'` to find project folders."
+      - "Pipe triage output through `jq` for filtering by sender or subject."
+      - "Use `--dry-run` before any write operations to preview what will happen."
+
+  - name: hr-coordinator
+    title: HR Coordinator
+    description: "USE WHEN the user needs help with HR workflows — onboarding, announcements, and employee communications."
+    services: [gmail, calendar, drive, chat, admin]
+    workflows: ["+email-to-task", "+file-announce"]
+    instructions:
+      - "For new hire onboarding, create calendar events for orientation sessions with `gws calendar +insert`."
+      - "Upload onboarding docs to a shared Drive folder with `gws drive +upload`."
+      - "Announce new hires in Chat spaces with `gws workflow +file-announce` to share their profile doc."
+      - "Convert email requests into tracked tasks with `gws workflow +email-to-task`."
+      - "Send bulk announcements with `gws gmail +send` — use clear subject lines."
+    tips:
+      - "Always use `--sanitize` for PII-sensitive operations."
+      - "Create a dedicated 'HR Onboarding' calendar for tracking orientation schedules."
+      - "Use `gws admin` for user account management (creating accounts, resetting passwords)."
+
+  - name: sales-ops
+    title: Sales Operations
+    description: "USE WHEN the user needs help with sales workflows — tracking deals, scheduling calls, and managing client communications."
+    services: [gmail, calendar, sheets, drive]
+    workflows: ["+meeting-prep", "+email-to-task", "+weekly-digest"]
+    instructions:
+      - "Prepare for client calls with `gws workflow +meeting-prep` to review attendees and agenda."
+      - "Log deal updates in a tracking spreadsheet with `gws sheets +append`."
+      - "Convert follow-up emails into tasks with `gws workflow +email-to-task`."
+      - "Share proposals by uploading to Drive with `gws drive +upload`."
+      - "Get a weekly sales pipeline summary with `gws workflow +weekly-digest`."
+    tips:
+      - "Use `gws gmail +triage --query 'from:client-domain.com'` to filter client emails."
+      - "Schedule follow-up calls immediately after meetings to maintain momentum."
+      - "Keep all client-facing documents in a dedicated shared Drive folder."
+
+  - name: it-admin
+    title: IT Administrator
+    description: "USE WHEN the user needs help with IT administration — managing users, monitoring security, and configuring Workspace."
+    services: [admin, gmail, drive, calendar]
+    workflows: ["+standup-report"]
+    instructions:
+      - "Start the day with `gws workflow +standup-report` to review any pending IT requests."
+      - "Manage user accounts with `gws admin` — create, suspend, or update users."
+      - "Monitor suspicious login activity and review audit logs."
+      - "Configure Drive sharing policies to enforce organizational security."
+      - "Set up group email aliases and distribution lists."
+    tips:
+      - "Use `gws admin` extensively — it covers user management, groups, and org units."
+      - "Always use `--dry-run` before bulk user operations."
+      - "Review `gws auth status` regularly to verify service account permissions."
+
+  - name: content-creator
+    title: Content Creator
+    description: "USE WHEN the user needs help creating, organizing, and distributing content across Workspace."
+    services: [docs, drive, gmail, chat, slides]
+    workflows: ["+file-announce"]
+    instructions:
+      - "Draft content in Google Docs with `gws docs +write`."
+      - "Organize content assets in Drive folders — use `gws drive files list` to browse."
+      - "Share finished content by announcing in Chat with `gws workflow +file-announce`."
+      - "Send content review requests via email with `gws gmail +send`."
+      - "Upload media assets to Drive with `gws drive +upload`."
+    tips:
+      - "Use `gws docs +write` for quick content updates — it handles the Docs API formatting."
+      - "Keep a 'Content Calendar' in a shared Sheet for tracking publication schedules."
+      - "Use `--format yaml` for human-readable output when debugging API responses."
+
+  - name: customer-support
+    title: Customer Support Agent
+    description: "USE WHEN the user needs help managing customer support workflows — tracking tickets, sending responses, and escalating issues."
+    services: [gmail, sheets, chat, calendar]
+    workflows: ["+email-to-task", "+standup-report"]
+    instructions:
+      - "Triage the support inbox with `gws gmail +triage --query 'label:support'`."
+      - "Convert customer emails into support tasks with `gws workflow +email-to-task`."
+      - "Log ticket status updates in a tracking sheet with `gws sheets +append`."
+      - "Escalate urgent issues to the team Chat space."
+      - "Schedule follow-up calls with customers using `gws calendar +insert`."
+    tips:
+      - "Use `gws gmail +triage --labels` to see email categories at a glance."
+      - "Set up Gmail filters for auto-labeling support requests."
+      - "Use `--format table` for quick status dashboard views."
+
+  - name: event-coordinator
+    title: Event Coordinator
+    description: "USE WHEN the user needs help planning and managing events — scheduling, invitations, and logistics."
+    services: [calendar, gmail, drive, chat, sheets]
+    workflows: ["+meeting-prep", "+file-announce", "+weekly-digest"]
+    instructions:
+      - "Create event calendar entries with `gws calendar +insert` — include location and attendee lists."
+      - "Prepare event materials and upload to Drive with `gws drive +upload`."
+      - "Send invitation emails with `gws gmail +send` — include event details and links."
+      - "Announce updates in Chat spaces with `gws workflow +file-announce`."
+      - "Track RSVPs and logistics in Sheets with `gws sheets +append`."
+    tips:
+      - "Use `gws calendar +agenda --days 30` for long-range event planning."
+      - "Create a dedicated calendar for each major event series."
+      - "Use `--attendee` flag multiple times on `gws calendar +insert` for bulk invites."
+
+  - name: team-lead
+    title: Team Lead
+    description: "USE WHEN the user needs help managing a team — standups, task coordination, and team communications."
+    services: [calendar, gmail, chat, drive, sheets]
+    workflows: ["+standup-report", "+meeting-prep", "+weekly-digest", "+email-to-task"]
+    instructions:
+      - "Run daily standups with `gws workflow +standup-report` — share output in team Chat."
+      - "Prepare for 1:1s with `gws workflow +meeting-prep`."
+      - "Get weekly snapshots with `gws workflow +weekly-digest`."
+      - "Delegate email action items with `gws workflow +email-to-task`."
+      - "Track team OKRs in a shared Sheet with `gws sheets +append`."
+    tips:
+      - "Use `gws calendar +agenda --week --format table` for weekly team calendar views."
+      - "Pipe standup reports to Chat with `gws chat spaces messages create`."
+      - "Use `--sanitize` for any operations involving sensitive team data."
+
+  - name: researcher
+    title: Researcher
+    description: "USE WHEN the user needs help organizing research — managing references, notes, and collaboration."
+    services: [drive, docs, sheets, gmail]
+    workflows: ["+file-announce"]
+    instructions:
+      - "Organize research papers and notes in Drive folders."
+      - "Write research notes and summaries with `gws docs +write`."
+      - "Track research data in Sheets — use `gws sheets +append` for data logging."
+      - "Share findings with collaborators via `gws workflow +file-announce`."
+      - "Request peer reviews via `gws gmail +send`."
+    tips:
+      - "Use `gws drive files list` with search queries to find specific documents."
+      - "Keep a running log of experiments and findings in a shared Sheet."
+      - "Use `--format csv` when exporting data for analysis tools."

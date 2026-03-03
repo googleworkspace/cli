@@ -29,6 +29,10 @@ categories = ["command-line-utilities", "web-programming"]
 name = "gws"
 path = "src/main.rs"
 
+[[bin]]
+name = "seed_recipes"
+path = "src/bin/seed_recipes.rs"
+
 [dependencies]
 aes-gcm = "0.10"
 anyhow = "1"
@@ -52,6 +56,7 @@ crossterm = "0.29.0"
 chrono = "0.4.44"
 keyring = "3.6.3"
 async-trait = "0.1.89"
+serde_yaml = "0.9.34"
 
 
 # The profile that 'cargo dist' will build with

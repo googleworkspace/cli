@@ -25,6 +25,7 @@ pub mod gmail;
 pub mod modelarmor;
 pub mod script;
 pub mod sheets;
+pub mod workflows;
 
 /// A trait for service-specific CLI helpers that inject custom commands.
 pub trait Helper: Send + Sync {
@@ -58,6 +59,7 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "script" | "apps-script" => Some(Box::new(script::ScriptHelper)),
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
         "modelarmor" => Some(Box::new(modelarmor::ModelArmorHelper)),
+        "workflow" => Some(Box::new(workflows::WorkflowHelper)),
         _ => None,
     }
 }

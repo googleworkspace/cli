@@ -1442,7 +1442,10 @@ mod tests {
     fn test_workspace_api_ids_covers_services() {
         let api_ids = all_api_ids();
         for entry in services::SERVICES {
-            if entry.api_name == "modelarmor" || entry.api_name == "workspaceevents" {
+            if entry.api_name == "modelarmor"
+                || entry.api_name == "workspaceevents"
+                || entry.api_name == "workflow"
+            {
                 continue;
             }
             let expected_suffix = if entry.api_name == "calendar" {

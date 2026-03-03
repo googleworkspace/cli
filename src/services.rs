@@ -168,6 +168,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         version: "v1",
         description: "Filter user-generated content for safety",
     },
+    ServiceEntry {
+        aliases: &["workflow", "wf"],
+        api_name: "workflow",
+        version: "v1",
+        description: "Cross-service productivity workflows",
+    },
 ];
 
 /// Resolves a service alias to (api_name, version).

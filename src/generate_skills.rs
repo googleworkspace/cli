@@ -23,6 +23,42 @@ use crate::services;
 use clap::Command;
 use std::path::Path;
 
+const PERSONAS_YAML: &str = include_str!("../skills/registry/personas.yaml");
+const RECIPES_YAML: &str = include_str!("../skills/registry/recipes.yaml");
+
+#[derive(serde::Deserialize)]
+struct PersonaRegistry {
+    personas: Vec<PersonaEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct PersonaEntry {
+    name: String,
+    title: String,
+    description: String,
+    services: Vec<String>,
+    workflows: Vec<String>,
+    instructions: Vec<String>,
+    #[serde(default)]
+    tips: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RecipeRegistry {
+    recipes: Vec<RecipeEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RecipeEntry {
+    name: String,
+    title: String,
+    description: String,
+    category: String,
+    services: Vec<String>,
+    steps: Vec<String>,
+    caution: Option<String>,
+}
+
 /// Entry point for `gws generate-skills`.
 pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
     let output_dir = parse_output_dir(args);
@@ -47,12 +83,21 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
             entry.api_name, entry.version
         );
 
-        // Fetch discovery doc
-        let doc = match discovery::fetch_discovery_document(entry.api_name, entry.version).await {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("  WARNING: Failed to fetch discovery doc for {alias}: {e}");
-                continue;
+        // Synthetic services (no Discovery doc) use an empty RestDescription
+        let doc = if entry.api_name == "workflow" {
+            discovery::RestDescription {
+                name: "workflow".to_string(),
+                description: Some(entry.description.to_string()),
+                ..Default::default()
+            }
+        } else {
+            // Fetch discovery doc
+            match discovery::fetch_discovery_document(entry.api_name, entry.version).await {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("  WARNING: Failed to fetch discovery doc for {alias}: {e}");
+                    continue;
+                }
             }
         };
 
@@ -98,6 +143,55 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 let helper_md = render_helper_skill(alias, helper_name, helper, entry);
                 write_skill(output_path, &helper_skill_name, &helper_md)?;
             }
+        }
+    }
+
+    // Generate Personas
+    if filter
+        .as_ref()
+        .is_none_or(|f| "persona".contains(f.as_str()) || "personas".contains(f.as_str()))
+    {
+        if let Ok(registry) = serde_yaml::from_str::<PersonaRegistry>(PERSONAS_YAML) {
+            eprintln!(
+                "Generating skills for {} personas...",
+                registry.personas.len()
+            );
+            for persona in registry.personas {
+                let name = format!("persona-{}", persona.name);
+                let emit = match &filter {
+                    Some(f) => name.contains(f.as_str()),
+                    None => true,
+                };
+                if emit {
+                    let md = render_persona_skill(&persona);
+                    write_skill(output_path, &name, &md)?;
+                }
+            }
+        } else {
+            eprintln!("WARNING: Failed to parse personas.yaml");
+        }
+    }
+
+    // Generate Recipes
+    if filter
+        .as_ref()
+        .is_none_or(|f| "recipe".contains(f.as_str()) || "recipes".contains(f.as_str()))
+    {
+        if let Ok(registry) = serde_yaml::from_str::<RecipeRegistry>(RECIPES_YAML) {
+            eprintln!("Generating skills for {} recipes...", registry.recipes.len());
+            for recipe in registry.recipes {
+                let name = format!("recipe-{}", recipe.name);
+                let emit = match &filter {
+                    Some(f) => name.contains(f.as_str()),
+                    None => true,
+                };
+                if emit {
+                    let md = render_recipe_skill(&recipe);
+                    write_skill(output_path, &name, &md)?;
+                }
+            }
+        } else {
+            eprintln!("WARNING: Failed to parse recipes.yaml");
         }
     }
 
@@ -490,4 +584,181 @@ gws <service> <resource> [sub-resource] <method> [flags]
 "#;
 
     write_skill(base, "gws-shared", content)
+}
+
+fn render_persona_skill(persona: &PersonaEntry) -> String {
+    let mut out = String::new();
+
+    // metadata JSON string for skills array
+    let required_skills = persona
+        .services
+        .iter()
+        .map(|s| format!("\"gws-{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    out.push_str(&format!(
+        r#"---
+name: persona-{name}
+version: 1.0.0
+description: "{description}"
+metadata:
+  openclaw:
+    category: "persona"
+    requires:
+      bins: ["gws"]
+      skills: [{skills}]
+---
+
+# {title}
+
+> **PREREQUISITE:** Load the following utility skills to operate as this persona: {skills_list}
+
+{description}
+
+## Relevant Workflows
+{workflows}
+
+## Instructions
+"#,
+        name = persona.name,
+        description = persona.description,
+        title = persona.title,
+        skills = required_skills,
+        skills_list = persona
+            .services
+            .iter()
+            .map(|s| format!("`gws-{s}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        workflows = persona
+            .workflows
+            .iter()
+            .map(|w| format!("- `gws workflow {w}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ));
+
+    for inst in &persona.instructions {
+        out.push_str(&format!("- {inst}\n"));
+    }
+    out.push('\n');
+
+    if !persona.tips.is_empty() {
+        out.push_str("## Tips\n");
+        for tip in &persona.tips {
+            out.push_str(&format!("- {tip}\n"));
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+fn render_recipe_skill(recipe: &RecipeEntry) -> String {
+    let mut out = String::new();
+
+    let required_skills = recipe
+        .services
+        .iter()
+        .map(|s| format!("\"gws-{s}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    out.push_str(&format!(
+        r#"---
+name: recipe-{name}
+version: 1.0.0
+description: "{description}"
+metadata:
+  openclaw:
+    category: "recipe"
+    domain: "{category}"
+    requires:
+      bins: ["gws"]
+      skills: [{skills}]
+---
+
+# {title}
+
+> **PREREQUISITE:** Load the following skills to execute this recipe: {skills_list}
+
+{description}
+
+"#,
+        name = recipe.name,
+        description = recipe.description,
+        title = recipe.title,
+        category = recipe.category,
+        skills = required_skills,
+        skills_list = recipe
+            .services
+            .iter()
+            .map(|s| format!("`gws-{s}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    ));
+
+    if let Some(caution) = &recipe.caution {
+        out.push_str(&format!("> [!CAUTION]\n> {caution}\n\n"));
+    }
+
+    out.push_str("## Steps\n\n");
+    for (i, step) in recipe.steps.iter().enumerate() {
+        out.push_str(&format!("{}. {}\n", i + 1, step));
+    }
+    out.push('\n');
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helpers;
+    use crate::services;
+    use clap::Command;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_registry_references() {
+        let personas: PersonaRegistry = serde_yaml::from_str(PERSONAS_YAML).expect("valid personas yaml");
+        let recipes: RecipeRegistry = serde_yaml::from_str(RECIPES_YAML).expect("valid recipes yaml");
+        
+        // Valid services mapped by api_name or alias
+        let all_services = services::SERVICES;
+        let mut valid_services = HashSet::new();
+        for s in all_services {
+            valid_services.insert(s.api_name);
+            for alias in s.aliases {
+                valid_services.insert(*alias);
+            }
+        }
+        // Workflows are synthetic and technically a service, so add it
+        valid_services.insert("workflow");
+        
+        // Valid workflows
+        let wf_helper = helpers::get_helper("workflow").expect("workflow helper missing");
+        let mut cli = Command::new("test");
+        let doc = crate::discovery::RestDescription::default();
+        cli = wf_helper.inject_commands(cli, &doc);
+        let valid_workflows: HashSet<_> = cli.get_subcommands().map(|s| s.get_name().to_string()).collect();
+
+        // Validate personas
+        for p in personas.personas {
+            for s in &p.services {
+                assert!(valid_services.contains(s.as_str()), "Persona '{}' refs invalid service '{}'", p.name, s);
+            }
+            for w in &p.workflows {
+                assert!(valid_workflows.contains(w.as_str()), "Persona '{}' refs invalid workflow '{}'", p.name, w);
+            }
+        }
+
+        // Validate recipes
+        for r in recipes.recipes {
+            for s in &r.services {
+                assert!(valid_services.contains(s.as_str()), "Recipe '{}' refs invalid service '{}'", r.name, s);
+            }
+        }
+    }
 }
