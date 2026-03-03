@@ -173,7 +173,12 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
 
     if token.token().is_some() {
         // Read yup-oauth2's token cache to extract the refresh_token.
-        let token_data = std::fs::read_to_string(&temp_path).unwrap_or_default();
+        // EncryptedTokenStorage stores data encrypted, so we must decrypt first.
+        let token_data = std::fs::read(&temp_path)
+            .ok()
+            .and_then(|bytes| crate::credential_store::decrypt(&bytes).ok())
+            .and_then(|decrypted| String::from_utf8(decrypted).ok())
+            .unwrap_or_default();
         let refresh_token = extract_refresh_token(&token_data).ok_or_else(|| {
             GwsError::Auth(
                 "OAuth flow completed but no refresh token was returned. \
@@ -891,16 +896,39 @@ fn handle_logout() -> Result<(), GwsError> {
 }
 
 /// Extract refresh_token from yup-oauth2 v12 token cache.
-/// Format: [{"scopes":[...], "token":{"access_token":..., "refresh_token":...}}]
+///
+/// Supports two formats:
+/// 1. Array format (yup-oauth2 default file storage):
+///    [{"scopes":[...], "token":{"access_token":..., "refresh_token":...}}]
+/// 2. Object/HashMap format (EncryptedTokenStorage serialization):
+///    {"scope_key": {"access_token":..., "refresh_token":..., ...}}
 pub fn extract_refresh_token(token_data: &str) -> Option<String> {
     let cache: serde_json::Value = serde_json::from_str(token_data).ok()?;
-    cache.as_array()?.iter().find_map(|entry| {
-        entry
-            .get("token")
-            .and_then(|t| t.get("refresh_token"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    })
+
+    // Format 1: array of {scopes, token} entries
+    if let Some(arr) = cache.as_array() {
+        let result = arr.iter().find_map(|entry| {
+            entry
+                .get("token")
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
+        if result.is_some() {
+            return result;
+        }
+    }
+
+    // Format 2: HashMap<String, TokenInfo> — values are TokenInfo structs
+    if let Some(obj) = cache.as_object() {
+        for value in obj.values() {
+            if let Some(rt) = value.get("refresh_token").and_then(|v| v.as_str()) {
+                return Some(rt.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 /// Parse --scopes or --readonly from args, falling back to DEFAULT_SCOPES.
@@ -1223,8 +1251,8 @@ mod tests {
 
     #[test]
     fn extract_refresh_token_object_format() {
-        // Should return None — we only support array format
+        // HashMap<String, TokenInfo> format from EncryptedTokenStorage
         let data = r#"{"key":{"access_token":"ya29","refresh_token":"1//tok"}}"#;
-        assert_eq!(extract_refresh_token(data), None);
+        assert_eq!(extract_refresh_token(data), Some("1//tok".to_string()));
     }
 }
