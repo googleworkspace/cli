@@ -55,7 +55,6 @@ Or build from source:
 cargo install --path .
 ```
 
----
 
 ## Why gws?
 
@@ -83,7 +82,6 @@ gws schema drive.files.list
 gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
 
----
 
 ## Authentication
 
@@ -147,7 +145,6 @@ export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 
 Environment variables can also live in a `.env` file.
 
----
 
 ## AI Agent Skills
 
@@ -177,7 +174,6 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 </details>
 
----
 
 ## Advanced Usage
 
@@ -209,7 +205,6 @@ gws gmail users messages get --params '...' \
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
 
----
 
 ## Architecture
 
@@ -223,7 +218,6 @@ gws gmail users messages get --params '...' \
 
 All output — success, errors, download metadata — is structured JSON.
 
----
 
 ## Development
 
@@ -234,7 +228,6 @@ cargo test                        # unit tests
 ./scripts/coverage.sh             # HTML coverage report → target/llvm-cov/html/
 ```
 
----
 
 ## License
 
