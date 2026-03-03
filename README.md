@@ -20,7 +20,7 @@ Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JS
 npm install -g @googleworkspace/cli
 ```
 
-`gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google adds an API endpoint, `gws` picks it up automatically.
+`gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google Workspace adds an API endpoint or method, `gws` picks it up automatically.
 
 
 > [!IMPORTANT]
