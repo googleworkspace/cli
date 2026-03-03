@@ -102,12 +102,7 @@ pub(crate) fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_encode_path_segment_email() {
-        let encoded = encode_path_segment("user@gmail.com");
-        assert!(!encoded.contains('@'));
-        assert!(!encoded.contains('.'));
-    }
+    // -- encode_path_segment --------------------------------------------------
 
     #[test]
     fn test_encode_path_segment_plain_id() {
@@ -115,26 +110,104 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_path_segment_email() {
+        // Calendar IDs are often email addresses
+        let encoded = encode_path_segment("user@gmail.com");
+        assert!(!encoded.contains('@'));
+        assert!(!encoded.contains('.'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_query_injection() {
+        // LLM might include query params in an ID by mistake
+        let encoded = encode_path_segment("fileid?fields=name");
+        assert!(!encoded.contains('?'));
+        assert!(!encoded.contains('='));
+    }
+
+    #[test]
+    fn test_encode_path_segment_fragment_injection() {
+        let encoded = encode_path_segment("fileid#section");
+        assert!(!encoded.contains('#'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_path_traversal() {
+        // Encoding makes traversal segments harmless
+        let encoded = encode_path_segment("../../etc/passwd");
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains(".."));
+    }
+
+    #[test]
+    fn test_encode_path_segment_unicode() {
+        // LLM might pass unicode characters
+        let encoded = encode_path_segment("日本語ID");
+        assert!(!encoded.contains('日'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_spaces() {
+        let encoded = encode_path_segment("my file id");
+        assert!(!encoded.contains(' '));
+    }
+
+    #[test]
+    fn test_encode_path_segment_already_encoded() {
+        // LLM might double-encode by passing pre-encoded values
+        let encoded = encode_path_segment("user%40gmail.com");
+        // The % itself gets encoded to %25, so %40 becomes %2540
+        // This prevents double-encoding issues at the HTTP layer
+        assert!(encoded.contains("%2540"));
+    }
+
+    // -- validate_resource_name -----------------------------------------------
+
+    #[test]
     fn test_validate_resource_name_valid() {
         assert!(validate_resource_name("spaces/ABC123").is_ok());
         assert!(validate_resource_name("subscriptions/my-sub").is_ok());
         assert!(validate_resource_name("@default").is_ok());
+        assert!(validate_resource_name("projects/p1/topics/t1").is_ok());
     }
 
     #[test]
     fn test_validate_resource_name_traversal() {
         assert!(validate_resource_name("../../etc/passwd").is_err());
         assert!(validate_resource_name("spaces/../other").is_err());
+        assert!(validate_resource_name("..").is_err());
     }
 
     #[test]
     fn test_validate_resource_name_control_chars() {
         assert!(validate_resource_name("spaces/\0bad").is_err());
         assert!(validate_resource_name("spaces/\nbad").is_err());
+        assert!(validate_resource_name("spaces/\rbad").is_err());
+        assert!(validate_resource_name("spaces/\tbad").is_err());
     }
 
     #[test]
     fn test_validate_resource_name_empty() {
         assert!(validate_resource_name("").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_query_injection() {
+        // LLMs might append query strings to resource names — this is allowed
+        // by validation since `?` is not a traversal/control char, but the
+        // API will reject it with a clear error.
+        assert!(validate_resource_name("spaces/ABC?key=val").is_ok());
+    }
+
+    #[test]
+    fn test_validate_resource_name_error_messages_are_clear() {
+        let err = validate_resource_name("").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+
+        let err = validate_resource_name("../bad").unwrap_err();
+        assert!(err.to_string().contains("must not contain '..'"));
+
+        let err = validate_resource_name("bad\0id").unwrap_err();
+        assert!(err.to_string().contains("invalid characters"));
     }
 }
