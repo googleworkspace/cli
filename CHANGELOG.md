@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.1.3
+
+### Patch Changes
+
+- c714f4b: Fix npm package name to publish as @googleworkspace/cli instead of gws
+
 ## 0.1.2
 
 ### Patch Changes
