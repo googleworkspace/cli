@@ -132,3 +132,20 @@ impl TokenStorage for EncryptedTokenStorage {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn test_encrypted_token_storage_new() {
+        let path = PathBuf::from("/fake/path/to/token.json");
+        let storage = EncryptedTokenStorage::new(path.clone());
+
+        assert_eq!(storage.file_path, path);
+
+        let cache_lock = storage.cache.lock().await;
+        assert!(cache_lock.is_none());
+    }
+}
