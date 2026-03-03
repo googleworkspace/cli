@@ -203,20 +203,27 @@ mod tests {
     // Helper to manage the env var safely and clean up automatically
     struct EnvGuard {
         key: String,
+        original_value: Option<String>,
     }
 
     impl EnvGuard {
         fn new(key: &str, value: &str) -> Self {
+            let original_value = std::env::var(key).ok();
             std::env::set_var(key, value);
             Self {
                 key: key.to_string(),
+                original_value,
             }
         }
     }
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            std::env::remove_var(&self.key);
+            if let Some(val) = &self.original_value {
+                std::env::set_var(&self.key, val);
+            } else {
+                std::env::remove_var(&self.key);
+            }
         }
     }
 
