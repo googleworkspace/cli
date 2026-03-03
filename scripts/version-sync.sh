@@ -19,7 +19,7 @@ awk -v ver="$VERSION" '
 ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
 
 # Update Cargo.lock to match
-cargo generate-lockfile 2>/dev/null || cargo update -w 2>/dev/null || true
+cargo generate-lockfile
 
 # Stage the changed files so changesets/action commits them
 git add Cargo.toml Cargo.lock
