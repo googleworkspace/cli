@@ -20,7 +20,7 @@
     "test": "cargo test",
     "prepare": "lefthook install",
     "version-sync": "bash scripts/version-sync.sh",
-    "tag-release": "git tag v$(node -p \"require('./package.json').version\") 2>/dev/null && git push origin v$(node -p \"require('./package.json').version\") || echo 'Tag already exists, skipping'"
+    "tag-release": "bash scripts/tag-release.sh"
   },
   "publishConfig": {
     "provenance": true,
