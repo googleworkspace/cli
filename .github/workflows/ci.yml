@@ -22,8 +22,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
 
 jobs:
   test:
@@ -132,9 +130,6 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
-      SCCACHE_GHA_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
