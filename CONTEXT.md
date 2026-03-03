@@ -2,6 +2,12 @@
 
 The `gws` CLI provides dynamic access to Google Workspace APIs (Drive, Gmail, Calendar, Sheets, Admin, etc.) by parsing Discovery Documents at runtime.
 
+## Rules of Engagement for Agents
+
+* **Schema Discovery:** *If you don't know the exact JSON payload structure, run `gws schema <resource>.<method>` first to inspect the schema before executing.*
+* **Context Window Protection:** *Workspace APIs (like Drive and Gmail) return massive JSON blobs. ALWAYS use field masks when listing or getting resources by appending `--params '{"fields": "id,name"}'` to avoid overwhelming your context window.*
+* **Dry-Run Safety:** *Always use the `--dry-run` flag for mutating operations (create, update, delete) to validate your JSON payload before actual execution.*
+
 ## Core Syntax
 
 ```bash

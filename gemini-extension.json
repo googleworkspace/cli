@@ -5,33 +5,9 @@
   "contextFileName": "CONTEXT.md",
   "settings": [
     {
-      "name": "Credentials File",
-      "description": "Path to the Google Workspace authorized user credentials or service account JSON file.",
-      "envVar": "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
-      "sensitive": false
-    },
-    {
-      "name": "OAuth Client ID",
-      "description": "Client ID for OAuth authentication.",
-      "envVar": "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
-      "sensitive": false
-    },
-    {
-      "name": "OAuth Client Secret",
-      "description": "Client Secret for OAuth authentication.",
-      "envVar": "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-      "sensitive": true
-    },
-    {
       "name": "Sanitize Template",
       "description": "Resource name of the Model Armor template to use for sanitization (e.g., projects/P/locations/L/templates/T).",
       "envVar": "GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE",
-      "sensitive": false
-    },
-    {
-      "name": "Impersonated User",
-      "description": "Email address of the user to impersonate (requires Domain-Wide Delegation).",
-      "envVar": "GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER",
       "sensitive": false
     }
   ]
