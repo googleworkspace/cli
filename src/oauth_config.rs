@@ -199,4 +199,57 @@ mod tests {
         let result = serde_json::from_str::<ClientSecretFile>(json);
         assert!(result.is_err());
     }
+
+    // Helper to manage the env var safely and clean up automatically
+    struct EnvGuard {
+        key: String,
+    }
+
+    impl EnvGuard {
+        fn new(key: &str, value: &str) -> Self {
+            std::env::set_var(key, value);
+            Self { key: key.to_string() }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var(&self.key);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_client_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env_guard = EnvGuard::new(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            dir.path().to_str().unwrap()
+        );
+
+        // Initially no config file exists
+        let result = load_client_config();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Cannot read"));
+
+        // Create a valid config file
+        save_client_config("test-id", "test-secret", "test-project").unwrap();
+
+        // Now loading should succeed
+        let config = load_client_config().unwrap();
+        assert_eq!(config.client_id, "test-id");
+        assert_eq!(config.client_secret, "test-secret");
+        assert_eq!(config.project_id, "test-project");
+
+        // Create an invalid config file
+        let path = client_config_path();
+        std::fs::write(&path, "invalid json").unwrap();
+
+        let result = load_client_config();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid client_secret.json format"));
+    }
 }

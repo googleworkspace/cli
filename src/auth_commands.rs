@@ -44,6 +44,11 @@ const READONLY_SCOPES: &[&str] = &[
 ];
 
 pub fn config_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("gws")
