@@ -1,5 +1,12 @@
 # @googleworkspace/cli
 
+## 0.1.4
+
+### Patch Changes
+
+- adb2cfa: Fix OAuth login failing with "no refresh token" error by decrypting the token cache before parsing and supporting the HashMap token format used by EncryptedTokenStorage
+- d990dcc: Improve README branding by making the hero banner full-width.
+
 ## 0.1.3
 
 ### Patch Changes
