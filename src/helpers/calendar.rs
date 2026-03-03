@@ -300,9 +300,10 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
             let time_min = &time_min;
             let time_max = &time_max;
             async move {
+                use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
                 let events_url = format!(
                     "https://www.googleapis.com/calendar/v3/calendars/{}/events",
-                    cal.id,
+                    utf8_percent_encode(&cal.id, NON_ALPHANUMERIC),
                 );
 
                 let resp = crate::client::send_with_retry(|| {

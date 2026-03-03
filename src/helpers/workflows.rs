@@ -19,6 +19,7 @@ use super::Helper;
 use crate::auth;
 use crate::error::GwsError;
 use clap::{Arg, ArgMatches, Command};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
@@ -375,7 +376,7 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let events_url = format!(
         "https://www.googleapis.com/calendar/v3/calendars/{}/events",
-        calendar_id,
+        utf8_percent_encode(calendar_id, NON_ALPHANUMERIC),
     );
     let events_json = get_json(
         &client,
@@ -451,7 +452,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
     // 1. Fetch the email
     let msg_url = format!(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
-        message_id,
+        utf8_percent_encode(message_id, NON_ALPHANUMERIC),
     );
     let msg_json = get_json(
         &client,
@@ -609,7 +610,10 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
     let custom_msg = matches.get_one::<String>("message");
 
     // 1. Fetch file metadata from Drive
-    let file_url = format!("https://www.googleapis.com/drive/v3/files/{}", file_id,);
+    let file_url = format!(
+        "https://www.googleapis.com/drive/v3/files/{}",
+        utf8_percent_encode(file_id, NON_ALPHANUMERIC),
+    );
     let file_json = get_json(
         &client,
         &file_url,
