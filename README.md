@@ -177,8 +177,6 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 ## Gemini CLI Extension
 
-### 1. Installation
-
 1. Authenticate the CLI first:
    ```bash
    gws setup
@@ -189,18 +187,7 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
    gemini extensions install https://github.com/googleworkspace/cli
    ```
 
-Installing this extension gives your Gemini CLI agent direct access to all `gws` commands and 40+ Google Workspace agent skills. Because `gws` handles its own authentication securely, you simply need to authenticate your terminal once prior to using the agent, and the extension will automatically inherit your credentials.
-
-### 2. How to Improve `gws` as a Gemini CLI Extension
-
-Because `gws` dynamically builds its commands from Google's Discovery APIs, it is incredibly powerful for AI. However, relying purely on the model writing `bash` commands can lead to hallucinations or context-window bloat. Here is how you can optimize it specifically for the Gemini CLI agent:
-
-#### A. Optimize the Context File for Agent Autonomy
-The file specified in `"contextFileName": "CONTEXT.md"` (which is canonically named `GEMINI.md` in Gemini CLI extensions) is injected directly into the Gemini agent's system prompt. Use this file to give the agent strict "rules of engagement":
-* **Schema Discovery:** *"If you don't know the exact JSON payload structure, run `gws schema <resource>.<method>` first to inspect the schema before executing."*
-* **Context Window Protection:** *"Workspace APIs (like Drive and Gmail) return massive JSON blobs. ALWAYS use field masks when listing or getting resources by appending `--params '{"fields": "id,name"}'` to avoid overwhelming your context window."*
-* **Dry-Run Safety:** *"Always use the `--dry-run` flag for mutating operations (create, update, delete) to validate your JSON payload before actual execution."*
-
+Installing this extension gives your Gemini CLI agent direct access to all `gws` commands and Google Workspace agent skills. Because `gws` handles its own authentication securely, you simply need to authenticate your terminal once prior to using the agent, and the extension will automatically inherit your credentials.
 
 ## Advanced Usage
 
