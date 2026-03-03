@@ -89,14 +89,16 @@ fn build_standup_report_cmd() -> Command {
                 .value_name("FORMAT")
                 .global(true),
         )
-        .after_help("\
+        .after_help(
+            "\
 EXAMPLES:
   gws workflow +standup-report
   gws workflow +standup-report --format table
 
 TIPS:
   Read-only — never modifies data.
-  Combines calendar agenda (today) with tasks list.")
+  Combines calendar agenda (today) with tasks list.",
+        )
 }
 
 fn build_meeting_prep_cmd() -> Command {
@@ -116,14 +118,16 @@ fn build_meeting_prep_cmd() -> Command {
                 .value_name("FORMAT")
                 .global(true),
         )
-        .after_help("\
+        .after_help(
+            "\
 EXAMPLES:
   gws workflow +meeting-prep
   gws workflow +meeting-prep --calendar Work
 
 TIPS:
   Read-only — never modifies data.
-  Shows the next upcoming event with attendees and description.")
+  Shows the next upcoming event with attendees and description.",
+        )
 }
 
 fn build_email_to_task_cmd() -> Command {
@@ -143,14 +147,16 @@ fn build_email_to_task_cmd() -> Command {
                 .default_value("@default")
                 .value_name("ID"),
         )
-        .after_help("\
+        .after_help(
+            "\
 EXAMPLES:
   gws workflow +email-to-task --message-id MSG_ID
   gws workflow +email-to-task --message-id MSG_ID --tasklist LIST_ID
 
 TIPS:
   Reads the email subject as the task title and snippet as notes.
-  Creates a new task — confirm with the user before executing.")
+  Creates a new task — confirm with the user before executing.",
+        )
 }
 
 fn build_weekly_digest_cmd() -> Command {
@@ -163,14 +169,16 @@ fn build_weekly_digest_cmd() -> Command {
                 .value_name("FORMAT")
                 .global(true),
         )
-        .after_help("\
+        .after_help(
+            "\
 EXAMPLES:
   gws workflow +weekly-digest
   gws workflow +weekly-digest --format table
 
 TIPS:
   Read-only — never modifies data.
-  Combines calendar agenda (week) with gmail triage summary.")
+  Combines calendar agenda (week) with gmail triage summary.",
+        )
 }
 
 fn build_file_announce_cmd() -> Command {
@@ -203,7 +211,8 @@ fn build_file_announce_cmd() -> Command {
                 .value_name("FORMAT")
                 .global(true),
         )
-        .after_help("\
+        .after_help(
+            "\
 EXAMPLES:
   gws workflow +file-announce --file-id FILE_ID --space spaces/ABC123
   gws workflow +file-announce --file-id FILE_ID --space spaces/ABC123 --message 'Check this out!'
@@ -211,18 +220,15 @@ EXAMPLES:
 TIPS:
   This is a write command — sends a Chat message.
   Use `gws drive +upload` first to upload the file, then announce it here.
-  Fetches the file name from Drive to build the announcement.")
+  Fetches the file name from Drive to build the announcement.",
+        )
 }
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn get_json(
-    client: &reqwest::Client,
-    url: &str,
-    token: &str,
-) -> Result<Value, GwsError> {
+async fn get_json(client: &reqwest::Client, url: &str, token: &str) -> Result<Value, GwsError> {
     let resp = client
         .get(url)
         .bearer_auth(token)
@@ -278,7 +284,9 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         urlencoded(&time_min),
         urlencoded(&time_max),
     );
-    let events_json = get_json(&client, &events_url, &token).await.unwrap_or(json!({}));
+    let events_json = get_json(&client, &events_url, &token)
+        .await
+        .unwrap_or(json!({}));
     let events = events_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -298,7 +306,9 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
 
     // Fetch open tasks
     let tasks_url = "https://tasks.googleapis.com/tasks/v1/lists/@default/tasks?showCompleted=false&maxResults=20";
-    let tasks_json = get_json(&client, tasks_url, &token).await.unwrap_or(json!({}));
+    let tasks_json = get_json(&client, tasks_url, &token)
+        .await
+        .unwrap_or(json!({}));
     let tasks = tasks_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -503,7 +513,9 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         urlencoded(&time_min),
         urlencoded(&time_max),
     );
-    let events_json = get_json(&client, &events_url, &token).await.unwrap_or(json!({}));
+    let events_json = get_json(&client, &events_url, &token)
+        .await
+        .unwrap_or(json!({}));
     let events = events_json
         .get("items")
         .and_then(|i| i.as_array())
@@ -521,8 +533,11 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         .collect();
 
     // Fetch unread email count
-    let gmail_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread&maxResults=1";
-    let gmail_json = get_json(&client, gmail_url, &token).await.unwrap_or(json!({}));
+    let gmail_url =
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is%3Aunread&maxResults=1";
+    let gmail_json = get_json(&client, gmail_url, &token)
+        .await
+        .unwrap_or(json!({}));
     let unread_estimate = gmail_json
         .get("resultSizeEstimate")
         .and_then(|v| v.as_u64())
@@ -632,7 +647,10 @@ mod tests {
         let cmd = Command::new("test");
         let doc = crate::discovery::RestDescription::default();
         let cmd = helper.inject_commands(cmd, &doc);
-        let names: Vec<_> = cmd.get_subcommands().map(|s| s.get_name().to_string()).collect();
+        let names: Vec<_> = cmd
+            .get_subcommands()
+            .map(|s| s.get_name().to_string())
+            .collect();
         assert!(names.contains(&"+standup-report".to_string()));
         assert!(names.contains(&"+meeting-prep".to_string()));
         assert!(names.contains(&"+email-to-task".to_string()));

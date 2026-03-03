@@ -1,7 +1,7 @@
 ---
 name: gws-events
 version: 1.0.0
-description: "USE WHEN the user wants to subscribe to google workspace events via the `gws` CLI."
+description: "Subscribe to Google Workspace events."
 metadata:
   openclaw:
     category: "productivity"

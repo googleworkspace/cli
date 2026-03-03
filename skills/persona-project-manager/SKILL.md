@@ -1,7 +1,7 @@
 ---
 name: persona-project-manager
 version: 1.0.0
-description: "USE WHEN the user needs help coordinating projects across Workspace — tracking tasks, scheduling, and sharing documents."
+description: "Coordinate projects — track tasks, schedule meetings, and share docs."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-drive`, `gws-sheets`, `gws-calendar`, `gws-gmail`, `gws-chat`
 
-USE WHEN the user needs help coordinating projects across Workspace — tracking tasks, scheduling, and sharing documents.
+Coordinate projects — track tasks, schedule meetings, and share docs.
 
 ## Relevant Workflows
 - `gws workflow +standup-report`

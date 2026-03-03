@@ -1,7 +1,7 @@
 ---
 name: gws-gmail
 version: 1.0.0
-description: "USE WHEN the user wants to send, read, and manage email via the `gws` CLI."
+description: "Gmail: Send, read, and manage email."
 metadata:
   openclaw:
     category: "productivity"

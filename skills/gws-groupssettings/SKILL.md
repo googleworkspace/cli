@@ -1,7 +1,7 @@
 ---
 name: gws-groupssettings
 version: 1.0.0
-description: "USE WHEN the user wants to manage google groups settings via the `gws` CLI."
+description: "Manage Google Groups settings."
 metadata:
   openclaw:
     category: "productivity"

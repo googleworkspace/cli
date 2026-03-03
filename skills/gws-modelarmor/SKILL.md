@@ -1,7 +1,7 @@
 ---
 name: gws-modelarmor
 version: 1.0.0
-description: "USE WHEN the user wants to filter user-generated content for safety via the `gws` CLI."
+description: "Google Model Armor: Filter user-generated content for safety."
 metadata:
   openclaw:
     category: "productivity"

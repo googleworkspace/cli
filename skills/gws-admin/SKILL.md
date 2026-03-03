@@ -1,7 +1,7 @@
 ---
 name: gws-admin
 version: 1.0.0
-description: "USE WHEN the user wants to manage users, groups, and devices via the `gws` CLI."
+description: "Google Workspace Admin SDK: Manage users, groups, and devices."
 metadata:
   openclaw:
     category: "productivity"

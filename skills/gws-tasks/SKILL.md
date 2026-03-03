@@ -1,7 +1,7 @@
 ---
 name: gws-tasks
 version: 1.0.0
-description: "USE WHEN the user wants to manage task lists and tasks via the `gws` CLI."
+description: "Google Tasks: Manage task lists and tasks."
 metadata:
   openclaw:
     category: "productivity"

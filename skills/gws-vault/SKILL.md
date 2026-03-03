@@ -1,7 +1,7 @@
 ---
 name: gws-vault
 version: 1.0.0
-description: "USE WHEN the user wants to manage ediscovery holds and exports via the `gws` CLI."
+description: "Google Vault: Manage eDiscovery holds and exports."
 metadata:
   openclaw:
     category: "productivity"

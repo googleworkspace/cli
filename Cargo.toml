@@ -29,9 +29,7 @@ categories = ["command-line-utilities", "web-programming"]
 name = "gws"
 path = "src/main.rs"
 
-[[bin]]
-name = "seed_recipes"
-path = "src/bin/seed_recipes.rs"
+
 
 [dependencies]
 aes-gcm = "0.10"

@@ -1,7 +1,7 @@
 ---
 name: persona-team-lead
 version: 1.0.0
-description: "USE WHEN the user needs help managing a team — standups, task coordination, and team communications."
+description: "Lead a team — run standups, coordinate tasks, and communicate."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-calendar`, `gws-gmail`, `gws-chat`, `gws-drive`, `gws-sheets`
 
-USE WHEN the user needs help managing a team — standups, task coordination, and team communications.
+Lead a team — run standups, coordinate tasks, and communicate.
 
 ## Relevant Workflows
 - `gws workflow +standup-report`

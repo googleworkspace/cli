@@ -1,7 +1,7 @@
 ---
 name: gws-cloudidentity
 version: 1.0.0
-description: "USE WHEN the user wants to manage identity groups and memberships via the `gws` CLI."
+description: "Google Cloud Identity: Manage identity groups and memberships."
 metadata:
   openclaw:
     category: "productivity"

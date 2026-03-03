@@ -1,7 +1,7 @@
 ---
 name: gws-forms
 version: 1.0.0
-description: "USE WHEN the user wants to read and write google forms via the `gws` CLI."
+description: "Read and write Google Forms."
 metadata:
   openclaw:
     category: "productivity"

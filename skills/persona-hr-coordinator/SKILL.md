@@ -1,7 +1,7 @@
 ---
 name: persona-hr-coordinator
 version: 1.0.0
-description: "USE WHEN the user needs help with HR workflows — onboarding, announcements, and employee communications."
+description: "Handle HR workflows — onboarding, announcements, and employee comms."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-calendar`, `gws-drive`, `gws-chat`, `gws-admin`
 
-USE WHEN the user needs help with HR workflows — onboarding, announcements, and employee communications.
+Handle HR workflows — onboarding, announcements, and employee comms.
 
 ## Relevant Workflows
 - `gws workflow +email-to-task`

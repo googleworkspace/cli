@@ -1,7 +1,7 @@
 ---
 name: gws-drive-upload
 version: 1.0.0
-description: "Upload a file with automatic metadata"
+description: "Google Drive: Upload a file with automatic metadata."
 metadata:
   openclaw:
     category: "productivity"

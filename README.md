@@ -148,7 +148,7 @@ Environment variables can also live in a `.env` file.
 
 ## AI Agent Skills
 
-The repo ships 40+ [Agent Skills](https://github.com/vercel-labs/agent-skills) (`SKILL.md` files) — one for every supported API, plus higher-level helpers for common workflows like sending email, triaging a Gmail inbox, or subscribing to calendar events.
+The repo ships 100+ Agent Skills (`SKILL.md` files) — one for every supported API, plus higher-level helpers for common workflows and 50 curated recipes for Gmail, Drive, Docs, Calendar, and Sheets. See the full [Skills Index](docs/skills.md) for the complete list.
 
 ```bash
 # Install all skills at once

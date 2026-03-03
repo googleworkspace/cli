@@ -1,7 +1,7 @@
 ---
 name: persona-content-creator
 version: 1.0.0
-description: "USE WHEN the user needs help creating, organizing, and distributing content across Workspace."
+description: "Create, organize, and distribute content across Workspace."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-docs`, `gws-drive`, `gws-gmail`, `gws-chat`, `gws-slides`
 
-USE WHEN the user needs help creating, organizing, and distributing content across Workspace.
+Create, organize, and distribute content across Workspace.
 
 ## Relevant Workflows
 - `gws workflow +file-announce`

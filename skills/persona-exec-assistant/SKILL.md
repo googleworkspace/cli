@@ -1,7 +1,7 @@
 ---
 name: persona-exec-assistant
 version: 1.0.0
-description: "USE WHEN the user needs help managing an executive's schedule, inbox, and communications."
+description: "Manage an executive's schedule, inbox, and communications."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-calendar`, `gws-drive`, `gws-chat`
 
-USE WHEN the user needs help managing an executive's schedule, inbox, and communications.
+Manage an executive's schedule, inbox, and communications.
 
 ## Relevant Workflows
 - `gws workflow +standup-report`

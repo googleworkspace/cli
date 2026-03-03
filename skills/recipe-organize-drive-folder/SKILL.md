@@ -1,26 +1,26 @@
 ---
 name: recipe-organize-drive-folder
 version: 1.0.0
-description: "USE WHEN the user needs to create a folder structure in Drive."
+description: "Create a Google Drive folder structure and move files into the right locations."
 metadata:
   openclaw:
     category: "recipe"
-    domain: "documents"
+    domain: "productivity"
     requires:
       bins: ["gws"]
       skills: ["gws-drive"]
 ---
 
-# Create and Organize a Drive Folder
+# Organize Files into Google Drive Folders
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`
 
-USE WHEN the user needs to create a folder structure in Drive.
+Create a Google Drive folder structure and move files into the right locations.
 
 ## Steps
 
-1. Create the parent folder: `gws drive files create --json '{"name": "Project Folder", "mimeType": "application/vnd.google-apps.folder"}'`
-2. Create a subfolder: `gws drive files create --json '{"name": "Documents", "mimeType": "application/vnd.google-apps.folder", "parents": ["PARENT_FOLDER_ID"]}'`
-3. Upload files to the folder: `gws drive +upload myfile.pdf --parent FOLDER_ID`
-4. List contents: `gws drive files list --params '{"q": "'\''FOLDER_ID'\'' in parents"}'`
+1. Create a project folder: `gws drive files create --json '{"name": "Q2 Project", "mimeType": "application/vnd.google-apps.folder"}'`
+2. Create sub-folders: `gws drive files create --json '{"name": "Documents", "mimeType": "application/vnd.google-apps.folder", "parents": ["PARENT_FOLDER_ID"]}'`
+3. Move existing files into folder: `gws drive files update --params '{"fileId": "FILE_ID", "addParents": "FOLDER_ID", "removeParents": "OLD_PARENT_ID"}'`
+4. Verify structure: `gws drive files list --params '{"q": "FOLDER_ID in parents"}' --format table`
 

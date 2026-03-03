@@ -1,7 +1,7 @@
 ---
 name: gws-slides
 version: 1.0.0
-description: "USE WHEN the user wants to read and write presentations via the `gws` CLI."
+description: "Google Slides: Read and write presentations."
 metadata:
   openclaw:
     category: "productivity"

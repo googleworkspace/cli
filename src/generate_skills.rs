@@ -23,8 +23,8 @@ use crate::services;
 use clap::Command;
 use std::path::Path;
 
-const PERSONAS_YAML: &str = include_str!("../skills/registry/personas.yaml");
-const RECIPES_YAML: &str = include_str!("../skills/registry/recipes.yaml");
+const PERSONAS_YAML: &str = include_str!("../registry/personas.yaml");
+const RECIPES_YAML: &str = include_str!("../registry/recipes.yaml");
 
 #[derive(serde::Deserialize)]
 struct PersonaRegistry {
@@ -59,11 +59,18 @@ struct RecipeEntry {
     caution: Option<String>,
 }
 
+struct SkillIndexEntry {
+    name: String,
+    description: String,
+    category: String,
+}
+
 /// Entry point for `gws generate-skills`.
 pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
     let output_dir = parse_output_dir(args);
     let output_path = Path::new(&output_dir);
     let filter = parse_filter(args);
+    let mut index: Vec<SkillIndexEntry> = Vec::new();
 
     // Generate gws-shared skill if no filter or "shared" is in the filter
     if filter
@@ -71,6 +78,13 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         .is_none_or(|f| "shared".contains(f.as_str()))
     {
         generate_shared_skill(output_path)?;
+        index.push(SkillIndexEntry {
+            name: "gws-shared".to_string(),
+            description:
+                "gws CLI: Shared patterns for authentication, global flags, and output formatting."
+                    .to_string(),
+            category: "service".to_string(),
+        });
     }
 
     for entry in services::SERVICES {
@@ -87,6 +101,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         let doc = if entry.api_name == "workflow" {
             discovery::RestDescription {
                 name: "workflow".to_string(),
+                title: Some("Workflow".to_string()),
                 description: Some(entry.description.to_string()),
                 ..Default::default()
             }
@@ -100,6 +115,9 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 }
             }
         };
+
+        // Derive product name from Discovery title (e.g. "Google Drive API" -> "Google Drive")
+        let product_name = product_name_from_title(doc.title.as_deref().unwrap_or(alias));
 
         // Build the CLI tree (includes helpers)
         let cli = commands::build_cli(&doc);
@@ -123,8 +141,14 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
             None => true,
         };
         if emit_service {
-            let service_md = render_service_skill(alias, entry, &helpers, &resources);
+            let service_md =
+                render_service_skill(alias, entry, &helpers, &resources, &product_name);
             write_skill(output_path, &skill_name, &service_md)?;
+            index.push(SkillIndexEntry {
+                name: skill_name.clone(),
+                description: service_description(&product_name, entry.description),
+                category: "service".to_string(),
+            });
         }
 
         // Generate per-helper skills
@@ -140,8 +164,23 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
             };
             if emit_helper {
                 let helper_skill_name = format!("gws-{helper_key}");
-                let helper_md = render_helper_skill(alias, helper_name, helper, entry);
+                let about_raw = helper
+                    .get_about()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let about_clean = about_raw.strip_prefix("[Helper] ").unwrap_or(&about_raw);
+                let helper_md =
+                    render_helper_skill(alias, helper_name, helper, entry, &product_name);
                 write_skill(output_path, &helper_skill_name, &helper_md)?;
+                index.push(SkillIndexEntry {
+                    name: helper_skill_name,
+                    description: truncate_desc(&format!(
+                        "{}: {}",
+                        product_name,
+                        capitalize_first(about_clean)
+                    )),
+                    category: "helper".to_string(),
+                });
             }
         }
     }
@@ -165,6 +204,11 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 if emit {
                     let md = render_persona_skill(&persona);
                     write_skill(output_path, &name, &md)?;
+                    index.push(SkillIndexEntry {
+                        name: name.clone(),
+                        description: truncate_desc(&persona.description),
+                        category: "persona".to_string(),
+                    });
                 }
             }
         } else {
@@ -178,7 +222,10 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         .is_none_or(|f| "recipe".contains(f.as_str()) || "recipes".contains(f.as_str()))
     {
         if let Ok(registry) = serde_yaml::from_str::<RecipeRegistry>(RECIPES_YAML) {
-            eprintln!("Generating skills for {} recipes...", registry.recipes.len());
+            eprintln!(
+                "Generating skills for {} recipes...",
+                registry.recipes.len()
+            );
             for recipe in registry.recipes {
                 let name = format!("recipe-{}", recipe.name);
                 let emit = match &filter {
@@ -188,11 +235,21 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 if emit {
                     let md = render_recipe_skill(&recipe);
                     write_skill(output_path, &name, &md)?;
+                    index.push(SkillIndexEntry {
+                        name: name.clone(),
+                        description: truncate_desc(&recipe.description),
+                        category: "recipe".to_string(),
+                    });
                 }
             }
         } else {
             eprintln!("WARNING: Failed to parse recipes.yaml");
         }
+    }
+
+    // Write skills index
+    if filter.is_none() {
+        write_skills_index(&index)?;
     }
 
     eprintln!("\nDone. Skills written to {output_dir}/");
@@ -233,6 +290,57 @@ fn write_skill(base: &Path, name: &str, content: &str) -> Result<(), GwsError> {
     Ok(())
 }
 
+fn write_skills_index(entries: &[SkillIndexEntry]) -> Result<(), GwsError> {
+    let mut out = String::new();
+    out.push_str("# Skills Index\n\n");
+    out.push_str("> Auto-generated by `gws generate-skills`. Do not edit manually.\n\n");
+
+    let sections = [
+        (
+            "service",
+            "## Services",
+            "Core Google Workspace API skills.",
+        ),
+        (
+            "helper",
+            "## Helpers",
+            "Shortcut commands for common operations.",
+        ),
+        ("persona", "## Personas", "Role-based skill bundles."),
+        (
+            "recipe",
+            "## Recipes",
+            "Multi-step task sequences with real commands.",
+        ),
+    ];
+
+    for (cat, heading, subtitle) in &sections {
+        let items: Vec<&SkillIndexEntry> = entries.iter().filter(|e| e.category == *cat).collect();
+        if items.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("{heading}\n\n{subtitle}\n\n"));
+        out.push_str("| Skill | Description |\n|-------|-------------|\n");
+        for item in &items {
+            out.push_str(&format!(
+                "| [{}](../skills/{}/SKILL.md) | {} |\n",
+                item.name, item.name, item.description
+            ));
+        }
+        out.push('\n');
+    }
+
+    let path = Path::new("docs/skills.md");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| GwsError::Validation(format!("Failed to create docs dir: {e}")))?;
+    }
+    std::fs::write(path, &out)
+        .map_err(|e| GwsError::Validation(format!("Failed to write skills index: {e}")))?;
+    eprintln!("Skills index written to docs/skills.md");
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Renderers
 // ---------------------------------------------------------------------------
@@ -242,15 +350,18 @@ fn render_service_skill(
     entry: &services::ServiceEntry,
     helpers: &[&Command],
     resources: &[&Command],
+    product_name: &str,
 ) -> String {
     let mut out = String::new();
+
+    let trigger_desc = service_description(product_name, entry.description);
 
     // Frontmatter
     out.push_str(&format!(
         r#"---
 name: gws-{alias}
 version: 1.0.0
-description: "USE WHEN the user wants to {description} via the `gws` CLI."
+description: "{trigger_desc}"
 metadata:
   openclaw:
     category: "productivity"
@@ -260,7 +371,6 @@ metadata:
 ---
 
 "#,
-        description = entry.description.to_lowercase(),
     ));
 
     // Title
@@ -347,6 +457,7 @@ fn render_helper_skill(
     cmd_name: &str,
     cmd: &Command,
     entry: &services::ServiceEntry,
+    product_name: &str,
 ) -> String {
     let mut out = String::new();
 
@@ -354,6 +465,8 @@ fn render_helper_skill(
     let about = about_raw.strip_prefix("[Helper] ").unwrap_or(&about_raw);
 
     let short = cmd_name.trim_start_matches('+');
+    let capitalized_about = capitalize_first(about);
+    let trigger_desc = truncate_desc(&format!("{}: {}", product_name, capitalized_about));
 
     // Determine if write command
     let is_write = matches!(
@@ -378,7 +491,7 @@ fn render_helper_skill(
         r#"---
 name: gws-{alias}-{short}
 version: 1.0.0
-description: "{about}"
+description: "{trigger_desc}"
 metadata:
   openclaw:
     category: "{category}"
@@ -525,7 +638,7 @@ fn generate_shared_skill(base: &Path) -> Result<(), GwsError> {
     let content = r#"---
 name: gws-shared
 version: 1.0.0
-description: "Shared patterns, authentication, and global flags for all gws commands."
+description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 metadata:
   openclaw:
     category: "productivity"
@@ -597,11 +710,13 @@ fn render_persona_skill(persona: &PersonaEntry) -> String {
         .collect::<Vec<_>>()
         .join(", ");
 
+    let trigger_desc = truncate_desc(&persona.description);
+
     out.push_str(&format!(
         r#"---
 name: persona-{name}
 version: 1.0.0
-description: "{description}"
+description: "{trigger_desc}"
 metadata:
   openclaw:
     category: "persona"
@@ -665,11 +780,13 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
         .collect::<Vec<_>>()
         .join(", ");
 
+    let trigger_desc = truncate_desc(&recipe.description);
+
     out.push_str(&format!(
         r#"---
 name: recipe-{name}
 version: 1.0.0
-description: "{description}"
+description: "{trigger_desc}"
 metadata:
   openclaw:
     category: "recipe"
@@ -712,6 +829,67 @@ metadata:
     out
 }
 
+fn truncate_desc(desc: &str) -> String {
+    let mut s = desc.replace('"', "'").trim().to_string();
+    // Capitalize first letter
+    if let Some(first) = s.get(0..1) {
+        s = format!("{}{}", first.to_uppercase(), &s[1..]);
+    }
+    if s.len() > 120 {
+        if let Some(idx) = s[..120].rfind(' ') {
+            s = format!("{}...", &s[..idx]);
+        } else {
+            s = format!("{}...", &s[..117]);
+        }
+    }
+    // Ensure trailing period
+    if !s.ends_with('.') && !s.ends_with("...") {
+        s.push('.');
+    }
+    s
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => format!("{}{}", c.to_uppercase(), chars.as_str()),
+    }
+}
+
+fn product_name_from_title(title: &str) -> String {
+    // Discovery titles are like "Google Drive API", "Gmail API", "Model Armor API"
+    // Strip " API" suffix to get the product name
+    let name = title.strip_suffix(" API").unwrap_or(title).trim();
+    if name.is_empty() {
+        return "Unknown".to_string();
+    }
+    // Prepend "Google" if not already present (most Workspace products are "Google X")
+    // Skip for standalone brands like "Gmail"
+    if !name.starts_with("Google") && !name.starts_with("Gmail") {
+        // Workspace management tools get "Google Workspace" prefix
+        let is_workspace_mgmt =
+            name.contains("Admin") || name.contains("Enterprise") || name.contains("Reseller");
+        if is_workspace_mgmt {
+            return format!("Google Workspace {name}");
+        }
+        return format!("Google {name}");
+    }
+    name.to_string()
+}
+
+fn service_description(product_name: &str, discovery_desc: &str) -> String {
+    // If the description already mentions the product name, use it as-is
+    let desc_lower = discovery_desc.to_lowercase();
+    let name_lower = product_name.to_lowercase();
+    if desc_lower.contains(&name_lower) {
+        return truncate_desc(discovery_desc);
+    }
+
+    // Prepend the product name
+    truncate_desc(&format!("{product_name}: {discovery_desc}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,9 +900,11 @@ mod tests {
 
     #[test]
     fn test_registry_references() {
-        let personas: PersonaRegistry = serde_yaml::from_str(PERSONAS_YAML).expect("valid personas yaml");
-        let recipes: RecipeRegistry = serde_yaml::from_str(RECIPES_YAML).expect("valid recipes yaml");
-        
+        let personas: PersonaRegistry =
+            serde_yaml::from_str(PERSONAS_YAML).expect("valid personas yaml");
+        let recipes: RecipeRegistry =
+            serde_yaml::from_str(RECIPES_YAML).expect("valid recipes yaml");
+
         // Valid services mapped by api_name or alias
         let all_services = services::SERVICES;
         let mut valid_services = HashSet::new();
@@ -736,28 +916,46 @@ mod tests {
         }
         // Workflows are synthetic and technically a service, so add it
         valid_services.insert("workflow");
-        
+
         // Valid workflows
         let wf_helper = helpers::get_helper("workflow").expect("workflow helper missing");
         let mut cli = Command::new("test");
         let doc = crate::discovery::RestDescription::default();
         cli = wf_helper.inject_commands(cli, &doc);
-        let valid_workflows: HashSet<_> = cli.get_subcommands().map(|s| s.get_name().to_string()).collect();
+        let valid_workflows: HashSet<_> = cli
+            .get_subcommands()
+            .map(|s| s.get_name().to_string())
+            .collect();
 
         // Validate personas
         for p in personas.personas {
             for s in &p.services {
-                assert!(valid_services.contains(s.as_str()), "Persona '{}' refs invalid service '{}'", p.name, s);
+                assert!(
+                    valid_services.contains(s.as_str()),
+                    "Persona '{}' refs invalid service '{}'",
+                    p.name,
+                    s
+                );
             }
             for w in &p.workflows {
-                assert!(valid_workflows.contains(w.as_str()), "Persona '{}' refs invalid workflow '{}'", p.name, w);
+                assert!(
+                    valid_workflows.contains(w.as_str()),
+                    "Persona '{}' refs invalid workflow '{}'",
+                    p.name,
+                    w
+                );
             }
         }
 
         // Validate recipes
         for r in recipes.recipes {
             for s in &r.services {
-                assert!(valid_services.contains(s.as_str()), "Recipe '{}' refs invalid service '{}'", r.name, s);
+                assert!(
+                    valid_services.contains(s.as_str()),
+                    "Recipe '{}' refs invalid service '{}'",
+                    r.name,
+                    s
+                );
             }
         }
     }

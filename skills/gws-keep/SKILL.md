@@ -1,7 +1,7 @@
 ---
 name: gws-keep
 version: 1.0.0
-description: "USE WHEN the user wants to manage google keep notes via the `gws` CLI."
+description: "Manage Google Keep notes."
 metadata:
   openclaw:
     category: "productivity"

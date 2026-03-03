@@ -1,7 +1,7 @@
 ---
 name: persona-sales-ops
 version: 1.0.0
-description: "USE WHEN the user needs help with sales workflows — tracking deals, scheduling calls, and managing client communications."
+description: "Manage sales workflows — track deals, schedule calls, client comms."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-calendar`, `gws-sheets`, `gws-drive`
 
-USE WHEN the user needs help with sales workflows — tracking deals, scheduling calls, and managing client communications.
+Manage sales workflows — track deals, schedule calls, client comms.
 
 ## Relevant Workflows
 - `gws workflow +meeting-prep`

@@ -1,7 +1,7 @@
 ---
 name: persona-researcher
 version: 1.0.0
-description: "USE WHEN the user needs help organizing research — managing references, notes, and collaboration."
+description: "Organize research — manage references, notes, and collaboration."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-drive`, `gws-docs`, `gws-sheets`, `gws-gmail`
 
-USE WHEN the user needs help organizing research — managing references, notes, and collaboration.
+Organize research — manage references, notes, and collaboration.
 
 ## Relevant Workflows
 - `gws workflow +file-announce`

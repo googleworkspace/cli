@@ -1,7 +1,7 @@
 ---
 name: gws-alertcenter
 version: 1.0.0
-description: "USE WHEN the user wants to manage workspace security alerts via the `gws` CLI."
+description: "Google Workspace Alert Center: Manage Workspace security alerts."
 metadata:
   openclaw:
     category: "productivity"

@@ -1,7 +1,7 @@
 ---
 name: gws-reseller
 version: 1.0.0
-description: "USE WHEN the user wants to manage workspace subscriptions via the `gws` CLI."
+description: "Google Workspace Reseller: Manage Workspace subscriptions."
 metadata:
   openclaw:
     category: "productivity"

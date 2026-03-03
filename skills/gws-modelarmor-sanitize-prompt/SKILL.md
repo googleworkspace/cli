@@ -1,7 +1,7 @@
 ---
 name: gws-modelarmor-sanitize-prompt
 version: 1.0.0
-description: "Sanitize a user prompt through a Model Armor template"
+description: "Google Model Armor: Sanitize a user prompt through a Model Armor template."
 metadata:
   openclaw:
     category: "security"

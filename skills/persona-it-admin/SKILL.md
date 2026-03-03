@@ -1,7 +1,7 @@
 ---
 name: persona-it-admin
 version: 1.0.0
-description: "USE WHEN the user needs help with IT administration — managing users, monitoring security, and configuring Workspace."
+description: "Administer IT — manage users, monitor security, configure Workspace."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-admin`, `gws-gmail`, `gws-drive`, `gws-calendar`
 
-USE WHEN the user needs help with IT administration — managing users, monitoring security, and configuring Workspace.
+Administer IT — manage users, monitor security, configure Workspace.
 
 ## Relevant Workflows
 - `gws workflow +standup-report`

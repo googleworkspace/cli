@@ -1,7 +1,7 @@
 ---
 name: gws-classroom
 version: 1.0.0
-description: "USE WHEN the user wants to manage classes, rosters, and coursework via the `gws` CLI."
+description: "Google Classroom: Manage classes, rosters, and coursework."
 metadata:
   openclaw:
     category: "productivity"

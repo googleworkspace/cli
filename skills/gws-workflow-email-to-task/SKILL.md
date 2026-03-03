@@ -1,7 +1,7 @@
 ---
 name: gws-workflow-email-to-task
 version: 1.0.0
-description: "Convert a Gmail message into a Google Tasks entry"
+description: "Google Workflow: Convert a Gmail message into a Google Tasks entry."
 metadata:
   openclaw:
     category: "productivity"

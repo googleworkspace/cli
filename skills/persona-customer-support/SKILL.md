@@ -1,7 +1,7 @@
 ---
 name: persona-customer-support
 version: 1.0.0
-description: "USE WHEN the user needs help managing customer support workflows — tracking tickets, sending responses, and escalating issues."
+description: "Manage customer support — track tickets, respond, escalate issues."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-sheets`, `gws-chat`, `gws-calendar`
 
-USE WHEN the user needs help managing customer support workflows — tracking tickets, sending responses, and escalating issues.
+Manage customer support — track tickets, respond, escalate issues.
 
 ## Relevant Workflows
 - `gws workflow +email-to-task`

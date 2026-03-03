@@ -1,7 +1,7 @@
 ---
 name: gws-people
 version: 1.0.0
-description: "USE WHEN the user wants to manage contacts and profiles via the `gws` CLI."
+description: "Google People: Manage contacts and profiles."
 metadata:
   openclaw:
     category: "productivity"

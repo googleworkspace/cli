@@ -1,7 +1,7 @@
 ---
 name: gws-workflow
 version: 1.0.0
-description: "USE WHEN the user wants to cross-service productivity workflows via the `gws` CLI."
+description: "Google Workflow: Cross-service productivity workflows."
 metadata:
   openclaw:
     category: "productivity"

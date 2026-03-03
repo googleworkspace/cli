@@ -1,7 +1,7 @@
 ---
 name: gws-meet
 version: 1.0.0
-description: "USE WHEN the user wants to manage google meet conferences via the `gws` CLI."
+description: "Manage Google Meet conferences."
 metadata:
   openclaw:
     category: "productivity"

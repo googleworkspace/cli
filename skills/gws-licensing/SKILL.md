@@ -1,7 +1,7 @@
 ---
 name: gws-licensing
 version: 1.0.0
-description: "USE WHEN the user wants to manage product licenses via the `gws` CLI."
+description: "Google Workspace Enterprise License Manager: Manage product licenses."
 metadata:
   openclaw:
     category: "productivity"

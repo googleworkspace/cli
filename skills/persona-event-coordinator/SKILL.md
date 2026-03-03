@@ -1,7 +1,7 @@
 ---
 name: persona-event-coordinator
 version: 1.0.0
-description: "USE WHEN the user needs help planning and managing events — scheduling, invitations, and logistics."
+description: "Plan and manage events — scheduling, invitations, and logistics."
 metadata:
   openclaw:
     category: "persona"
@@ -14,7 +14,7 @@ metadata:
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-calendar`, `gws-gmail`, `gws-drive`, `gws-chat`, `gws-sheets`
 
-USE WHEN the user needs help planning and managing events — scheduling, invitations, and logistics.
+Plan and manage events — scheduling, invitations, and logistics.
 
 ## Relevant Workflows
 - `gws workflow +meeting-prep`

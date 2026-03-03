@@ -1,7 +1,7 @@
 ---
 name: gws-apps-script
 version: 1.0.0
-description: "USE WHEN the user wants to manage and execute apps script projects via the `gws` CLI."
+description: "Google Apps Script: Manage and execute Apps Script projects."
 metadata:
   openclaw:
     category: "productivity"

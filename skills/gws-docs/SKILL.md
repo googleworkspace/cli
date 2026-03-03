@@ -1,7 +1,7 @@
 ---
 name: gws-docs
 version: 1.0.0
-description: "USE WHEN the user wants to read and write google docs via the `gws` CLI."
+description: "Read and write Google Docs."
 metadata:
   openclaw:
     category: "productivity"
