@@ -1,16 +1,21 @@
-# gws — Google Workspace CLI
+# gws
 
-A CLI that generates its entire command surface dynamically from Google Discovery Service JSON documents. Includes skills for AI agents.
+**One CLI for all of Google Workspace.** Drive, Gmail, Calendar, Sheets, Docs, Chat, Admin — 24 services, 700+ API methods, zero boilerplate.
+
+`gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google adds an API endpoint, `gws` picks it up automatically.
 
 > [!IMPORTANT]
-> This project is currently under active development and is not yet ready for production use.
+> This project is under active development and is not yet ready for production use.
 
 ![Demo](https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/demo.gif)
 
-## Install
+## Quick Start
 
 ```bash
 npm install -g @googleworkspace/cli
+
+gws setup          # walks you through Google Cloud project config + OAuth login
+gws drive files list --params '{"pageSize": 5}'
 ```
 
 Or build from source:
@@ -19,245 +24,188 @@ Or build from source:
 cargo install --path .
 ```
 
-## AI Agents & Skills
+---
 
-This repository includes [Agent Skills](https://github.com/vercel-labs/agent-skills) definitions (`SKILL.md`) for every supported Google Workspace API. Skills are prefixed with `gws-` to avoid namespace collisions when installed globally.
+## Why gws?
 
-You can install these skills directly into your AI agent using `npx`:
+**For humans** — stop writing `curl` calls against REST docs. `gws` gives you tab‑completion, `--help` on every resource, `--dry-run` to preview requests, and auto‑pagination.
 
-```bash
-# Add all Google Workspace skills to your agent
-npx skills add github:googleworkspace/cli
-```
-
-Or add specific skills by path:
+**For AI agents** — every response is structured JSON. Pair it with the included agent skills and your LLM can manage Workspace without custom tooling.
 
 ```bash
-# Add the shared skill (authentication, etc.)
-npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-shared
-
-# Add only Google Drive and Gmail skills
-npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
-npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
-```
-
-### OpenClaw
-
-Clone the repo and copy (or symlink) the skills into your OpenClaw skills directory:
-
-```bash
-# All skills
-cp -r skills/gws-* ~/.openclaw/skills/
-
-# Or symlink for easy updates
-ln -s $(pwd)/skills/gws-* ~/.openclaw/skills/
-```
-
-Or copy only specific skills:
-
-```bash
-cp -r skills/gws-drive skills/gws-gmail ~/.openclaw/skills/
-```
-
-The `gws-shared` skill includes an `install` block so OpenClaw can auto-install the CLI via `npm i -g @googleworkspace/cli` if the `gws` binary isn't found on PATH.
-
-## Usage
-
-```bash
-# List files in Drive
+# List the 10 most recent files
 gws drive files list --params '{"pageSize": 10}'
 
-# Get a file's metadata
-gws drive files get --params '{"fileId": "abc123"}'
-
 # Create a spreadsheet
-gws sheets spreadsheets create --json '{"properties": {"title": "My Sheet"}}'
+gws sheets spreadsheets create --json '{"properties": {"title": "Q1 Budget"}}'
 
-# List Gmail messages
-gws gmail users messages list --params '{"userId": "me"}'
-
-# Introspect a method's schema
-gws schema drive.files.list
-
-# Dynamic help for any resource
-gws drive files --help
-gws drive files list --help
-
-# Preview a request without sending it
+# Send a Chat message
 gws chat spaces messages create \
   --params '{"parent": "spaces/xyz"}' \
-  --json '{"text": "Hello world"}' \
+  --json '{"text": "Deploy complete."}' \
   --dry-run
+
+# Introspect any method's request/response schema
+gws schema drive.files.list
+
+# Stream paginated results as NDJSON
+gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
+
+---
 
 ## Authentication
 
-The CLI supports three primary authentication workflows depending on your environment.
+The CLI supports multiple auth workflows so it works on your laptop, in CI, and on a server.
 
-### 1. Interactive Auth (Local Desktop)
+### Interactive (local desktop)
 
-For interactive use on your personal machine where a web browser is available. 
-
-**Security**: By default, credentials and access tokens are encrypted at rest using AES-256-GCM. The encryption key is stored securely in your OS Keyring (Apple Keychain, Secret Service, or Windows Credential Manager). If a keyring is unavailable (e.g., headless Linux), it falls back to a strictly permissioned (`0600`) local key file.
-
-**Google Cloud Setup & Login:**
-The CLI includes a built-in setup wizard to help you configure your Google Cloud Project, enable APIs, and generate the necessary OAuth credentials. Note that this requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated (`gcloud auth login`).
+Credentials are encrypted at rest (AES-256-GCM) with the key stored in your OS keyring.
 
 ```bash
-# Run the interactive setup and login wizard
-gws setup
-
-# Or login directly if you already have client_secret.json configured
-gws auth login
-
-# Or login with custom scopes
-gws auth login --scopes "https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly"
+gws setup            # one-time: creates a Cloud project, enables APIs, logs you in
+gws auth login       # subsequent logins
 ```
 
-### 2. Headless & CI/CD Auth (Export Flow)
+> Requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated.
 
-For remote servers, SSH sessions, or CI/CD pipelines where a browser is unavailable, use the export flow. 
+### Headless / CI (export flow)
 
-1. On your **local machine** (with a browser), complete the Interactive Auth steps above.
-2. Export your credentials to a portable JSON format:
+1. Complete interactive auth on a machine with a browser.
+2. Export credentials:
    ```bash
    gws auth export --unmasked > credentials.json
    ```
-3. On your **headless machine**, securely transfer `credentials.json` and point the CLI to it. The CLI will automatically use this payload to mint fresh access tokens.
+3. On the headless machine:
    ```bash
    export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
-   
-   # Commands now work headlessly!
-   gws drive files list
+   gws drive files list   # just works
    ```
 
-*Note: You can also strictly provide a short-lived access token directly via environment variable (e.g. `export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)`), though this token will naturally expire in ~1 hour.*
+### Service Account (server-to-server)
 
-### 3. Service Account Auth (Server-to-Server)
-
-For automated programmatic access. Point `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` to your service account JSON key file. No login step is required.
+Point to your key file; no login needed.
 
 ```bash
 export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
 gws drive files list
 ```
 
-**Domain-Wide Delegation (Impersonation)**
-If your service account has Domain-Wide Delegation enabled, you can impersonate a Workspace user (e.g., an admin) to perform actions on their behalf.
+For Domain-Wide Delegation, add:
 
 ```bash
-export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=user@example.com
+export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
 ```
 
-### 4. Pre-obtained Access Token (CI/CD or External)
+### Pre-obtained Access Token
 
-The simplest way to authenticate if you already possess a short-lived access token. This is often used in CI/CD pipelines where another tool (like `gcloud`) mints the token for the environment.
+Useful when another tool (e.g. `gcloud`) already mints tokens for your environment.
 
 ```bash
-# Obtain a token using the gcloud CLI
 export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
-gws drive files list
 ```
-*(Note: These raw access tokens typically expire in ~1 hour).*
+
+### Precedence
+
+| Priority | Source | Set via |
+|----------|--------|---------|
+| 1 | Access token | `GOOGLE_WORKSPACE_CLI_TOKEN` |
+| 2 | Credentials file | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
+| 3 | Encrypted credentials (OS keyring) | `gws auth login` |
+| 4 | Plaintext credentials | `~/.config/gws/credentials.json` |
+
+Environment variables can also live in a `.env` file.
 
 ---
 
-### Auth Precedence Order
+## AI Agent Skills
 
-The CLI evaluates authentication sources in the following strict order:
+The repo ships 40+ [Agent Skills](https://github.com/vercel-labs/agent-skills) (`SKILL.md` files) — one for every supported API, plus higher-level helpers for common workflows like sending email, triaging a Gmail inbox, or subscribing to calendar events.
 
-| Priority | Source | How to set |
-|----------|--------|------------|
-| 1 (highest) | Raw access token | `GOOGLE_WORKSPACE_CLI_TOKEN` env var |
-| 2 | Credentials file (user or service account) | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var |
-| 3 | Encrypted credentials & token cache | `~/.config/gws/credentials.enc` and `token_cache.json` (created by `gws auth login`, secured via OS Keyring) |
-| 4 | Plaintext credentials | `~/.config/gws/credentials.json` |
-| — | No auth | Proceeds unauthenticated; shows error if the API rejects |
+```bash
+# Install all skills at once
+npx skills add github:googleworkspace/cli
 
-*(Note: Environment variables can also be set via a `.env` file in the working directory.)*
+# Or pick only what you need
+npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
+npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
+```
+
+<details>
+<summary>OpenClaw setup</summary>
+
+```bash
+# Symlink all skills (stays in sync with repo)
+ln -s $(pwd)/skills/gws-* ~/.openclaw/skills/
+
+# Or copy specific skills
+cp -r skills/gws-drive skills/gws-gmail ~/.openclaw/skills/
+```
+
+The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the CLI via `npm` if `gws` isn't on PATH.
+
+</details>
+
+---
+
+## Advanced Usage
+
+### Multipart Uploads
+
+```bash
+gws drive files create --json '{"name": "report.pdf"}' --upload ./report.pdf
+```
+
+### Pagination
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--page-all` | Auto-paginate, one JSON line per page (NDJSON) | off |
+| `--page-limit <N>` | Max pages to fetch | 10 |
+| `--page-delay <MS>` | Delay between pages | 100 ms |
+
+### Model Armor (Response Sanitization)
+
+Integrate [Google Cloud Model Armor](https://cloud.google.com/model-armor) to scan API responses for prompt injection before they reach your agent.
+
+```bash
+gws gmail users messages get --params '...' \
+  --sanitize "projects/P/locations/L/templates/T"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
+
+---
 
 ## Architecture
 
-The CLI uses a **two-phase argument parsing** strategy:
+`gws` uses a **two-phase parsing** strategy:
 
-1. Extract the service name from `argv[1]`
-2. Fetch the service's Discovery Document (cached for 24h)
-3. Build a dynamic `clap::Command` tree from the document's resources/methods
-4. Re-parse the remaining arguments against the tree
-5. Authenticate, construct the HTTP request, and execute
+1. Read `argv[1]` to identify the service (e.g. `drive`)
+2. Fetch the service's Discovery Document (cached 24 h)
+3. Build a `clap::Command` tree from the document's resources and methods
+4. Re-parse the remaining arguments
+5. Authenticate, build the HTTP request, execute
 
-All output (success, error, file download metadata) is structured JSON for AI agent consumption. Binary outputs require an `--output` flag.
+All output — success, errors, download metadata — is structured JSON.
 
-There are a few special behaviors to be aware of that diverge from the Discovery Service API representation:
+---
 
-### Multipart uploads
-
-For multipart uploads (e.g. Drive file uploads), use the `--upload` flag to specify the path to the file to upload.
+## Development
 
 ```bash
-gws drive files create --json '{"name": "My File"}' --upload /path/to/file
+cargo build                       # dev build
+cargo clippy -- -D warnings       # lint
+cargo test                        # unit tests
+./scripts/coverage.sh             # HTML coverage report → target/llvm-cov/html/
 ```
 
-### Pagination and NDJSON
+---
 
-Use `--page-all` to auto-paginate through results. Each page is emitted as a single JSON line (NDJSON), making it easy to stream into tools like `jq`.
-
-| Flag | Description | Default |
-| --- | --- | --- |
-| `--page-all` | Auto-paginate, one JSON line per page | off |
-| `--page-limit <N>` | Max pages to fetch | 10 |
-| `--page-delay <MS>` | Delay between pages in ms | 100 |
-
-```bash
-# Stream all Drive files as NDJSON
-gws drive files list --params '{"pageSize": 100}' --page-all --page-limit 5
-
-# Pipe to jq to extract file names
-gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
-```
-
-## Testing & Coverage
-
-Run unit tests:
-```bash
-cargo test
-```
-
-Generate code coverage report (requires `cargo-llvm-cov`):
-```bash
-./scripts/coverage.sh
-```
-The report will be available at `target/llvm-cov/html/index.html`.
-
-## Security & Sanitization (Model Armor)
- 
- The CLI integrates with **Google Cloud Model Armor** to sanitize API responses for prompt injection risks before they reach your AI agent.
- 
- ```bash
- # Sanitize a specific command
- gws gmail users messages get --params '...' \
-   --sanitize "projects/P/locations/L/templates/T"
- ```
- 
- This checks the *entire* JSON response against the specified Model Armor template.
- 
- ### Configuration
- 
- You can set default behavior via environment variables:
- 
- | Variable | Description |
- |---|---|
- | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template resource name |
- | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block`. |
- 
- - **Warn mode**: Prints a warning to stderr and annotates the JSON with `_sanitization` details.
- - **Block mode**: Suppresses the output entirely and exits with an error if a match is found.
- 
- ### Requirements
- 
- Using `--sanitize` requires the `https://www.googleapis.com/auth/cloud-platform` scope.
- 
- ## License
+## License
 
 Apache-2.0
 
