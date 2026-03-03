@@ -22,6 +22,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   test:
@@ -36,16 +38,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: test-${{ matrix.os }}
 
       - name: Run tests
         run: cargo test --verbose
@@ -60,6 +59,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
 
       - name: Check formatting
         run: |
@@ -104,16 +111,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-skills-${{ hashFiles('**/Cargo.lock') }}
+          key: skills
 
       - name: Regenerate skills
         run: cargo run -- generate-skills --output-dir skills
@@ -128,12 +132,19 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: ""
+      SCCACHE_GHA_ENABLED: "false"
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate code coverage
@@ -163,6 +174,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -174,6 +193,14 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
+      - name: Upload binary
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gws-linux-x86_64
+          path: target/x86_64-unknown-linux-gnu/release/gws
+          retention-days: 1
+
   smoketest:
     name: API Smoketest
     needs: build
@@ -181,22 +208,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - name: Download binary
+        uses: actions/download-artifact@v4
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-smoketest-${{ hashFiles('**/Cargo.lock') }}
+          name: gws-linux-x86_64
+          path: ./bin
 
-      - name: Build
-        run: cargo build --release
+      - name: Make binary executable
+        run: chmod +x ./bin/gws
 
       - name: Decode credentials
         env:
@@ -209,16 +228,16 @@ jobs:
           echo "$GOOGLE_CREDENTIALS_JSON" | base64 -d > /tmp/credentials.json
 
       - name: Smoketest — help
-        run: ./target/release/gws --help
+        run: ./bin/gws --help
 
       - name: Smoketest — schema introspection
-        run: ./target/release/gws schema drive.files.list | jq -e '.httpMethod'
+        run: ./bin/gws schema drive.files.list | jq -e '.httpMethod'
 
       - name: Smoketest — Drive files list
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          ./target/release/gws drive files list \
+          ./bin/gws drive files list \
             --params '{"pageSize": 1, "fields": "files(id,mimeType)"}' \
             | jq -e '.files'
 
@@ -226,7 +245,7 @@ jobs:
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          ./target/release/gws gmail users messages list \
+          ./bin/gws gmail users messages list \
             --params '{"userId": "me", "maxResults": 1, "fields": "messages(id)"}' \
             | jq -e '.messages'
 
@@ -234,7 +253,7 @@ jobs:
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          ./target/release/gws calendar events list \
+          ./bin/gws calendar events list \
             --params '{"calendarId": "primary", "maxResults": 1, "fields": "kind,items(id,status)"}' \
             | jq -e '.kind'
 
@@ -242,7 +261,7 @@ jobs:
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          ./target/release/gws slides presentations get \
+          ./bin/gws slides presentations get \
             --params '{"presentationId": "1knOKD_87JWE4qsEbO4r5O91IxTER5ybBBhOJgZ1yLFI", "fields": "presentationId,slides(objectId)"}' \
             | jq -e '.presentationId'
 
@@ -250,7 +269,7 @@ jobs:
         env:
           GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
         run: |
-          LINES=$(./target/release/gws drive files list \
+          LINES=$(./bin/gws drive files list \
             --params '{"pageSize": 1, "fields": "nextPageToken,files(id)"}' \
             --page-all --page-limit 2 \
             | wc -l)
@@ -261,7 +280,7 @@ jobs:
 
       - name: Smoketest — error handling
         run: |
-          if ./target/release/gws fakeservice list 2>&1; then
+          if ./bin/gws fakeservice list 2>&1; then
             echo "::error::Expected exit code 1 for unknown service"
             exit 1
           fi
