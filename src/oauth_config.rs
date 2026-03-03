@@ -208,7 +208,9 @@ mod tests {
     impl EnvGuard {
         fn new(key: &str, value: &str) -> Self {
             std::env::set_var(key, value);
-            Self { key: key.to_string() }
+            Self {
+                key: key.to_string(),
+            }
         }
     }
 
@@ -224,7 +226,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _env_guard = EnvGuard::new(
             "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
-            dir.path().to_str().unwrap()
+            dir.path().to_str().unwrap(),
         );
 
         // Initially no config file exists
