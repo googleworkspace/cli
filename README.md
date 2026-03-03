@@ -4,7 +4,7 @@
 
 <h1 align="center">gws</h1>
 
-**One CLI for all of Google Workspace — built for humans and AI agents.**<br>
+**One CLI for all of Google Workspace — built for humans and AI agents.**  
 Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
 
 <p>
