@@ -12,29 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-area: schema:
+"area: schema":
   - 'src/schema.rs'
-area: auth:
+"area: auth":
   - 'src/auth.rs'
-area: execution:
+"area: execution":
   - 'src/executor.rs'
   - 'src/commands.rs'
   - 'src/main.rs'
-area: discovery:
+"area: discovery":
   - 'src/discovery.rs'
-skill: docs:
+"skill: docs":
   - 'src/helpers/docs.rs'
-skill: drive:
+"skill: drive":
   - 'src/helpers/drive.rs'
-skill: events:
+"skill: events":
   - 'src/helpers/events.rs'
-skill: gmail:
+"skill: gmail":
   - 'src/helpers/gmail.rs'
-skill: script:
+"skill: script":
   - 'src/helpers/script.rs'
-skill: sheets:
+"skill: sheets":
   - 'src/helpers/sheets.rs'
-core: docs:
+"core: docs":
   - '**/*.md'
-core: ci:
+"core: ci":
   - '.github/**/*'
