@@ -4,7 +4,7 @@
 
 <h1 align="center">gws</h1>
 
-**One CLI for all of Google Workspace — built for humans and AI agents.**  
+**One CLI for all of Google Workspace — built for humans and AI agents.**<br>
 Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
 
 <p>
@@ -15,14 +15,10 @@ Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JS
 </p>
 <br>
 
----
-
 
 ```bash
 npm install -g @googleworkspace/cli
 ```
-
----
 
 `gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google adds an API endpoint, `gws` picks it up automatically.
 
