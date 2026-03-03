@@ -771,6 +771,501 @@ enum SetupStage {
     Finish,
 }
 
+/// Shared mutable state threaded through each setup stage.
+struct SetupContext {
+    wizard: Option<SetupWizard>,
+    interactive: bool,
+    dry_run: bool,
+    opts: SetupOptions,
+    account: String,
+    project_id: String,
+    api_ids: Vec<String>,
+    client_id: String,
+    client_secret: String,
+    enabled: Vec<String>,
+    skipped: Vec<String>,
+    failed: Vec<String>,
+}
+
+impl SetupContext {
+    /// Helper to update wizard step if present.
+    fn wiz(&mut self, idx: usize, status: StepStatus) {
+        if let Some(ref mut w) = self.wizard {
+            let _ = w.update_step(idx, status);
+        }
+    }
+
+    /// Finish and consume the wizard.
+    fn finish_wizard(&mut self) {
+        if let Some(w) = self.wizard.take() {
+            let _ = w.finish();
+        }
+    }
+}
+
+/// Stage 1: Verify that gcloud CLI is installed.
+fn stage_check_gcloud(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+    ctx.wiz(0, StepStatus::InProgress("Checking...".into()));
+    if !ctx.dry_run {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if !is_gcloud_installed() {
+        ctx.wiz(0, StepStatus::Failed("not found".into()));
+        ctx.finish_wizard();
+        return Err(GwsError::Validation(
+            "gcloud CLI not found. Install it from https://cloud.google.com/sdk/docs/install"
+                .to_string(),
+        ));
+    }
+    ctx.wiz(0, StepStatus::Done("found".into()));
+    if !ctx.interactive {
+        eprintln!("Step 1/6: Checking for gcloud CLI...\n  ✓ gcloud CLI found");
+    }
+    Ok(SetupStage::Account)
+}
+
+/// Stage 2: Select or authenticate a Google account.
+fn stage_account(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+    ctx.wiz(1, StepStatus::InProgress(String::new()));
+    if ctx.interactive {
+        let accounts = list_gcloud_accounts();
+        let current = get_gcloud_account()?.unwrap_or_default();
+
+        let mut items: Vec<SelectItem> = vec![SelectItem {
+            label: "➕ Login with new account".to_string(),
+            description: "Opens browser for gcloud auth login".to_string(),
+            selected: false,
+            is_fixed: false,
+            is_template: false,
+            template_selects: vec![],
+        }];
+        items.extend(accounts.iter().map(|(acct, active)| SelectItem {
+            label: acct.clone(),
+            description: if *active {
+                "(active)".to_string()
+            } else {
+                String::new()
+            },
+            selected: *acct == current,
+            is_fixed: false,
+            is_template: false,
+            template_selects: vec![],
+        }));
+
+        let result = ctx
+            .wizard
+            .as_mut()
+            .unwrap()
+            .show_picker(
+                "Select a Google account",
+                "Space to select, Enter to confirm",
+                items,
+                false,
+            )
+            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+
+        match result {
+            PickerResult::Confirmed(items) => {
+                let chosen = items.iter().find(|i| i.selected);
+                match chosen {
+                    Some(item) if item.label.starts_with('➕') => {
+                        ctx.wizard
+                            .as_mut()
+                            .unwrap()
+                            .suspend()
+                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+                        eprintln!("  → Opening browser for login...");
+                        gcloud_auth_login()?;
+                        let acct = get_gcloud_account()?.ok_or_else(|| {
+                            GwsError::Auth("Authentication failed — no active account".to_string())
+                        })?;
+                        ctx.wizard
+                            .as_mut()
+                            .unwrap()
+                            .resume()
+                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+                        ctx.wiz(1, StepStatus::Done(acct.clone()));
+                        ctx.account = acct;
+                        Ok(SetupStage::Project)
+                    }
+                    Some(item) => {
+                        set_gcloud_account(&item.label)?;
+                        ctx.wiz(1, StepStatus::Done(item.label.clone()));
+                        ctx.account = item.label.clone();
+                        Ok(SetupStage::Project)
+                    }
+                    None => {
+                        ctx.finish_wizard();
+                        Err(GwsError::Validation("No account selected".to_string()))
+                    }
+                }
+            }
+            PickerResult::GoBack => Ok(SetupStage::CheckGcloud),
+            PickerResult::Cancelled => {
+                ctx.finish_wizard();
+                Err(GwsError::Validation("Setup cancelled".to_string()))
+            }
+        }
+    } else {
+        ctx.account = match get_gcloud_account()? {
+            Some(acct) => {
+                eprintln!(
+                    "Step 2/6: Checking authentication...\n  ✓ Authenticated as {}",
+                    acct
+                );
+                acct
+            }
+            None => {
+                eprintln!(
+                    "Step 2/6: Checking authentication...\n  → Not logged in. Running gcloud auth login..."
+                );
+                gcloud_auth_login()?;
+                get_gcloud_account()?.ok_or_else(|| {
+                    GwsError::Auth("Authentication failed — no active account".to_string())
+                })?
+            }
+        };
+        Ok(SetupStage::Project)
+    }
+}
+
+/// Stage 3: Select or create a GCP project.
+fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+    ctx.wiz(2, StepStatus::InProgress(String::new()));
+    if let Some(p) = ctx.opts.project.clone() {
+        if !ctx.dry_run {
+            set_gcloud_project(&p)?;
+        }
+        ctx.wiz(2, StepStatus::Done(p.clone()));
+        if !ctx.interactive {
+            eprintln!("Step 3/6: Project set to {}", p);
+        }
+        ctx.project_id = p;
+        return Ok(SetupStage::EnableApis);
+    }
+
+    if ctx.interactive {
+        if let Some(ref mut w) = ctx.wizard {
+            let _ = w.show_message("Loading projects...");
+        }
+        let (projects, list_err) = list_gcloud_projects();
+        if let Some(err) = &list_err {
+            if let Some(ref mut w) = ctx.wizard {
+                let _ = w.show_message(&format!("⚠ Could not list projects: {err}"));
+            }
+        }
+        let current = get_gcloud_project()?.unwrap_or_default();
+
+        let mut items: Vec<SelectItem> = vec![SelectItem {
+            label: "➕ Create new project".to_string(),
+            description: "Create a new GCP project for gws".to_string(),
+            selected: false,
+            is_fixed: false,
+            is_template: false,
+            template_selects: vec![],
+        }];
+        items.extend(projects.iter().map(|(id, name)| SelectItem {
+            label: id.clone(),
+            description: name.clone(),
+            selected: *id == current,
+            is_fixed: false,
+            is_template: false,
+            template_selects: vec![],
+        }));
+
+        let result = ctx
+            .wizard
+            .as_mut()
+            .unwrap()
+            .show_picker(
+                "Select a GCP project",
+                "Space to select, Enter to confirm",
+                items,
+                false,
+            )
+            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+
+        match result {
+            PickerResult::Confirmed(items) => {
+                let chosen = items.iter().find(|i| i.selected);
+                match chosen {
+                    Some(item) if item.label.starts_with('➕') => {
+                        let project_name = match ctx
+                            .wizard
+                            .as_mut()
+                            .unwrap()
+                            .show_input("Create new GCP project", "Enter a unique project ID", None)
+                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
+                        {
+                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
+                            _ => {
+                                return Err(GwsError::Validation(
+                                    "Project creation cancelled by user".to_string(),
+                                ))
+                            }
+                        };
+
+                        ctx.wizard
+                            .as_mut()
+                            .unwrap()
+                            .show_message(&format!("Creating project '{}'...", project_name))
+                            .ok();
+
+                        let status = gcloud_cmd()
+                            .args(["projects", "create", &project_name])
+                            .status()
+                            .map_err(|e| {
+                                GwsError::Validation(format!("Failed to create project: {e}"))
+                            })?;
+                        if !status.success() {
+                            return Err(GwsError::Validation(format!(
+                                "Failed to create project '{}'. Check the ID is valid and unique.",
+                                project_name
+                            )));
+                        }
+                        set_gcloud_project(&project_name)?;
+                        ctx.wiz(2, StepStatus::Done(project_name.clone()));
+                        ctx.project_id = project_name;
+                        Ok(SetupStage::EnableApis)
+                    }
+                    Some(item) => {
+                        set_gcloud_project(&item.label)?;
+                        ctx.wiz(2, StepStatus::Done(item.label.clone()));
+                        ctx.project_id = item.label.clone();
+                        Ok(SetupStage::EnableApis)
+                    }
+                    None => {
+                        ctx.finish_wizard();
+                        Err(GwsError::Validation(
+                            "No project selected. Use --project <id> to specify one.".to_string(),
+                        ))
+                    }
+                }
+            }
+            PickerResult::GoBack => Ok(SetupStage::Account),
+            PickerResult::Cancelled => {
+                ctx.finish_wizard();
+                Err(GwsError::Validation("Setup cancelled".to_string()))
+            }
+        }
+    } else {
+        ctx.project_id = match get_gcloud_project()? {
+            Some(p) => {
+                eprintln!("Step 3/6: Using current project: {}", p);
+                p
+            }
+            None => {
+                return Err(GwsError::Validation(
+                    "No GCP project configured. Use --project <id> or run `gcloud config set project <id>`"
+                        .to_string(),
+                ));
+            }
+        };
+        Ok(SetupStage::EnableApis)
+    }
+}
+
+/// Stage 4: Select and enable Workspace APIs.
+async fn stage_enable_apis(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+    ctx.wiz(3, StepStatus::InProgress(String::new()));
+    if ctx.interactive {
+        let already_enabled = get_enabled_apis(&ctx.project_id);
+        let items: Vec<SelectItem> = WORKSPACE_APIS
+            .iter()
+            .map(|api| {
+                let already = already_enabled.contains(&api.id.to_string());
+                SelectItem {
+                    label: api.name.to_string(),
+                    description: if already {
+                        format!("{} (already enabled)", api.id)
+                    } else {
+                        api.id.to_string()
+                    },
+                    selected: already,
+                    is_fixed: already,
+                    is_template: false,
+                    template_selects: vec![],
+                }
+            })
+            .collect();
+
+        let result = ctx
+            .wizard
+            .as_mut()
+            .unwrap()
+            .show_picker(
+                "Select APIs to enable",
+                "Space to toggle, 'a' to select all, Enter to confirm",
+                items,
+                true,
+            )
+            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+
+        match result {
+            PickerResult::Confirmed(items) => {
+                ctx.api_ids = items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.selected)
+                    .map(|(i, _)| WORKSPACE_APIS[i].id.to_string())
+                    .collect::<Vec<_>>();
+            }
+            PickerResult::GoBack => {
+                return Ok(SetupStage::Project);
+            }
+            PickerResult::Cancelled => {
+                ctx.finish_wizard();
+                return Err(GwsError::Validation("Setup cancelled".to_string()));
+            }
+        }
+    } else {
+        ctx.api_ids = all_api_ids().iter().map(|s| s.to_string()).collect();
+    }
+
+    if ctx.dry_run {
+        eprintln!("Step 4/5: Would enable {} APIs:", ctx.api_ids.len());
+        for id in &ctx.api_ids {
+            eprintln!("  - {}", id);
+        }
+        eprintln!("Step 5/5: Would configure OAuth credentials (Consent + Client)");
+        eprintln!();
+        let output = json!({
+            "status": "dry_run",
+            "message": "No changes were made. Run `gws auth login` to authenticate.",
+            "account": ctx.account,
+            "project": ctx.project_id,
+            "apis_would_enable": ctx.api_ids,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
+        return Ok(SetupStage::Finish);
+    }
+
+    ctx.wiz(
+        3,
+        StepStatus::InProgress(format!("Enabling {} APIs...", ctx.api_ids.len())),
+    );
+    let (enabled_apis, skipped_apis, failed_apis) =
+        enable_apis(&ctx.project_id, &ctx.api_ids).await;
+    ctx.enabled = enabled_apis;
+    ctx.skipped = skipped_apis;
+    ctx.failed = failed_apis;
+    ctx.wiz(
+        3,
+        StepStatus::Done(format!(
+            "{} enabled, {} skipped",
+            ctx.enabled.len(),
+            ctx.skipped.len()
+        )),
+    );
+    Ok(SetupStage::ConfigureOauth)
+}
+
+/// Stage 5: Configure OAuth consent screen and collect client credentials.
+async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
+    ctx.wiz(4, StepStatus::InProgress("Configuring...".into()));
+    let access_token = get_access_token()?;
+    let app_name = "gws CLI";
+    configure_consent_screen(&ctx.project_id, &access_token, app_name, &ctx.account).await?;
+
+    ctx.wiz(
+        4,
+        StepStatus::InProgress("Waiting for manual input...".into()),
+    );
+    if !ctx.interactive {
+        return Err(GwsError::Validation(
+            "Cannot automate OAuth client creation. Please run setup interactively.".to_string(),
+        ));
+    }
+
+    let (cid_result, csecret_result) = if let Some(ref mut w) = ctx.wizard {
+        let current_creds: Option<serde_json::Value> = crate::credential_store::load_encrypted()
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+
+        w.show_message(&format!(
+            "Go to: https://console.cloud.google.com/apis/credentials/consent?project={}\n\
+             Ensure 'External' consent screen is configured. Then,\n\
+             Go to: https://console.cloud.google.com/apis/credentials?project={}\n\
+             Click 'Create Credentials' -> 'OAuth client ID' -> 'Desktop app'",
+            ctx.project_id, ctx.project_id
+        ))
+        .ok();
+
+        let cid_res = w
+            .show_input(
+                "Enter OAuth Client ID",
+                "Paste the Client ID from Google Cloud Console",
+                current_creds.as_ref().and_then(|c| c["client_id"].as_str()),
+            )
+            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
+
+        let csec_res = match &cid_res {
+            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => w
+                .show_input(
+                    "Enter OAuth Client Secret",
+                    "Paste the Client Secret from Google Cloud Console",
+                    current_creds
+                        .as_ref()
+                        .and_then(|c| c["client_secret"].as_str()),
+                )
+                .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?,
+            _ => crate::setup_tui::InputResult::Cancelled,
+        };
+        (cid_res, csec_res)
+    } else {
+        return Err(GwsError::Validation(
+            "Interactive mode required for OAuth client input".to_string(),
+        ));
+    };
+
+    ctx.client_id = match cid_result {
+        crate::setup_tui::InputResult::Confirmed(v) => {
+            if v.is_empty() {
+                ctx.finish_wizard();
+                return Err(GwsError::Validation("Client ID cannot be empty".into()));
+            }
+            v
+        }
+        crate::setup_tui::InputResult::GoBack => {
+            return Ok(SetupStage::EnableApis);
+        }
+        crate::setup_tui::InputResult::Cancelled => {
+            ctx.finish_wizard();
+            return Err(GwsError::Validation("Setup cancelled".into()));
+        }
+    };
+
+    ctx.client_secret = match csecret_result {
+        crate::setup_tui::InputResult::Confirmed(v) => {
+            if v.is_empty() {
+                ctx.finish_wizard();
+                return Err(GwsError::Validation("Client Secret cannot be empty".into()));
+            }
+            v
+        }
+        crate::setup_tui::InputResult::GoBack => {
+            return Ok(SetupStage::EnableApis);
+        }
+        crate::setup_tui::InputResult::Cancelled => {
+            ctx.finish_wizard();
+            return Err(GwsError::Validation("Setup cancelled".into()));
+        }
+    };
+
+    let _config_path = crate::oauth_config::save_client_config(
+        &ctx.client_id,
+        &ctx.client_secret,
+        &ctx.project_id,
+    )
+    .map_err(|e| GwsError::Validation(format!("Failed to save client config: {e}")))?;
+
+    ctx.wiz(4, StepStatus::Done("configured".into()));
+    Ok(SetupStage::Finish)
+}
+
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
     let opts = parse_setup_args(args);
@@ -781,8 +1276,7 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         eprintln!("🏃 DRY RUN — no changes will be made\n");
     }
 
-    // Start the wizard TUI for interactive mode
-    let mut wizard = if interactive {
+    let wizard = if interactive {
         Some(
             SetupWizard::start(&STEP_LABELS)
                 .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?,
@@ -791,554 +1285,44 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         None
     };
 
-    // Helper macro to update wizard step if present
-    macro_rules! wiz {
-        ($idx:expr, $status:expr) => {
-            if let Some(ref mut w) = wizard {
-                let _ = w.update_step($idx, $status);
-            }
-        };
-    }
+    let mut ctx = SetupContext {
+        wizard,
+        interactive,
+        dry_run,
+        opts,
+        account: String::new(),
+        project_id: String::new(),
+        api_ids: Vec::new(),
+        client_id: String::new(),
+        client_secret: String::new(),
+        enabled: Vec::new(),
+        skipped: Vec::new(),
+        failed: Vec::new(),
+    };
 
-    // State Machine Loop for TUI
     let mut stage = SetupStage::CheckGcloud;
-    let mut account = String::new();
-    let mut project_id = String::new();
-    #[allow(unused_assignments)]
-    let mut api_ids = Vec::new();
-    #[allow(unused_assignments)]
-    let mut client_id = String::new();
-    #[allow(unused_assignments)]
-    let mut client_secret = String::new();
-
-    let mut enabled = Vec::new();
-    let mut skipped = Vec::new();
-    let mut failed = Vec::new();
 
     loop {
         stage = match stage {
-            SetupStage::CheckGcloud => {
-                // Step 1: Check gcloud
-                wiz!(0, StepStatus::InProgress("Checking...".into()));
-                if !dry_run {
-                    // small delay so the user sees the initial render
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-                if !is_gcloud_installed() {
-                    wiz!(0, StepStatus::Failed("not found".into()));
-                    if let Some(w) = wizard {
-                        let _ = w.finish();
-                    }
-                    return Err(GwsError::Validation(
-            "gcloud CLI not found. Install it from https://cloud.google.com/sdk/docs/install".to_string(),
-        ));
-                }
-                wiz!(0, StepStatus::Done("found".into()));
-                if !interactive {
-                    eprintln!("Step 1/6: Checking for gcloud CLI...\n  ✓ gcloud CLI found");
-                }
-                SetupStage::Account
-            }
-            SetupStage::Account => {
-                // Step 2: Select account
-                wiz!(1, StepStatus::InProgress(String::new()));
-                if interactive {
-                    let accounts = list_gcloud_accounts();
-                    let current = get_gcloud_account()?.unwrap_or_default();
-
-                    let mut items: Vec<SelectItem> = vec![SelectItem {
-                        label: "➕ Login with new account".to_string(),
-                        description: "Opens browser for gcloud auth login".to_string(),
-                        selected: false,
-                        is_fixed: false,
-                        is_template: false,
-                        template_selects: vec![],
-                    }];
-                    items.extend(accounts.iter().map(|(acct, active)| SelectItem {
-                        label: acct.clone(),
-                        description: if *active {
-                            "(active)".to_string()
-                        } else {
-                            String::new()
-                        },
-                        selected: *acct == current,
-                        is_fixed: false,
-                        is_template: false,
-                        template_selects: vec![],
-                    }));
-
-                    let result = wizard
-                        .as_mut()
-                        .unwrap()
-                        .show_picker(
-                            "Select a Google account",
-                            "Space to select, Enter to confirm",
-                            items,
-                            false,
-                        )
-                        .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
-
-                    match result {
-                        PickerResult::Confirmed(items) => {
-                            let chosen = items.iter().find(|i| i.selected);
-                            match chosen {
-                                Some(item) if item.label.starts_with('➕') => {
-                                    // Suspend TUI for browser-based login
-                                    wizard.as_mut().unwrap().suspend().map_err(|e| {
-                                        GwsError::Validation(format!("TUI error: {e}"))
-                                    })?;
-                                    eprintln!("  → Opening browser for login...");
-                                    gcloud_auth_login()?;
-                                    let acct = get_gcloud_account()?.ok_or_else(|| {
-                                        GwsError::Auth(
-                                            "Authentication failed — no active account".to_string(),
-                                        )
-                                    })?;
-                                    wizard.as_mut().unwrap().resume().map_err(|e| {
-                                        GwsError::Validation(format!("TUI error: {e}"))
-                                    })?;
-                                    wiz!(1, StepStatus::Done(acct.clone()));
-                                    account = acct;
-                                    SetupStage::Project
-                                }
-                                Some(item) => {
-                                    set_gcloud_account(&item.label)?;
-                                    wiz!(1, StepStatus::Done(item.label.clone()));
-                                    account = item.label.clone();
-                                    SetupStage::Project
-                                }
-                                None => {
-                                    if let Some(w) = wizard.take() {
-                                        let _ = w.finish();
-                                    }
-                                    return Err(GwsError::Validation(
-                                        "No account selected".to_string(),
-                                    ));
-                                }
-                            }
-                        }
-                        PickerResult::GoBack => {
-                            SetupStage::CheckGcloud // can't really go back from here without exiting, but we'll allow looping
-                        }
-                        PickerResult::Cancelled => {
-                            if let Some(w) = wizard.take() {
-                                let _ = w.finish();
-                            }
-                            return Err(GwsError::Validation("Setup cancelled".to_string()));
-                        }
-                    }
-                } else {
-                    // Non-interactive
-                    account = match get_gcloud_account()? {
-                        Some(acct) => {
-                            eprintln!(
-                                "Step 2/6: Checking authentication...\n  ✓ Authenticated as {}",
-                                acct
-                            );
-                            acct
-                        }
-                        None => {
-                            eprintln!("Step 2/6: Checking authentication...\n  → Not logged in. Running gcloud auth login...");
-                            gcloud_auth_login()?;
-                            get_gcloud_account()?.ok_or_else(|| {
-                                GwsError::Auth(
-                                    "Authentication failed — no active account".to_string(),
-                                )
-                            })?
-                        }
-                    };
-                    SetupStage::Project
-                }
-            }
-            SetupStage::Project => {
-                // Step 3: Select project
-                wiz!(2, StepStatus::InProgress(String::new()));
-                if let Some(p) = opts.project.clone() {
-                    if !dry_run {
-                        set_gcloud_project(&p)?;
-                    }
-                    wiz!(2, StepStatus::Done(p.clone()));
-                    if !interactive {
-                        eprintln!("Step 3/6: Project set to {}", p);
-                    }
-                    project_id = p;
-                    SetupStage::EnableApis
-                } else if interactive {
-                    if let Some(ref mut w) = wizard {
-                        let _ = w.show_message("Loading projects...");
-                    }
-                    let (projects, list_err) = list_gcloud_projects();
-                    if let Some(err) = &list_err {
-                        if let Some(ref mut w) = wizard {
-                            let _ = w.show_message(&format!("⚠ Could not list projects: {err}"));
-                        }
-                    }
-                    let current = get_gcloud_project()?.unwrap_or_default();
-
-                    let mut items: Vec<SelectItem> = vec![SelectItem {
-                        label: "➕ Create new project".to_string(),
-                        description: "Create a new GCP project for gws".to_string(),
-                        selected: false,
-                        is_fixed: false,
-                        is_template: false,
-                        template_selects: vec![],
-                    }];
-                    items.extend(projects.iter().map(|(id, name)| SelectItem {
-                        label: id.clone(),
-                        description: name.clone(),
-                        selected: *id == current,
-                        is_fixed: false,
-                        is_template: false,
-                        template_selects: vec![],
-                    }));
-
-                    let result = wizard
-                        .as_mut()
-                        .unwrap()
-                        .show_picker(
-                            "Select a GCP project",
-                            "Space to select, Enter to confirm",
-                            items,
-                            false,
-                        )
-                        .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
-
-                    match result {
-                        PickerResult::Confirmed(items) => {
-                            let chosen = items.iter().find(|i| i.selected);
-                            match chosen {
-                                Some(item) if item.label.starts_with('➕') => {
-                                    let project_name = match wizard
-                                        .as_mut()
-                                        .unwrap()
-                                        .show_input(
-                                            "Create new GCP project",
-                                            "Enter a unique project ID",
-                                            None,
-                                        )
-                                        .map_err(|e| {
-                                            GwsError::Validation(format!("TUI error: {e}"))
-                                        })? {
-                                        crate::setup_tui::InputResult::Confirmed(v)
-                                            if !v.is_empty() =>
-                                        {
-                                            v
-                                        }
-                                        _ => {
-                                            return Err(GwsError::Validation(
-                                                "Project creation cancelled by user".to_string(),
-                                            ))
-                                        }
-                                    };
-
-                                    wizard
-                                        .as_mut()
-                                        .unwrap()
-                                        .show_message(&format!(
-                                            "Creating project '{}'...",
-                                            project_name
-                                        ))
-                                        .ok();
-
-                                    let status = gcloud_cmd()
-                                        .args(["projects", "create", &project_name])
-                                        .status()
-                                        .map_err(|e| {
-                                            GwsError::Validation(format!(
-                                                "Failed to create project: {e}"
-                                            ))
-                                        })?;
-                                    if !status.success() {
-                                        return Err(GwsError::Validation(format!(
-                                "Failed to create project '{}'. Check the ID is valid and unique.", project_name
-                            )));
-                                    }
-                                    set_gcloud_project(&project_name)?;
-                                    wiz!(2, StepStatus::Done(project_name.clone()));
-                                    project_id = project_name;
-                                    SetupStage::EnableApis
-                                }
-                                Some(item) => {
-                                    set_gcloud_project(&item.label)?;
-                                    wiz!(2, StepStatus::Done(item.label.clone()));
-                                    project_id = item.label.clone();
-                                    SetupStage::EnableApis
-                                }
-                                None => {
-                                    if let Some(w) = wizard.take() {
-                                        let _ = w.finish();
-                                    }
-                                    return Err(GwsError::Validation(
-                                        "No project selected. Use --project <id> to specify one."
-                                            .to_string(),
-                                    ));
-                                }
-                            }
-                        }
-                        PickerResult::GoBack => SetupStage::Account,
-                        PickerResult::Cancelled => {
-                            if let Some(w) = wizard.take() {
-                                let _ = w.finish();
-                            }
-                            return Err(GwsError::Validation("Setup cancelled".to_string()));
-                        }
-                    }
-                } else {
-                    project_id = match get_gcloud_project()? {
-                        Some(p) => {
-                            eprintln!("Step 3/6: Using current project: {}", p);
-                            p
-                        }
-                        None => {
-                            return Err(GwsError::Validation(
-                    "No GCP project configured. Use --project <id> or run `gcloud config set project <id>`".to_string(),
-                ));
-                        }
-                    };
-                    SetupStage::EnableApis
-                }
-            }
-
-            SetupStage::EnableApis => {
-                // Step 4: Select and enable APIs
-                wiz!(3, StepStatus::InProgress(String::new()));
-                if interactive {
-                    let already_enabled = get_enabled_apis(&project_id);
-                    let items: Vec<SelectItem> = WORKSPACE_APIS
-                        .iter()
-                        .map(|api| {
-                            let already = already_enabled.contains(&api.id.to_string());
-                            SelectItem {
-                                label: api.name.to_string(),
-                                description: if already {
-                                    format!("{} (already enabled)", api.id)
-                                } else {
-                                    api.id.to_string()
-                                },
-                                selected: already,
-                                is_fixed: already,
-                                is_template: false,
-                                template_selects: vec![],
-                            }
-                        })
-                        .collect();
-
-                    let result = wizard
-                        .as_mut()
-                        .unwrap()
-                        .show_picker(
-                            "Select APIs to enable",
-                            "Space to toggle, 'a' to select all, Enter to confirm",
-                            items,
-                            true,
-                        )
-                        .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
-
-                    match result {
-                        PickerResult::Confirmed(items) => {
-                            api_ids = items
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, item)| item.selected)
-                                .map(|(i, _)| WORKSPACE_APIS[i].id.to_string())
-                                .collect::<Vec<_>>();
-                        }
-                        PickerResult::GoBack => {
-                            stage = SetupStage::Project;
-                            continue;
-                        }
-                        PickerResult::Cancelled => {
-                            if let Some(w) = wizard.take() {
-                                let _ = w.finish();
-                            }
-                            return Err(GwsError::Validation("Setup cancelled".to_string()));
-                        }
-                    }
-                } else {
-                    api_ids = all_api_ids().iter().map(|s| s.to_string()).collect();
-                }
-
-                if dry_run {
-                    eprintln!("Step 4/5: Would enable {} APIs:", api_ids.len());
-                    for id in &api_ids {
-                        eprintln!("  - {}", id);
-                    }
-                    eprintln!("Step 5/5: Would configure OAuth credentials (Consent + Client)");
-                    eprintln!();
-                    let output = json!({
-                        "status": "dry_run",
-                        "message": "No changes were made. Run `gws auth login` to authenticate.",
-                        "account": account,
-                        "project": project_id,
-                        "apis_would_enable": api_ids,
-                    });
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&output).unwrap_or_default()
-                    );
-                    return Ok(());
-                }
-
-                // Step 4: Enable APIs
-                wiz!(
-                    3,
-                    StepStatus::InProgress(format!("Enabling {} APIs...", api_ids.len()))
-                );
-                let (enabled_apis, skipped_apis, failed_apis) =
-                    enable_apis(&project_id, &api_ids).await;
-                enabled = enabled_apis;
-                skipped = skipped_apis;
-                failed = failed_apis;
-                wiz!(
-                    3,
-                    StepStatus::Done(format!(
-                        "{} enabled, {} skipped",
-                        enabled.len(),
-                        skipped.len()
-                    ))
-                );
-                SetupStage::ConfigureOauth
-            }
-
-            SetupStage::ConfigureOauth => {
-                // Step 5: Configure consent screen & Create OAuth client (Manual input required)
-                wiz!(4, StepStatus::InProgress("Configuring...".into()));
-                let access_token = get_access_token()?;
-                let app_name = "gws CLI";
-                configure_consent_screen(&project_id, &access_token, app_name, &account).await?;
-
-                wiz!(
-                    4,
-                    StepStatus::InProgress("Waiting for manual input...".into())
-                );
-                if interactive {
-                    let (cid_result, csecret_result) = if let Some(ref mut w) = wizard {
-                        // Provide instructions below the steps for both consent and credentials
-                        let current_creds: Option<serde_json::Value> =
-                            crate::credential_store::load_encrypted()
-                                .ok()
-                                .and_then(|s| serde_json::from_str(&s).ok());
-
-                        w.show_message(&format!(
-                "Go to: https://console.cloud.google.com/apis/credentials/consent?project={project_id}\n\
-                 Ensure 'External' consent screen is configured. Then,\n\
-                 Go to: https://console.cloud.google.com/apis/credentials?project={project_id}\n\
-                 Click 'Create Credentials' -> 'OAuth client ID' -> 'Desktop app'"
-            ))
-            .ok();
-
-                        let cid_res = w
-                            .show_input(
-                                "Enter OAuth Client ID",
-                                "Paste the Client ID from Google Cloud Console",
-                                current_creds.as_ref().and_then(|c| c["client_id"].as_str()),
-                            )
-                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
-
-                        let csec_res = match &cid_res {
-                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => w
-                                .show_input(
-                                    "Enter OAuth Client Secret",
-                                    "Paste the Client Secret from Google Cloud Console",
-                                    current_creds
-                                        .as_ref()
-                                        .and_then(|c| c["client_secret"].as_str()),
-                                )
-                                .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?,
-                            _ => crate::setup_tui::InputResult::Cancelled,
-                        };
-                        (cid_res, csec_res)
-                    } else {
-                        return Err(GwsError::Validation(
-                            "Interactive mode required for OAuth client input".to_string(),
-                        ));
-                    };
-
-                    let cid = match cid_result {
-                        crate::setup_tui::InputResult::Confirmed(v) => {
-                            if v.is_empty() {
-                                if let Some(w) = wizard.take() {
-                                    let _ = w.finish();
-                                }
-                                return Err(GwsError::Validation(
-                                    "Client ID cannot be empty".into(),
-                                ));
-                            }
-                            v
-                        }
-                        crate::setup_tui::InputResult::GoBack => {
-                            stage = SetupStage::EnableApis;
-                            continue;
-                        }
-                        crate::setup_tui::InputResult::Cancelled => {
-                            if let Some(w) = wizard.take() {
-                                let _ = w.finish();
-                            }
-                            return Err(GwsError::Validation("Setup cancelled".into()));
-                        }
-                    };
-
-                    let csec = match csecret_result {
-                        crate::setup_tui::InputResult::Confirmed(v) => {
-                            if v.is_empty() {
-                                if let Some(w) = wizard.take() {
-                                    let _ = w.finish();
-                                }
-                                return Err(GwsError::Validation(
-                                    "Client Secret cannot be empty".into(),
-                                ));
-                            }
-                            v
-                        }
-                        crate::setup_tui::InputResult::GoBack => {
-                            stage = SetupStage::EnableApis;
-                            continue;
-                        }
-                        crate::setup_tui::InputResult::Cancelled => {
-                            if let Some(w) = wizard.take() {
-                                let _ = w.finish();
-                            }
-                            return Err(GwsError::Validation("Setup cancelled".into()));
-                        }
-                    };
-                    client_id = cid;
-                    client_secret = csec;
-                } else {
-                    return Err(GwsError::Validation(
-                        "Cannot automate OAuth client creation. Please run setup interactively."
-                            .to_string(),
-                    ));
-                };
-
-                // Save client config in standard Google Cloud Console format
-                let _config_path = crate::oauth_config::save_client_config(
-                    &client_id,
-                    &client_secret,
-                    &project_id,
-                )
-                .map_err(|e| GwsError::Validation(format!("Failed to save client config: {e}")))?;
-
-                wiz!(4, StepStatus::Done("configured".into()));
-                SetupStage::Finish
-            }
+            SetupStage::CheckGcloud => stage_check_gcloud(&mut ctx)?,
+            SetupStage::Account => stage_account(&mut ctx)?,
+            SetupStage::Project => stage_project(&mut ctx)?,
+            SetupStage::EnableApis => stage_enable_apis(&mut ctx).await?,
+            SetupStage::ConfigureOauth => stage_configure_oauth(&mut ctx).await?,
             SetupStage::Finish => break,
         };
     }
 
-    // Finish the wizard TUI
-    if let Some(w) = wizard.take() {
-        let _ = w.finish();
-    }
+    ctx.finish_wizard();
 
-    // Output JSON summary
     let output = json!({
         "status": "success",
         "message": "Setup complete! Run `gws auth login` to authenticate.",
-        "account": account,
-        "project": project_id,
-        "apis_enabled": enabled.len(),
-        "apis_skipped": skipped.len(),
-        "apis_failed": failed.len(),
+        "account": ctx.account,
+        "project": ctx.project_id,
+        "apis_enabled": ctx.enabled.len(),
+        "apis_skipped": ctx.skipped.len(),
+        "apis_failed": ctx.failed.len(),
         "client_config": crate::oauth_config::client_config_path().display().to_string(),
     });
     println!(

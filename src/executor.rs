@@ -59,6 +59,275 @@ impl Default for PaginationConfig {
     }
 }
 
+/// Parsed and validated inputs ready for request execution.
+#[allow(dead_code)]
+struct ExecutionInput {
+    params: Map<String, Value>,
+    body: Option<Value>,
+    full_url: String,
+    query_params: HashMap<String, String>,
+    is_upload: bool,
+}
+
+/// Parse parameters and body JSON, validate against schema, check required params, and build the URL.
+fn parse_and_validate_inputs(
+    doc: &RestDescription,
+    method: &RestMethod,
+    params_json: Option<&str>,
+    body_json: Option<&str>,
+    upload_path: Option<&str>,
+) -> Result<ExecutionInput, GwsError> {
+    let params: Map<String, Value> = if let Some(p) = params_json {
+        serde_json::from_str(p)
+            .map_err(|e| GwsError::Validation(format!("Invalid --params JSON: {e}")))?
+    } else {
+        Map::new()
+    };
+
+    let body: Option<Value> = if let Some(b) = body_json {
+        let val: Value = serde_json::from_str(b)
+            .map_err(|e| GwsError::Validation(format!("Invalid --json body: {e}")))?;
+
+        if let Some(ref req_ref) = method.request {
+            if let Some(ref schema_name) = req_ref.schema_ref {
+                validate_body_against_schema(&val, schema_name, doc)?;
+            }
+        }
+
+        Some(val)
+    } else {
+        None
+    };
+
+    for param_name in &method.parameter_order {
+        if let Some(param_def) = method.parameters.get(param_name) {
+            if param_def.required
+                && param_def.location.as_deref() == Some("path")
+                && !params.contains_key(param_name)
+            {
+                return Err(GwsError::Validation(format!(
+                    "Required path parameter {} is missing. Provide it via --params",
+                    param_name
+                )));
+            }
+        }
+    }
+
+    for (param_name, param_def) in &method.parameters {
+        if param_def.required && !params.contains_key(param_name) {
+            return Err(GwsError::Validation(format!(
+                "Required parameter '{}' is missing. Provide it via --params",
+                param_name
+            )));
+        }
+    }
+
+    let (full_url, query_params) = build_url(doc, method, &params, upload_path.is_some())?;
+    let is_upload = upload_path.is_some() && method.supports_media_upload;
+
+    Ok(ExecutionInput {
+        params,
+        body,
+        full_url,
+        query_params,
+        is_upload,
+    })
+}
+
+/// Build an HTTP request with auth, query params, page token, and body/multipart attachment.
+#[allow(clippy::too_many_arguments)]
+async fn build_http_request(
+    client: &reqwest::Client,
+    method: &RestMethod,
+    input: &ExecutionInput,
+    token: Option<&str>,
+    auth_method: &AuthMethod,
+    page_token: Option<&str>,
+    pages_fetched: u32,
+    upload_path: Option<&str>,
+) -> Result<reqwest::RequestBuilder, GwsError> {
+    let mut request = match method.http_method.as_str() {
+        "GET" => client.get(&input.full_url),
+        "POST" => client.post(&input.full_url),
+        "PUT" => client.put(&input.full_url),
+        "PATCH" => client.patch(&input.full_url),
+        "DELETE" => client.delete(&input.full_url),
+        other => {
+            return Err(GwsError::Other(anyhow::anyhow!(
+                "Unsupported HTTP method: {other}"
+            )))
+        }
+    };
+
+    if let Some(token) = token {
+        if *auth_method == AuthMethod::OAuth {
+            request = request.bearer_auth(token);
+        }
+    }
+
+    for (key, value) in &input.query_params {
+        request = request.query(&[(key, value)]);
+    }
+
+    if let Some(pt) = page_token {
+        request = request.query(&[("pageToken", pt)]);
+    }
+
+    if pages_fetched == 0 {
+        if input.is_upload {
+            let upload_path = upload_path.expect("upload_path must be Some when is_upload is true");
+
+            let file_bytes = tokio::fs::read(upload_path).await.map_err(|e| {
+                GwsError::Validation(format!(
+                    "Failed to read upload file '{}': {}",
+                    upload_path, e
+                ))
+            })?;
+
+            request = request.query(&[("uploadType", "multipart")]);
+            let (multipart_body, content_type) = build_multipart_body(&input.body, &file_bytes)?;
+            request = request.header("Content-Type", content_type);
+            request = request.body(multipart_body);
+        } else if let Some(ref body_val) = input.body {
+            request = request.header("Content-Type", "application/json");
+            request = request.json(body_val);
+        }
+    }
+
+    Ok(request)
+}
+
+/// Handle a JSON response: parse, sanitize via Model Armor, output, and check pagination.
+/// Returns `Ok(true)` if the pagination loop should continue.
+async fn handle_json_response(
+    body_text: &str,
+    pagination: &PaginationConfig,
+    sanitize_template: Option<&str>,
+    sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
+    output_format: &crate::formatter::OutputFormat,
+    pages_fetched: &mut u32,
+    page_token: &mut Option<String>,
+) -> Result<bool, GwsError> {
+    if let Ok(mut json_val) = serde_json::from_str::<Value>(body_text) {
+        *pages_fetched += 1;
+
+        // Run Model Armor sanitization if --sanitize is enabled
+        if let Some(template) = sanitize_template {
+            let text_to_check = serde_json::to_string(&json_val).unwrap_or_default();
+            match crate::helpers::modelarmor::sanitize_text(template, &text_to_check).await {
+                Ok(result) => {
+                    let is_match = result.filter_match_state == "MATCH_FOUND";
+                    if is_match {
+                        eprintln!("⚠️  Model Armor: prompt injection detected (filterMatchState: MATCH_FOUND)");
+                    }
+
+                    if is_match && *sanitize_mode == crate::helpers::modelarmor::SanitizeMode::Block
+                    {
+                        let blocked = serde_json::json!({
+                            "error": "Content blocked by Model Armor",
+                            "sanitizationResult": serde_json::to_value(&result).unwrap_or_default(),
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&blocked).unwrap_or_default()
+                        );
+                        return Err(GwsError::Other(anyhow::anyhow!(
+                            "Content blocked by Model Armor"
+                        )));
+                    }
+
+                    if let Some(obj) = json_val.as_object_mut() {
+                        obj.insert(
+                            "_sanitization".to_string(),
+                            serde_json::to_value(&result).unwrap_or_default(),
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠️  Model Armor sanitization failed: {e}");
+                }
+            }
+        }
+
+        if pagination.page_all {
+            println!(
+                "{}",
+                crate::formatter::format_value_compact(&json_val, output_format)
+            );
+        } else {
+            println!(
+                "{}",
+                crate::formatter::format_value(&json_val, output_format)
+            );
+        }
+
+        // Check for nextPageToken to continue pagination
+        if pagination.page_all {
+            if let Some(next_token) = json_val.get("nextPageToken").and_then(|v| v.as_str()) {
+                if *pages_fetched < pagination.page_limit {
+                    *page_token = Some(next_token.to_string());
+                    if pagination.page_delay_ms > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            pagination.page_delay_ms,
+                        ))
+                        .await;
+                    }
+                    return Ok(true); // continue paginating
+                }
+            }
+        }
+    } else {
+        // Not valid JSON, output as-is
+        if !body_text.is_empty() {
+            println!("{body_text}");
+        }
+    }
+
+    Ok(false)
+}
+
+/// Handle a binary response by streaming it to a file.
+async fn handle_binary_response(
+    response: reqwest::Response,
+    content_type: &str,
+    output_path: Option<&str>,
+    output_format: &crate::formatter::OutputFormat,
+) -> Result<(), GwsError> {
+    let file_path = if let Some(p) = output_path {
+        PathBuf::from(p)
+    } else {
+        let ext = mime_to_extension(content_type);
+        PathBuf::from(format!("download.{ext}"))
+    };
+
+    let mut file = tokio::fs::File::create(&file_path)
+        .await
+        .context("Failed to create output file")?;
+
+    let mut stream = response.bytes_stream();
+    let mut total_bytes: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Failed to read response chunk")?;
+        file.write_all(&chunk)
+            .await
+            .context("Failed to write to file")?;
+        total_bytes += chunk.len() as u64;
+    }
+
+    file.flush().await.context("Failed to flush file")?;
+
+    let result = json!({
+        "status": "success",
+        "saved_file": file_path.display().to_string(),
+        "mimeType": content_type,
+        "bytes": total_bytes,
+    });
+    println!("{}", crate::formatter::format_value(&result, output_format));
+
+    Ok(())
+}
+
 /// Executes an API method call.
 ///
 /// This is the core function of the CLI that handles:
@@ -85,75 +354,16 @@ pub async fn execute_method(
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
     output_format: &crate::formatter::OutputFormat,
 ) -> Result<(), GwsError> {
-    // Parse params
-    let params: Map<String, Value> = if let Some(p) = params_json {
-        serde_json::from_str(p)
-            .map_err(|e| GwsError::Validation(format!("Invalid --params JSON: {e}")))?
-    } else {
-        Map::new()
-    };
-
-    // Parse and validate request body
-    let body: Option<Value> = if let Some(b) = body_json {
-        let val: Value = serde_json::from_str(b)
-            .map_err(|e| GwsError::Validation(format!("Invalid --json body: {e}")))?;
-
-        // Validate against schema if available
-        if let Some(ref req_ref) = method.request {
-            if let Some(ref schema_name) = req_ref.schema_ref {
-                validate_body_against_schema(&val, schema_name, doc)?;
-            }
-        }
-
-        Some(val)
-    } else {
-        None
-    };
-
-    for param_name in &method.parameter_order {
-        if let Some(param_def) = method.parameters.get(param_name) {
-            if param_def.required
-                && param_def.location.as_deref() == Some("path")
-                && !params.contains_key(param_name)
-            {
-                return Err(GwsError::Validation(format!(
-                    "Required path parameter {} is missing. Provide it via --params",
-                    param_name
-                )));
-            }
-        }
-    }
-
-    // Also check non-ordered required parameters
-    for (param_name, param_def) in &method.parameters {
-        if param_def.required && !params.contains_key(param_name) {
-            return Err(GwsError::Validation(format!(
-                "Required parameter '{}' is missing. Provide it via --params",
-                param_name
-            )));
-        }
-    }
-
-    // Build URL and extract query params
-    let (full_url, query_params) = build_url(doc, method, &params, upload_path.is_some())?;
-
-    // Determine if this is a multipart upload request
-    let is_upload = upload_path.is_some() && method.supports_media_upload;
-
-    // Pagination loop
-    // Some APIs return a `nextPageToken`. If `pagination.page_all` is true,
-    // we loop until no token is returned, or we hit `page_limit`.
-    let mut page_token: Option<String> = None;
-    let mut pages_fetched: u32 = 0;
+    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
 
     if dry_run {
         let dry_run_info = json!({
             "dry_run": true,
-            "url": full_url,
+            "url": input.full_url,
             "method": method.http_method,
-            "query_params": query_params,
-            "body": body,
-            "is_multipart_upload": is_upload,
+            "query_params": input.query_params,
+            "body": input.body,
+            "is_multipart_upload": input.is_upload,
         });
         println!(
             "{}",
@@ -162,64 +372,23 @@ pub async fn execute_method(
         return Ok(());
     }
 
+    let mut page_token: Option<String> = None;
+    let mut pages_fetched: u32 = 0;
+
     loop {
-        // Build request
         let client = crate::client::build_client()?;
-        let mut request = match method.http_method.as_str() {
-            "GET" => client.get(&full_url),
-            "POST" => client.post(&full_url),
-            "PUT" => client.put(&full_url),
-            "PATCH" => client.patch(&full_url),
-            "DELETE" => client.delete(&full_url),
-            other => {
-                return Err(GwsError::Other(anyhow::anyhow!(
-                    "Unsupported HTTP method: {other}"
-                )))
-            }
-        };
+        let request = build_http_request(
+            &client,
+            method,
+            &input,
+            token,
+            &auth_method,
+            page_token.as_deref(),
+            pages_fetched,
+            upload_path,
+        )
+        .await?;
 
-        if let Some(token) = token {
-            if auth_method == AuthMethod::OAuth {
-                request = request.bearer_auth(token);
-            }
-        }
-
-        // Add query parameters
-        for (key, value) in &query_params {
-            request = request.query(&[(key, value)]);
-        }
-
-        // Add pageToken for subsequent pages
-        if let Some(ref pt) = page_token {
-            request = request.query(&[("pageToken", pt)]);
-        }
-
-        // Add body (only on first request for paginated calls)
-        if pages_fetched == 0 {
-            if is_upload {
-                // Multipart upload: build multipart/related body
-                let upload_path =
-                    upload_path.expect("upload_path must be Some when is_upload is true");
-
-                // Read file asynchronously
-                let file_bytes = tokio::fs::read(upload_path).await.map_err(|e| {
-                    GwsError::Validation(format!(
-                        "Failed to read upload file '{}': {}",
-                        upload_path, e
-                    ))
-                })?;
-
-                request = request.query(&[("uploadType", "multipart")]);
-                let (multipart_body, content_type) = build_multipart_body(&body, &file_bytes)?;
-                request = request.header("Content-Type", content_type);
-                request = request.body(multipart_body);
-            } else if let Some(ref body_val) = body {
-                request = request.header("Content-Type", "application/json");
-                request = request.json(body_val);
-            }
-        }
-
-        // Send request
         let response = request.send().await.context("HTTP request failed")?;
 
         let status = response.status();
@@ -230,13 +399,11 @@ pub async fn execute_method(
             .unwrap_or("")
             .to_string();
 
-        // Handle error responses
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
             return handle_error_response(status, &error_body, &auth_method);
         }
 
-        // Handle successful response
         let is_json =
             content_type.contains("application/json") || content_type.contains("text/json");
 
@@ -246,126 +413,24 @@ pub async fn execute_method(
                 .await
                 .context("Failed to read response body")?;
 
-            if let Ok(mut json_val) = serde_json::from_str::<Value>(&body_text) {
-                pages_fetched += 1;
+            let should_continue = handle_json_response(
+                &body_text,
+                pagination,
+                sanitize_template,
+                sanitize_mode,
+                output_format,
+                &mut pages_fetched,
+                &mut page_token,
+            )
+            .await?;
 
-                // Run Model Armor sanitization if --sanitize is enabled
-                // We stringify the entire JSON response to check for PII or specialized content.
-                if let Some(template) = sanitize_template {
-                    let text_to_check = serde_json::to_string(&json_val).unwrap_or_default();
-                    match crate::helpers::modelarmor::sanitize_text(template, &text_to_check).await
-                    {
-                        Ok(result) => {
-                            let is_match = result.filter_match_state == "MATCH_FOUND";
-                            if is_match {
-                                eprintln!("⚠️  Model Armor: prompt injection detected (filterMatchState: MATCH_FOUND)");
-                            }
-
-                            if is_match
-                                && *sanitize_mode == crate::helpers::modelarmor::SanitizeMode::Block
-                            {
-                                // Block mode: output only sanitization result, exit with error
-                                let blocked = serde_json::json!({
-                                    "error": "Content blocked by Model Armor",
-                                    "sanitizationResult": serde_json::to_value(&result).unwrap_or_default(),
-                                });
-                                println!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&blocked).unwrap_or_default()
-                                );
-                                return Err(GwsError::Other(anyhow::anyhow!(
-                                    "Content blocked by Model Armor"
-                                )));
-                            }
-
-                            // Warn mode: annotate response with _sanitization field
-                            if let Some(obj) = json_val.as_object_mut() {
-                                obj.insert(
-                                    "_sanitization".to_string(),
-                                    serde_json::to_value(&result).unwrap_or_default(),
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("⚠️  Model Armor sanitization failed: {e}");
-                        }
-                    }
-                }
-
-                if pagination.page_all {
-                    // Paginated mode: compact output per page
-                    println!(
-                        "{}",
-                        crate::formatter::format_value_compact(&json_val, output_format)
-                    );
-                } else {
-                    // Single request: formatted output
-                    println!(
-                        "{}",
-                        crate::formatter::format_value(&json_val, output_format)
-                    );
-                }
-
-                // Check for nextPageToken to continue pagination
-                if pagination.page_all {
-                    if let Some(next_token) = json_val.get("nextPageToken").and_then(|v| v.as_str())
-                    {
-                        if pages_fetched < pagination.page_limit {
-                            page_token = Some(next_token.to_string());
-                            // Delay between pages to avoid rate limiting
-                            if pagination.page_delay_ms > 0 {
-                                tokio::time::sleep(std::time::Duration::from_millis(
-                                    pagination.page_delay_ms,
-                                ))
-                                .await;
-                            }
-                            continue;
-                        }
-                    }
-                }
-            } else {
-                // Not valid JSON, output as-is
-                if !body_text.is_empty() {
-                    println!("{body_text}");
-                }
+            if should_continue {
+                continue;
             }
         } else {
-            // Binary response — stream to file (no pagination for binary)
-            let file_path = if let Some(p) = output_path {
-                PathBuf::from(p)
-            } else {
-                // Generate a filename from the content type
-                let ext = mime_to_extension(&content_type);
-                PathBuf::from(format!("download.{ext}"))
-            };
-
-            let mut file = tokio::fs::File::create(&file_path)
-                .await
-                .context("Failed to create output file")?;
-
-            let mut stream = response.bytes_stream();
-            let mut total_bytes: u64 = 0;
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.context("Failed to read response chunk")?;
-                file.write_all(&chunk)
-                    .await
-                    .context("Failed to write to file")?;
-                total_bytes += chunk.len() as u64;
-            }
-
-            file.flush().await.context("Failed to flush file")?;
-
-            let result = json!({
-                "status": "success",
-                "saved_file": file_path.display().to_string(),
-                "mimeType": content_type,
-                "bytes": total_bytes,
-            });
-            println!("{}", crate::formatter::format_value(&result, output_format));
+            handle_binary_response(response, &content_type, output_path, output_format).await?;
         }
 
-        // Break out of pagination loop (continue is handled above)
         break;
     }
 
