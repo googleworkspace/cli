@@ -28,7 +28,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -43,13 +42,12 @@ jobs:
       - name: Install Dependencies
         run: pnpm install
 
-      - name: Create Release Pull Request or Publish
+      - name: Create Release Pull Request or Tag
         id: changesets
         uses: changesets/action@v1
         with:
-          publish: pnpm changeset publish
+          publish: pnpm changeset tag
           commit: 'chore: release versions'
           title: 'chore: release versions'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
