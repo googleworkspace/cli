@@ -19,7 +19,8 @@
   "scripts": {
     "test": "cargo test",
     "prepare": "lefthook install",
-    "tag-release": "git tag v$(node -p \"require('./package.json').version\") && git push origin v$(node -p \"require('./package.json').version\")"
+    "version-sync": "bash scripts/version-sync.sh",
+    "tag-release": "git tag v$(node -p \"require('./package.json').version\") 2>/dev/null && git push origin v$(node -p \"require('./package.json').version\") || echo 'Tag already exists, skipping'"
   },
   "publishConfig": {
     "provenance": true,

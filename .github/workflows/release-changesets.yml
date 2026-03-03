@@ -35,6 +35,9 @@ jobs:
         with:
           token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
@@ -54,6 +57,7 @@ jobs:
         id: changesets
         uses: changesets/action@v1
         with:
+          version: pnpm run version-sync
           publish: pnpm run tag-release
           commit: 'chore: release versions'
           title: 'chore: release versions'
