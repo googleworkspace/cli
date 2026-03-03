@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/docs/logo.png" alt="gws logo" width="200">
+  <img src="https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/docs/logo.jpg" alt="gws logo" width="100%">
 </p>
 
 <h1 align="center">gws</h1>
