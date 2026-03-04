@@ -1,5 +1,13 @@
 # @googleworkspace/cli
 
+## 0.3.1
+
+### Patch Changes
+
+- b3669e0: Add hourly cron to generate-skills workflow to auto-sync skills with upstream Google Discovery API changes via PR
+- e8d533e: Add workflow to publish OpenClaw skills to ClawHub
+- 3b38c8d: Sync generated skills with latest Google Discovery API specs
+
 ## 0.3.0
 
 ### Minor Changes
