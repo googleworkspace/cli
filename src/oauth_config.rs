@@ -256,9 +256,8 @@ mod tests {
 
         let result = load_client_config();
         let err = result.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Invalid client_secret.json format")
-        );
+        assert!(err
+            .to_string()
+            .contains("Invalid client_secret.json format"));
     }
 }
