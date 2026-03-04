@@ -1,5 +1,79 @@
 # @googleworkspace/cli
 
+## 0.2.2
+
+### Patch Changes
+
+- f281797: docs(auth): add manual Google Cloud OAuth client setup and browser-assisted login guidance
+
+  Adds step-by-step guidance for creating a Desktop OAuth client in Google Cloud Console,
+  where to place `client_secret.json`, and how humans/agents can complete browser consent
+  (including unverified app and scope-selection prompts).
+
+- ee2e216: Narrow default OAuth scopes to avoid `Error 403: restricted_client` on unverified apps and add a `--full` flag for broader access (fixes #25). Replace the cryptic non-interactive setup error with actionable step-by-step OAuth console instructions (fixes #24).
+- de2787e: feat(error): detect disabled APIs and guide users to enable them
+
+  When the Google API returns a 403 `accessNotConfigured` error (i.e., the
+  required API has not been enabled for the GCP project), `gws` now:
+
+  - Extracts the GCP Console enable URL from the error message body.
+  - Prints the original error JSON to stdout (machine-readable, unchanged shape
+    except for an optional new `enable_url` field added to the error object).
+  - Prints a human-readable hint with the direct enable URL to stderr, along
+    with instructions to retry after enabling.
+
+  This prevents a dead-end experience where users see a raw 403 JSON blob
+  with no guidance. The JSON output is backward-compatible; only an optional
+  `enable_url` field is added when the URL is parseable from the message.
+
+  Fixes #31
+
+- 9935dde: ci: auto-generate and commit skills on PR branch pushes
+- 4b868c7: docs: add community guidance to gws-shared skill and gws --help output
+
+  Encourages agents and users to star the repository and directs bug reports
+  and feature requests to GitHub Issues, with guidance to check for existing
+  issues before opening new ones.
+
+- 0603bce: fix: atomic credential file writes to prevent corruption on crash or Ctrl-C
+- 666f9a8: fix(auth): support --help / -h flag on auth subcommand
+- bcd2401: fix: flatten nested objects in table output and fix multi-byte char truncation panic
+- ee35e4a: fix: warn to stderr when unknown --format value is provided
+- e094b02: fix: YAML block scalar for strings with `#`/`:`, and repeated CSV/table headers with `--page-all`
+
+  **Bug 1 — YAML output: `drive#file` rendered as block scalar**
+
+  Strings containing `#` or `:` (e.g. `drive#file`, `https://…`) were
+  incorrectly emitted as YAML block scalars (`|`), producing output like:
+
+  ```yaml
+  kind: |
+    drive#file
+  ```
+
+  Block scalars add an implicit trailing newline which changes the string
+  value and produces invalid-looking output. The fix restricts block
+  scalar to strings that genuinely contain newlines; all other strings
+  are double-quoted, which is safe for any character sequence.
+
+  **Bug 2 — `--page-all` with `--format csv` / `--format table` repeats headers**
+
+  When paginating with `--page-all`, each page printed its own header row,
+  making the combined output unusable for downstream processing:
+
+  ```
+  id,kind,name          ← page 1 header
+  1,drive#file,foo.txt
+  id,kind,name          ← page 2 header (unexpected!)
+  2,drive#file,bar.txt
+  ```
+
+  Column headers (and the table separator line) are now emitted only for
+  the first page; continuation pages contain data rows only.
+
+- 173d155: fix: add YAML document separators (---) when paginating with --page-all --format yaml
+- 214fc18: ci: skip smoketest on fork pull requests
+
 ## 0.2.1
 
 ### Patch Changes
