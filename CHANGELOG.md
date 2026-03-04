@@ -1,5 +1,20 @@
 # @googleworkspace/cli
 
+## 0.3.0
+
+### Minor Changes
+
+- 670267f: feat: add `gws mcp` Model Context Protocol server
+
+  Adds a new `gws mcp` subcommand that starts an MCP server over stdio,
+  exposing Google Workspace APIs as structured tools to any MCP-compatible
+  client (Claude Desktop, Gemini CLI, VS Code, etc.).
+
+### Patch Changes
+
+- 8c1042a: Fix x-goog-api-client header format to use `gl-rust/gws-<version>`
+- 3de9762: Fix docs: `gws setup` → `gws auth setup` (fixes #56, #57)
+
 ## 0.2.2
 
 ### Patch Changes
