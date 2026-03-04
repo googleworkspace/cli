@@ -19,8 +19,37 @@ use serde_json::json;
 use crate::credential_store;
 use crate::error::GwsError;
 
-/// Default scopes for login — broad Workspace access.
-pub const DEFAULT_SCOPES: &[&str] = &[
+/// Minimal scopes for first-run login — only core Workspace APIs that never
+/// trigger Google's `restricted_client` / unverified-app block.
+///
+/// These are the safest scopes for unverified OAuth apps and personal Cloud
+/// projects.  Users can request broader access with `--scopes` or `--full`.
+pub const MINIMAL_SCOPES: &[&str] = &[
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/tasks",
+];
+
+/// Default scopes for login.  Alias for [`MINIMAL_SCOPES`] — deliberately kept
+/// narrow so first-run logins succeed even with an unverified OAuth app.
+///
+/// Previously this included `pubsub` and `cloud-platform`, which Google marks
+/// as *restricted* and blocks for unverified apps, causing `Error 403:
+/// restricted_client`.  Use `--scopes` to add those scopes explicitly when you
+/// have a verified app or a GCP project with the APIs enabled and approved.
+pub const DEFAULT_SCOPES: &[&str] = MINIMAL_SCOPES;
+
+/// Full scopes — all common Workspace APIs plus GCP platform access.
+///
+/// Use `gws auth login --full` to request these.  Unverified OAuth apps will
+/// receive a Google consent-screen warning, and some scopes (e.g. `pubsub`,
+/// `cloud-platform`) require app verification or a Workspace domain admin to
+/// grant access.
+pub const FULL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.modify",
@@ -72,6 +101,8 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
             "Usage: gws auth <login|setup|status|export|logout>\n\n\
               login   Authenticate via OAuth2 (opens browser)\n\
                       --readonly   Request read-only scopes\n\
+                      --full       Request all scopes incl. pubsub + cloud-platform\n\
+                                   (may trigger restricted_client for unverified apps)\n\
                       --scopes     Comma-separated custom scopes\n\
               setup   Configure GCP project + OAuth client (requires gcloud)\n\
                       --project    Use a specific GCP project\n\
@@ -316,6 +347,9 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
     }
     if args.iter().any(|a| a == "--readonly") {
         return READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
+    }
+    if args.iter().any(|a| a == "--full") {
+        return FULL_SCOPES.iter().map(|s| s.to_string()).collect();
     }
 
     // Interactive scope picker when running in a TTY

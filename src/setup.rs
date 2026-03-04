@@ -1163,6 +1163,69 @@ async fn stage_enable_apis(ctx: &mut SetupContext) -> Result<SetupStage, GwsErro
     Ok(SetupStage::ConfigureOauth)
 }
 
+/// Build actionable manual OAuth setup instructions for non-interactive environments.
+///
+/// Returned as the error message when `gws auth setup` cannot prompt interactively,
+/// so users get a clear checklist instead of a cryptic "run interactively" error.
+fn manual_oauth_instructions(project_id: &str) -> String {
+    let consent_url = if project_id.is_empty() {
+        "https://console.cloud.google.com/apis/credentials/consent".to_string()
+    } else {
+        format!(
+            "https://console.cloud.google.com/apis/credentials/consent?project={}",
+            project_id
+        )
+    };
+    let creds_url = if project_id.is_empty() {
+        "https://console.cloud.google.com/apis/credentials".to_string()
+    } else {
+        format!(
+            "https://console.cloud.google.com/apis/credentials?project={}",
+            project_id
+        )
+    };
+
+    format!(
+        "OAuth client creation requires manual setup in the Google Cloud Console.\n\
+         \n\
+         Follow these steps:\n\
+         \n\
+         1. Configure the OAuth consent screen (if not already done):\n\
+            {consent_url}\n\
+            → User Type: External\n\
+            → App name: gws CLI (or your preferred name)\n\
+            → Support email: your Google account email\n\
+            → Save and continue through all screens\n\
+         \n\
+         2. Create an OAuth client ID:\n\
+            {creds_url}\n\
+            → Click 'Create Credentials' → 'OAuth client ID'\n\
+            → Application type: Desktop app\n\
+            → Name: gws CLI (or your preferred name)\n\
+            → Click 'Create'\n\
+         \n\
+         3. Copy the Client ID and Client Secret shown in the dialog.\n\
+         \n\
+         4. Provide the credentials to gws using one of these methods:\n\
+         \n\
+            Option A — Environment variables (recommended for CI/scripts):\n\
+              export GOOGLE_WORKSPACE_CLI_CLIENT_ID=\"<your-client-id>\"\n\
+              export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=\"<your-client-secret>\"\n\
+              gws auth login\n\
+         \n\
+            Option B — Download the JSON file:\n\
+              Download 'client_secret_*.json' from the Cloud Console dialog\n\
+              and save it to: ~/.config/gws/client_secret.json\n\
+              Then run: gws auth login\n\
+         \n\
+            Option C — Re-run setup interactively (recommended for first-time setup):\n\
+              gws auth setup\n\
+         \n\
+         Note: The redirect URI used by gws is http://localhost (auto-negotiated port).\n\
+         Desktop app clients do not require you to register a redirect URI manually."
+    )
+}
+
 /// Stage 5: Configure OAuth consent screen and collect client credentials.
 async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
     ctx.wiz(4, StepStatus::InProgress("Configuring...".into()));
@@ -1175,9 +1238,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
         StepStatus::InProgress("Waiting for manual input...".into()),
     );
     if !ctx.interactive {
-        return Err(GwsError::Validation(
-            "Cannot automate OAuth client creation. Please run setup interactively.".to_string(),
-        ));
+        return Err(GwsError::Validation(manual_oauth_instructions(&ctx.project_id)));
     }
 
     let (cid_result, csecret_result) = if let Some(ref mut w) = ctx.wizard {
@@ -1186,11 +1247,20 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
             .and_then(|s| serde_json::from_str(&s).ok());
 
         w.show_message(&format!(
-            "Go to: https://console.cloud.google.com/apis/credentials/consent?project={}\n\
-             Ensure 'External' consent screen is configured. Then,\n\
-             Go to: https://console.cloud.google.com/apis/credentials?project={}\n\
-             Click 'Create Credentials' -> 'OAuth client ID' -> 'Desktop app'",
-            ctx.project_id, ctx.project_id
+            "Manual OAuth client setup required.\n\
+             \n\
+             Step A — Consent screen (if not configured):\n\
+             https://console.cloud.google.com/apis/credentials/consent?project={project}\n\
+             → User Type: External, then save through all screens.\n\
+             \n\
+             Step B — Create an OAuth client:\n\
+             https://console.cloud.google.com/apis/credentials?project={project}\n\
+             → 'Create Credentials' → 'OAuth client ID'\n\
+             → Application type: Desktop app\n\
+             → Redirect URI: http://localhost (auto-negotiated; no manual entry needed)\n\
+             \n\
+             Copy the Client ID and Client Secret from the dialog, then paste them below.",
+            project = ctx.project_id
         ))
         .ok();
 
