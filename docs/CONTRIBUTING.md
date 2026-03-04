@@ -83,7 +83,7 @@ This CLI is designed to be invoked by AI/LLM agents, so all user-supplied inputs
 | Embedding a value in a URL path segment | `helpers::encode_path_segment()` |
 | Passing query parameters | reqwest `.query()` builder (never string interpolation) |
 | Using a resource name in a URL (`--project`, `--space`) | `helpers::validate_resource_name()` |
-| Accepting an enum flag (`--msg-format`) | clap `value_parser` or `validate::validate_msg_format()` |
+| Accepting an enum flag (`--msg-format`) | clap `value_parser` (see `gmail/mod.rs`) |
 
 ### Testing Expectations
 

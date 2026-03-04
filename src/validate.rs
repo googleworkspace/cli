@@ -21,27 +21,6 @@
 use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
-/// Allowed values for Gmail message format (`--msg-format`).
-#[allow(dead_code)]
-pub const VALID_MSG_FORMATS: &[&str] = &["full", "metadata", "minimal", "raw"];
-
-/// Validates that `value` is one of the allowed Gmail message formats.
-///
-/// Returns the validated value on success, or a descriptive
-/// [`GwsError::Validation`] listing the allowed options.
-#[allow(dead_code)]
-pub fn validate_msg_format(value: &str) -> Result<&str, GwsError> {
-    if VALID_MSG_FORMATS.contains(&value) {
-        Ok(value)
-    } else {
-        Err(GwsError::Validation(format!(
-            "Invalid message format '{}'. Allowed values: {}",
-            value,
-            VALID_MSG_FORMATS.join(", ")
-        )))
-    }
-}
-
 /// Validates that `dir` is a safe output directory.
 ///
 /// The path is resolved relative to CWD. The function rejects paths that
@@ -193,36 +172,6 @@ mod tests {
     use serial_test::serial;
     use std::fs;
     use tempfile::tempdir;
-
-    // --- validate_msg_format ---
-
-    #[test]
-    fn test_valid_msg_formats() {
-        for fmt in VALID_MSG_FORMATS {
-            assert!(
-                validate_msg_format(fmt).is_ok(),
-                "expected '{fmt}' to be valid"
-            );
-        }
-    }
-
-    #[test]
-    fn test_invalid_msg_format() {
-        let err = validate_msg_format("FULL").unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("Invalid message format"), "got: {msg}");
-        assert!(msg.contains("full, metadata, minimal, raw"));
-    }
-
-    #[test]
-    fn test_empty_msg_format() {
-        assert!(validate_msg_format("").is_err());
-    }
-
-    #[test]
-    fn test_msg_format_injection_attempt() {
-        assert!(validate_msg_format("full&extra=1").is_err());
-    }
 
     // --- validate_safe_output_dir ---
 

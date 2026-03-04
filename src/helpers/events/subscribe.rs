@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default, Builder)]
 #[builder(setter(into))]
@@ -22,7 +23,7 @@ pub struct SubscribeConfig {
     #[builder(default)]
     no_ack: bool,
     #[builder(default)]
-    output_dir: Option<String>,
+    output_dir: Option<PathBuf>,
 }
 
 fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsError> {
@@ -66,8 +67,7 @@ fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsErro
     builder.cleanup(matches.get_flag("cleanup"));
     builder.no_ack(matches.get_flag("no-ack"));
     if let Some(output_dir) = matches.get_one::<String>("output-dir") {
-        crate::validate::validate_safe_output_dir(output_dir)?;
-        builder.output_dir(Some(output_dir.clone()));
+        builder.output_dir(Some(crate::validate::validate_safe_output_dir(output_dir)?));
     }
 
     let config = builder
@@ -355,11 +355,11 @@ async fn pull_loop(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis())
                     .unwrap_or(0);
-                let path = format!("{dir}/{ts}_{file_counter}.json");
+                let path = dir.join(format!("{ts}_{file_counter}.json"));
                 if let Err(e) = std::fs::write(&path, &json_str) {
-                    eprintln!("Warning: failed to write {path}: {e}");
+                    eprintln!("Warning: failed to write {}: {e}", path.display());
                 } else {
-                    eprintln!("Wrote {path}");
+                    eprintln!("Wrote {}", path.display());
                 }
             } else {
                 println!(

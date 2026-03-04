@@ -295,7 +295,7 @@ async fn watch_pull_loop(
                 gmail_token,
                 *last_history_id,
                 &config.format,
-                config.output_dir.as_deref(),
+                config.output_dir.as_ref(),
                 sanitize_config,
             )
             .await?;
@@ -377,7 +377,7 @@ async fn fetch_and_output_messages(
     gmail_token: &str,
     start_history_id: u64,
     msg_format: &str,
-    output_dir: Option<&str>,
+    output_dir: Option<&std::path::PathBuf>,
     sanitize_config: &crate::helpers::modelarmor::SanitizeConfig,
 ) -> Result<(), GwsError> {
     let url = format!(
@@ -432,11 +432,11 @@ async fn fetch_and_output_messages(
                 let json_str =
                     serde_json::to_string_pretty(&full_msg).unwrap_or_else(|_| "{}".to_string());
                 if let Some(dir) = output_dir {
-                    let path = format!("{dir}/{msg_id}.json");
+                    let path = dir.join(format!("{msg_id}.json"));
                     if let Err(e) = std::fs::write(&path, &json_str) {
-                        eprintln!("Warning: failed to write {path}: {e}");
+                        eprintln!("Warning: failed to write {}: {e}", path.display());
                     } else {
-                        eprintln!("Wrote {path}");
+                        eprintln!("Wrote {}", path.display());
                     }
                 } else {
                     println!(
@@ -512,7 +512,7 @@ struct WatchConfig {
     format: String,
     once: bool,
     cleanup: bool,
-    output_dir: Option<String>,
+    output_dir: Option<std::path::PathBuf>,
 }
 
 fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
@@ -522,10 +522,10 @@ fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
         .unwrap_or("full");
     // Note: msg-format is already constrained by clap's value_parser
 
-    let output_dir = matches.get_one::<String>("output-dir").cloned();
-    if let Some(ref dir) = output_dir {
-        crate::validate::validate_safe_output_dir(dir)?;
-    }
+    let output_dir = matches
+        .get_one::<String>("output-dir")
+        .map(|dir| crate::validate::validate_safe_output_dir(dir))
+        .transpose()?;
 
     Ok(WatchConfig {
         project: matches.get_one::<String>("project").cloned(),

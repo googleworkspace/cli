@@ -49,32 +49,6 @@ impl std::fmt::Display for SubscriptionName {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Builder)]
-#[builder(setter(into))]
-pub struct SubscribeConfig {
-    #[builder(default)]
-    pub target: Option<String>,
-    #[builder(default)]
-    pub event_types: Vec<String>,
-    #[builder(default)]
-    pub project: Option<ProjectId>,
-    #[builder(default)]
-    pub subscription: Option<SubscriptionName>,
-    #[builder(default = "10")]
-    pub max_messages: u32,
-    #[builder(default = "5")]
-    pub poll_interval: u64,
-    #[builder(default = "false")]
-    pub once: bool,
-    #[builder(default = "false")]
-    pub cleanup: bool,
-    #[builder(default = "false")]
-    pub no_ack: bool,
-    #[builder(default)]
-    pub output_dir: Option<String>,
-}
-
 impl Helper for EventsHelper {
     fn inject_commands(
         &self,
