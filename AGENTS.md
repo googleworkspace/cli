@@ -72,18 +72,76 @@ vhs docs/demo.tape
 
 ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears the screen and cats the file. Portrait scenes use `scene*.txt`; landscape chapters use `long-*.txt`.
 
-## Input Validation
-
-When adding new helpers or CLI flags, **always validate user-supplied inputs** using the shared helpers in `src/validate.rs`:
-
-| Scenario | Validator |
-|---|---|
-| File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()` |
-| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` |
-| Enum/allowlist values (`--msg-format`) | `validate::validate_msg_format()` or clap `value_parser` |
+## Input Validation & URL Safety
 
 > [!IMPORTANT]
-> This CLI is frequently invoked by AI/LLM agents. Always assume inputs can be adversarial — validate paths against traversal (`../../.ssh`), restrict format strings to allowlists, and reject control characters.
+> This CLI is frequently invoked by AI/LLM agents. Always assume inputs can be adversarial — validate paths against traversal (`../../.ssh`), restrict format strings to allowlists, reject control characters, and encode user values before embedding them in URLs.
+
+### Path Safety (`src/validate.rs`)
+
+When adding new helpers or CLI flags that accept file paths, **always validate** using the shared helpers:
+
+| Scenario | Validator | Rejects |
+|---|---|---|
+| File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()` | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
+| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` | Absolute paths, `../` traversal, control chars |
+| Enum/allowlist values (`--msg-format`) | `validate::validate_msg_format()` or clap `value_parser` | Any value not in the allowlist |
+
+```rust
+// In your argument parser:
+if let Some(output_dir) = matches.get_one::<String>("output-dir") {
+    crate::validate::validate_safe_output_dir(output_dir)?;
+    builder.output_dir(Some(output_dir.clone()));
+}
+```
+
+### URL Encoding (`src/helpers/mod.rs`)
+
+User-supplied values embedded in URL **path segments** must be percent-encoded. Use the shared helper:
+
+```rust
+// CORRECT — encodes slashes, spaces, and special characters
+let url = format!(
+    "https://www.googleapis.com/drive/v3/files/{}",
+    crate::helpers::encode_path_segment(file_id),
+);
+
+// WRONG — raw user input in URL path
+let url = format!("https://www.googleapis.com/drive/v3/files/{}", file_id);
+```
+
+For **query parameters**, use reqwest's `.query()` builder which handles encoding automatically:
+
+```rust
+// CORRECT — reqwest encodes query values
+client.get(url).query(&[("q", user_query)]).send().await?;
+
+// WRONG — manual string interpolation in query strings
+let url = format!("{}?q={}", base_url, user_query);
+```
+
+### Resource Name Validation (`src/helpers/mod.rs`)
+
+When a user-supplied string is used as a GCP resource identifier (project ID, topic name, space name, etc.) that gets embedded in a URL path, validate it first:
+
+```rust
+// Validates the string contains only safe characters (alphanumeric, hyphens, underscores, dots, slashes)
+let project = crate::helpers::validate_resource_name(&project_id)?;
+let url = format!("https://pubsub.googleapis.com/v1/projects/{}/topics/my-topic", project);
+```
+
+This prevents injection of query parameters, path traversal, or other malicious payloads through resource name arguments like `--project` or `--space`.
+
+### Checklist for New Features
+
+When adding a new helper or CLI command:
+
+1. **File paths** → Use `validate_safe_output_dir` / `validate_safe_dir_path`
+2. **Enum flags** → Constrain via clap `value_parser` or `validate_msg_format`
+3. **URL path segments** → Use `encode_path_segment()`
+4. **Query parameters** → Use reqwest `.query()` builder
+5. **Resource names** (project IDs, space names, topic names) → Use `validate_resource_name()`
+6. **Write tests** for both the happy path AND the rejection path (e.g., pass `../../.ssh` and assert `Err`)
 
 ## Environment Variables
 

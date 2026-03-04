@@ -56,3 +56,38 @@ If the OAuth refresh token used in the GitHub Actions smoketest expires or needs
    rm smoketest-creds.json
    unset GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE
    ```
+
+## Development Patterns
+
+### Changesets
+
+Every PR must include a changeset file at `.changeset/<descriptive-name>.md`:
+
+```markdown
+---
+"@googleworkspace/cli": patch
+---
+
+Brief description of the change
+```
+
+Use `patch` for fixes/chores, `minor` for new features, `major` for breaking changes.
+
+### Input Validation & URL Safety
+
+This CLI is designed to be invoked by AI/LLM agents, so all user-supplied inputs must be treated as potentially adversarial. See [AGENTS.md](../AGENTS.md#input-validation--url-safety) for the full reference. The key rules are:
+
+| What you're doing | What to use |
+|---|---|
+| Accepting a file path (`--output-dir`, `--dir`) | `validate::validate_safe_output_dir()` or `validate_safe_dir_path()` |
+| Embedding a value in a URL path segment | `helpers::encode_path_segment()` |
+| Passing query parameters | reqwest `.query()` builder (never string interpolation) |
+| Using a resource name in a URL (`--project`, `--space`) | `helpers::validate_resource_name()` |
+| Accepting an enum flag (`--msg-format`) | clap `value_parser` or `validate::validate_msg_format()` |
+
+### Testing Expectations
+
+- All new validation logic must include **both happy-path and error-path tests**
+- Tests that modify the process CWD must use `#[serial]` from `serial_test`
+- Tempdir paths should be canonicalized before use to handle macOS `/var` → `/private/var` symlinks
+- Run the full suite before submitting: `cargo test && cargo clippy -- -D warnings`
