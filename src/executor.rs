@@ -250,9 +250,10 @@ async fn handle_json_response(
         }
 
         if pagination.page_all {
+            let is_first_page = *pages_fetched == 1;
             println!(
                 "{}",
-                crate::formatter::format_value_compact(&json_val, output_format)
+                crate::formatter::format_value_paginated(&json_val, output_format, is_first_page)
             );
         } else {
             println!(

@@ -55,11 +55,20 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
     }
 }
 
-/// Format a JSON value as compact JSON (for NDJSON pagination mode).
-pub fn format_value_compact(value: &Value, format: &OutputFormat) -> String {
+/// Format a JSON value for a paginated page.
+///
+/// When auto-paginating with `--page-all`, CSV and table formats should only
+/// emit column headers on the **first** page so that each subsequent page
+/// contains only data rows, making the combined output machine-parseable.
+///
+/// For JSON the output is compact (one JSON object per line / NDJSON).
+/// For YAML the page separator is preserved as-is.
+pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_page: bool) -> String {
     match format {
         OutputFormat::Json => serde_json::to_string(value).unwrap_or_default(),
-        _ => format_value(value, format),
+        OutputFormat::Csv => format_csv_page(value, is_first_page),
+        OutputFormat::Table => format_table_page(value, is_first_page),
+        OutputFormat::Yaml => format_yaml(value),
     }
 }
 
@@ -83,13 +92,22 @@ fn extract_items(value: &Value) -> Option<(&str, &Vec<Value>)> {
 }
 
 fn format_table(value: &Value) -> String {
+    format_table_page(value, true)
+}
+
+/// Format as a text table, optionally omitting the header row.
+///
+/// Pass `emit_header = false` for continuation pages when using `--page-all`
+/// so the combined terminal output doesn't repeat column names and separator
+/// lines between pages.
+fn format_table_page(value: &Value, emit_header: bool) -> String {
     // Try to extract a list of items from standard Google API response
     let items = extract_items(value);
 
     if let Some((_key, arr)) = items {
-        format_array_as_table(arr)
+        format_array_as_table(arr, emit_header)
     } else if let Value::Array(arr) = value {
-        format_array_as_table(arr)
+        format_array_as_table(arr, emit_header)
     } else if let Value::Object(obj) = value {
         // Single object: key/value table
         let mut output = String::new();
@@ -104,7 +122,7 @@ fn format_table(value: &Value) -> String {
     }
 }
 
-fn format_array_as_table(arr: &[Value]) -> String {
+fn format_array_as_table(arr: &[Value], emit_header: bool) -> String {
     if arr.is_empty() {
         return "(empty)\n".to_string();
     }
@@ -159,17 +177,19 @@ fn format_array_as_table(arr: &[Value]) -> String {
 
     let mut output = String::new();
 
-    // Header
-    let header: Vec<String> = columns
-        .iter()
-        .enumerate()
-        .map(|(i, c)| format!("{:width$}", c, width = widths[i]))
-        .collect();
-    let _ = writeln!(output, "{}", header.join("  "));
+    if emit_header {
+        // Header
+        let header: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{:width$}", c, width = widths[i]))
+            .collect();
+        let _ = writeln!(output, "{}", header.join("  "));
 
-    // Separator
-    let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
-    let _ = writeln!(output, "{}", sep.join("  "));
+        // Separator
+        let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+        let _ = writeln!(output, "{}", sep.join("  "));
+    }
 
     // Rows
     for row in &rows {
@@ -202,7 +222,8 @@ fn json_to_yaml(value: &Value, indent: usize) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
-            if s.contains('\n') || s.contains(':') || s.contains('#') {
+            if s.contains('\n') {
+                // Genuine multi-line content: block scalar is the most readable choice.
                 format!(
                     "|\n{}",
                     s.lines()
@@ -211,7 +232,12 @@ fn json_to_yaml(value: &Value, indent: usize) -> String {
                         .join("\n")
                 )
             } else {
-                format!("\"{s}\"")
+                // Single-line strings: always double-quote so that characters like
+                // `#` (comment marker) and `:` (mapping indicator) are never
+                // misinterpreted by YAML parsers.  Escape backslashes and double
+                // quotes to keep the output valid.
+                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("\"{escaped}\"")
             }
         }
         Value::Array(arr) => {
@@ -248,6 +274,14 @@ fn json_to_yaml(value: &Value, indent: usize) -> String {
 }
 
 fn format_csv(value: &Value) -> String {
+    format_csv_page(value, true)
+}
+
+/// Format as CSV, optionally omitting the header row.
+///
+/// Pass `emit_header = false` for all pages after the first when using
+/// `--page-all`, so the combined output has a single header line.
+fn format_csv_page(value: &Value, emit_header: bool) -> String {
     let items = extract_items(value);
 
     let arr = if let Some((_key, arr)) = items {
@@ -277,8 +311,10 @@ fn format_csv(value: &Value) -> String {
 
     let mut output = String::new();
 
-    // Header
-    let _ = writeln!(output, "{}", columns.join(","));
+    // Header (omitted on continuation pages)
+    if emit_header {
+        let _ = writeln!(output, "{}", columns.join(","));
+    }
 
     // Rows
     for item in arr {
@@ -417,5 +453,120 @@ mod tests {
     fn test_extract_items_none() {
         let val = json!({"status": "ok"});
         assert!(extract_items(&val).is_none());
+    }
+
+    // --- YAML block-scalar regression tests ---
+
+    #[test]
+    fn test_format_yaml_hash_in_string_is_quoted_not_block() {
+        // `drive#file` contains `#` which is a YAML comment marker; the
+        // serialiser must quote it rather than emit a block scalar.
+        let val = json!({"kind": "drive#file", "id": "123"});
+        let output = format_value(&val, &OutputFormat::Yaml);
+        // Must be a double-quoted string, not a block scalar (`|`).
+        assert!(
+            output.contains("kind: \"drive#file\""),
+            "expected double-quoted kind, got:\n{output}"
+        );
+        assert!(
+            !output.contains("kind: |"),
+            "kind must not use block scalar, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_format_yaml_colon_in_string_is_quoted() {
+        let val = json!({"url": "https://example.com/path"});
+        let output = format_value(&val, &OutputFormat::Yaml);
+        assert!(
+            output.contains("url: \"https://example.com/path\""),
+            "expected double-quoted url, got:\n{output}"
+        );
+        assert!(!output.contains("url: |"), "url must not use block scalar");
+    }
+
+    #[test]
+    fn test_format_yaml_multiline_still_uses_block() {
+        let val = json!({"body": "line one\nline two"});
+        let output = format_value(&val, &OutputFormat::Yaml);
+        // Multi-line content should still use block scalar.
+        assert!(
+            output.contains("body: |"),
+            "multiline string must use block scalar, got:\n{output}"
+        );
+    }
+
+    // --- Paginated format tests ---
+
+    #[test]
+    fn test_format_value_paginated_csv_first_page_has_header() {
+        let val = json!({
+            "files": [
+                {"id": "1", "name": "a.txt"},
+                {"id": "2", "name": "b.txt"}
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Csv, true);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "id,name", "first page must start with header");
+        assert_eq!(lines[1], "1,a.txt");
+    }
+
+    #[test]
+    fn test_format_value_paginated_csv_continuation_no_header() {
+        let val = json!({
+            "files": [
+                {"id": "3", "name": "c.txt"}
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Csv, false);
+        let lines: Vec<&str> = output.lines().collect();
+        // The first (and only) line must be a data row, not the header.
+        assert_eq!(lines[0], "3,c.txt", "continuation page must have no header");
+        assert!(
+            !output.contains("id,name"),
+            "header must be absent on continuation pages"
+        );
+    }
+
+    #[test]
+    fn test_format_value_paginated_table_first_page_has_header() {
+        let val = json!({
+            "items": [
+                {"id": "1", "name": "foo"}
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Table, true);
+        assert!(
+            output.contains("id"),
+            "table header must appear on first page"
+        );
+        assert!(output.contains("──"), "separator must appear on first page");
+    }
+
+    #[test]
+    fn test_format_value_paginated_table_continuation_no_header() {
+        let val = json!({
+            "items": [
+                {"id": "2", "name": "bar"}
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Table, false);
+        assert!(output.contains("bar"), "data row must be present");
+        assert!(
+            !output.contains("──"),
+            "separator must be absent on continuation pages"
+        );
+    }
+
+    #[test]
+    fn test_format_value_paginated_json_is_compact() {
+        let val = json!({"files": [{"id": "1"}]});
+        let output = format_value_paginated(&val, &OutputFormat::Json, true);
+        // Compact JSON — no pretty-printed newlines inside the object
+        assert!(
+            !output.contains("\n  "),
+            "JSON must be compact in paginated mode"
+        );
     }
 }
