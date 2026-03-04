@@ -447,9 +447,7 @@ pub async fn execute_method(
             }
         } else {
             if let Some(res) = handle_binary_response(response, &content_type, output_path, output_format, capture_output).await? {
-                if capture_output {
-                    captured_values.push(res);
-                }
+                captured_values.push(res);
             }
         }
 

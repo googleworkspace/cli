@@ -192,6 +192,8 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
         let (api_name, version) = crate::parse_service_and_version(&[svc_name.clone()], svc_name)?;
         if let Ok(doc) = crate::discovery::fetch_discovery_document(&api_name, &version).await {
             walk_resources(&doc.name, &doc.resources, &mut tools);
+        } else {
+            eprintln!("[gws mcp] Warning: Failed to load discovery document for service '{}'. It will not be available as a tool.", svc_name);
         }
     }
 
@@ -330,7 +332,7 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
 
     let svc_alias = parts[0];
     
-    if !config.services.contains(&svc_alias.to_string()) && !config.services.contains(&"all".to_string()) {
+    if !config.services.contains(&svc_alias.to_string()) {
         return Err(GwsError::Validation(format!("Service '{}' is not enabled in this MCP session", svc_alias)));
     }
 
@@ -367,7 +369,21 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     let body_json_val = arguments.get("body");
     let body_str = body_json_val.map(|v| serde_json::to_string(v).unwrap());
 
-    let upload_path = arguments.get("upload").and_then(|v| v.as_str());
+    // Security: validate upload path to prevent arbitrary local file reads.
+    // Only allow paths within the current working directory.
+    let upload_path = if let Some(raw) = arguments.get("upload").and_then(|v| v.as_str()) {
+        let p = std::path::Path::new(raw);
+        // Reject absolute paths and any path that escapes cwd via "../"
+        if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+            return Err(GwsError::Validation(format!(
+                "Upload path '{}' is not allowed. Paths must be relative and within the current directory.",
+                raw
+            )));
+        }
+        Some(raw)
+    } else {
+        None
+    };
     let page_all = arguments.get("page_all").and_then(|v| v.as_bool()).unwrap_or(false);
 
     let pagination = crate::executor::PaginationConfig {
