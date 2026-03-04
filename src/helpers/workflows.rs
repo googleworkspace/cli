@@ -719,4 +719,61 @@ mod tests {
     fn test_helper_only() {
         assert!(WorkflowHelper.helper_only());
     }
+
+    #[test]
+    fn test_epoch_to_rfc3339() {
+        assert_eq!(epoch_to_rfc3339(0), "1970-01-01T00:00:00+00:00");
+        assert_eq!(epoch_to_rfc3339(1710000000), "2024-03-09T16:00:00+00:00");
+    }
+
+    #[test]
+    fn test_build_standup_report_cmd() {
+        let cmd = build_standup_report_cmd();
+        assert_eq!(cmd.get_name(), "+standup-report");
+    }
+
+    #[test]
+    fn test_build_meeting_prep_cmd() {
+        let cmd = build_meeting_prep_cmd();
+        assert_eq!(cmd.get_name(), "+meeting-prep");
+    }
+
+    #[test]
+    fn test_build_email_to_task_cmd() {
+        let cmd = build_email_to_task_cmd();
+        assert_eq!(cmd.get_name(), "+email-to-task");
+
+        // message-id is required
+        let args = cmd
+            .clone()
+            .try_get_matches_from(vec!["+email-to-task", "--message-id", "123"]);
+        assert!(args.is_ok());
+
+        let args_err = cmd.try_get_matches_from(vec!["+email-to-task"]);
+        assert!(args_err.is_err());
+    }
+
+    #[test]
+    fn test_build_weekly_digest_cmd() {
+        let cmd = build_weekly_digest_cmd();
+        assert_eq!(cmd.get_name(), "+weekly-digest");
+    }
+
+    #[test]
+    fn test_build_file_announce_cmd() {
+        let cmd = build_file_announce_cmd();
+        assert_eq!(cmd.get_name(), "+file-announce");
+
+        let args = cmd.clone().try_get_matches_from(vec![
+            "+file-announce",
+            "--file-id",
+            "123",
+            "--space",
+            "spaces/test",
+        ]);
+        assert!(args.is_ok());
+
+        let args_err = cmd.try_get_matches_from(vec!["+file-announce"]);
+        assert!(args_err.is_err());
+    }
 }

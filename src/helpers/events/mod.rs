@@ -49,6 +49,7 @@ impl std::fmt::Display for SubscriptionName {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Builder)]
 #[builder(setter(into))]
 pub struct SubscribeConfig {

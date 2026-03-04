@@ -1,5 +1,30 @@
 use super::*;
 
+#[derive(Debug, Clone, Default, Builder)]
+#[builder(setter(into))]
+pub struct SubscribeConfig {
+    #[builder(default)]
+    target: Option<String>,
+    #[builder(default)]
+    event_types: Vec<String>,
+    #[builder(default)]
+    project: Option<ProjectId>,
+    #[builder(default)]
+    subscription: Option<SubscriptionName>,
+    #[builder(default = "10")]
+    max_messages: u32,
+    #[builder(default = "2")]
+    poll_interval: u64,
+    #[builder(default)]
+    once: bool,
+    #[builder(default)]
+    cleanup: bool,
+    #[builder(default)]
+    no_ack: bool,
+    #[builder(default)]
+    output_dir: Option<String>,
+}
+
 fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsError> {
     let mut builder = SubscribeConfigBuilder::default();
 
@@ -97,7 +122,9 @@ pub(super) async fn handle_subscribe(
         } else {
             // Full setup: create Pub/Sub topic + subscription + Workspace Events subscription
             let target = config.target.clone().unwrap();
-            let project = config.project.clone().unwrap().0;
+            let project =
+                crate::helpers::validate_resource_name(&config.project.clone().unwrap().0)?
+                    .to_string();
             let event_types_str: Vec<&str> =
                 config.event_types.iter().map(|s| s.as_str()).collect();
 
@@ -513,6 +540,15 @@ mod tests {
             .arg(Arg::new("no-ack").long("no-ack").action(ArgAction::SetTrue))
             .arg(Arg::new("output-dir").long("output-dir"));
         cmd.try_get_matches_from(args).unwrap()
+    }
+
+    #[test]
+    fn test_parse_subscribe_args_invalid_output_dir() {
+        let matches = make_matches_subscribe(&["test", "--output-dir", "../../etc"]);
+        let result = parse_subscribe_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("outside the current directory"));
     }
 
     #[test]

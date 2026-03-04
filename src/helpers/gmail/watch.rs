@@ -37,8 +37,9 @@ pub(super) async fn handle_watch(
 
         let suffix = format!("{:08x}", rand::random::<u32>());
         let topic = if let Some(ref t) = config.topic {
-            t.clone()
+            crate::helpers::validate_resource_name(t)?.to_string()
         } else {
+            let project = crate::helpers::validate_resource_name(&project)?;
             let t = format!("projects/{project}/topics/gws-gmail-watch-{suffix}");
             // Create Pub/Sub topic
             eprintln!("Creating Pub/Sub topic: {t}");
@@ -97,6 +98,7 @@ pub(super) async fn handle_watch(
             t
         };
 
+        let project = crate::helpers::validate_resource_name(&project)?;
         let sub = format!("projects/{project}/subscriptions/gws-gmail-watch-{suffix}");
 
         // 3. Create Pub/Sub subscription
@@ -499,7 +501,7 @@ fn extract_message_ids_from_history(history_body: &Value) -> Vec<String> {
     result
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct WatchConfig {
     project: Option<String>,
     subscription: Option<String>,
@@ -630,7 +632,25 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_watch_args() {
+    fn test_parse_watch_args_invalid_format() {
+        let matches = make_matches_watch(&["test", "--msg-format", "invalid-format"]);
+        let result = parse_watch_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid message format"));
+    }
+
+    #[test]
+    fn test_parse_watch_args_invalid_output_dir() {
+        let matches = make_matches_watch(&["test", "--output-dir", "../../etc"]);
+        let result = parse_watch_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("outside the current directory"));
+    }
+
+    #[test]
+    fn test_parse_watch_args_full() {
         let matches = make_matches_watch(&[
             "test",
             "--project",

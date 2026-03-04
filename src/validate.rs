@@ -245,6 +245,35 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_output_dir_rejects_symlink_traversal() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        // Create a directory inside the tempdir
+        let allowed_dir = canonical_dir.join("allowed");
+        fs::create_dir(&allowed_dir).unwrap();
+
+        // Create a symlink pointing OUTSIDE the tempdir (e.g. to /tmp)
+        let symlink_path = canonical_dir.join("sneaky_link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/tmp", &symlink_path).unwrap();
+        #[cfg(windows)]
+        return; // Skip on Windows due to privilege requirements for symlinks
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        // Try to validate the symlink resolving outside CWD
+        let result = validate_safe_output_dir("sneaky_link");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("outside the current directory"), "got: {msg}");
+    }
+
+    #[test]
+    #[serial]
     fn test_output_dir_rejects_traversal() {
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
