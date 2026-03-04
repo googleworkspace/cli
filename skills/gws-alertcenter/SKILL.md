@@ -24,11 +24,11 @@ gws alertcenter <resource> <method> [flags]
 
   - `batchDelete` — Performs batch delete operation on alerts.
   - `batchUndelete` — Performs batch undelete operation on alerts.
-  - `delete` — Marks the specified alert for deletion. An alert that has been marked for deletion is removed from Alert Center after 30 days. Marking an alert for deletion has no effect on an alert which has already
+  - `delete` — Marks the specified alert for deletion. An alert that has been marked for deletion is removed from Alert Center after 30 days. Marking an alert for deletion has no effect on an alert which has already been marked for deletion. Attempting to mark a nonexistent alert for deletion results in a `NOT_FOUND` error.
   - `get` — Gets the specified alert. Attempting to get a nonexistent alert returns `NOT_FOUND` error.
   - `getMetadata` — Returns the metadata of an alert. Attempting to get metadata for a non-existent alert returns `NOT_FOUND` error.
   - `list` — Lists the alerts.
-  - `undelete` — Restores, or "undeletes", an alert that was marked for deletion within the past 30 days. Attempting to undelete an alert which was marked for deletion over 30 days ago (which has been removed from the
+  - `undelete` — Restores, or "undeletes", an alert that was marked for deletion within the past 30 days. Attempting to undelete an alert which was marked for deletion over 30 days ago (which has been removed from the Alert Center database) or a nonexistent alert returns a `NOT_FOUND` error. Attempting to undelete an alert which has not been marked for deletion has no effect.
   - `feedback` — Operations on the 'feedback' resource
 
 ### v1beta1

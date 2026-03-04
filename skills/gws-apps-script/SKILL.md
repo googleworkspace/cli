@@ -37,7 +37,7 @@ gws apps-script <resource> <method> [flags]
   - `get` — Gets a script project's metadata.
   - `getContent` — Gets the content of the script project, including the code source and metadata for each script file.
   - `getMetrics` — Get metrics data for scripts, such as number of executions and active users.
-  - `updateContent` — Updates the content of the specified script project. This content is stored as the HEAD version, and is used when the script is executed as a trigger, in the script editor, in add-on preview mode, or 
+  - `updateContent` — Updates the content of the specified script project. This content is stored as the HEAD version, and is used when the script is executed as a trigger, in the script editor, in add-on preview mode, or as a web app or Apps Script API in development mode. This clears all the existing files in the project.
   - `deployments` — Operations on the 'deployments' resource
   - `versions` — Operations on the 'versions' resource
 

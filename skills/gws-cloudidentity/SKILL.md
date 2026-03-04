@@ -26,8 +26,8 @@ gws cloudidentity <resource> <method> [flags]
 
 ### devices
 
-  - `cancelWipe` — Cancels an unfinished device wipe. This operation can be used to cancel device wipe in the gap between the wipe operation returning success and the device being wiped. This operation is possible when 
-  - `create` — Creates a device. Only company-owned device may be created. **Note**: This method is available only to customers who have one of the following SKUs: Enterprise Standard, Enterprise Plus, Enterprise fo
+  - `cancelWipe` — Cancels an unfinished device wipe. This operation can be used to cancel device wipe in the gap between the wipe operation returning success and the device being wiped. This operation is possible when the device is in a "pending wipe" state. The device enters the "pending wipe" state when a wipe device command is issued, but has not yet been sent to the device. The cancel wipe will fail if the wipe command has already been issued to the device.
+  - `create` — Creates a device. Only company-owned device may be created. **Note**: This method is available only to customers who have one of the following SKUs: Enterprise Standard, Enterprise Plus, Enterprise for Education, and Cloud Identity Premium
   - `delete` — Deletes the specified device.
   - `get` — Retrieves the specified device.
   - `list` — Lists/Searches devices.
@@ -49,19 +49,19 @@ gws cloudidentity <resource> <method> [flags]
 
 ### inboundOidcSsoProfiles
 
-  - `create` — Creates an InboundOidcSsoProfile for a customer. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the
+  - `create` — Creates an InboundOidcSsoProfile for a customer. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will have `"done": false`, it will not have a response, and the metadata will have `"state": "awaiting-multi-party-approval"`.
   - `delete` — Deletes an InboundOidcSsoProfile.
   - `get` — Gets an InboundOidcSsoProfile.
   - `list` — Lists InboundOidcSsoProfile objects for a Google enterprise customer.
-  - `patch` — Updates an InboundOidcSsoProfile. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will 
+  - `patch` — Updates an InboundOidcSsoProfile. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will have `"done": false`, it will not have a response, and the metadata will have `"state": "awaiting-multi-party-approval"`.
 
 ### inboundSamlSsoProfiles
 
-  - `create` — Creates an InboundSamlSsoProfile for a customer. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the
+  - `create` — Creates an InboundSamlSsoProfile for a customer. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will have `"done": false`, it will not have a response, and the metadata will have `"state": "awaiting-multi-party-approval"`.
   - `delete` — Deletes an InboundSamlSsoProfile.
   - `get` — Gets an InboundSamlSsoProfile.
   - `list` — Lists InboundSamlSsoProfiles for a customer.
-  - `patch` — Updates an InboundSamlSsoProfile. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will 
+  - `patch` — Updates an InboundSamlSsoProfile. When the target customer has enabled [Multi-party approval for sensitive actions](https://support.google.com/a/answer/13790448), the `Operation` in the response will have `"done": false`, it will not have a response, and the metadata will have `"state": "awaiting-multi-party-approval"`.
   - `idpCredentials` — Operations on the 'idpCredentials' resource
 
 ### inboundSsoAssignments
@@ -70,7 +70,7 @@ gws cloudidentity <resource> <method> [flags]
   - `delete` — Deletes an InboundSsoAssignment. To disable SSO, Create (or Update) an assignment that has `sso_mode` == `SSO_OFF`.
   - `get` — Gets an InboundSsoAssignment.
   - `list` — Lists the InboundSsoAssignments for a `Customer`.
-  - `patch` — Updates an InboundSsoAssignment. The body of this request is the `inbound_sso_assignment` field and the `update_mask` is relative to that. For example: a PATCH to `/v1/inboundSsoAssignments/0abcdefg12
+  - `patch` — Updates an InboundSsoAssignment. The body of this request is the `inbound_sso_assignment` field and the `update_mask` is relative to that. For example: a PATCH to `/v1/inboundSsoAssignments/0abcdefg1234567&update_mask=rank` with a body of `{ "rank": 1 }` moves that (presumably group-targeted) SSO assignment to the highest priority and shifts any other group-targeted assignments down in priority.
 
 ### policies
 

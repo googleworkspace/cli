@@ -144,7 +144,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         };
         if emit_service {
             let service_md =
-                render_service_skill(alias, entry, &helpers, &resources, &product_name);
+                render_service_skill(alias, entry, &helpers, &resources, &product_name, &doc);
             write_skill(output_path, &skill_name, &service_md)?;
             index.push(SkillIndexEntry {
                 name: skill_name.clone(),
@@ -353,6 +353,7 @@ fn render_service_skill(
     helpers: &[&Command],
     resources: &[&Command],
     product_name: &str,
+    doc: &crate::discovery::RestDescription,
 ) -> String {
     let mut out = String::new();
 
@@ -414,7 +415,12 @@ metadata:
                 .get_subcommands()
                 .map(|m| {
                     let mname = m.get_name().to_string();
-                    let mabout = m.get_about().map(|s| s.to_string()).unwrap_or_default();
+                    // Use full description from discovery doc (with higher limit)
+                    // instead of the CLI-truncated about text.
+                    let mabout =
+                        lookup_method_description(doc, res_name, &mname).unwrap_or_else(|| {
+                            m.get_about().map(|s| s.to_string()).unwrap_or_default()
+                        });
                     format!("  - `{mname}` — {mabout}")
                 })
                 .collect();
@@ -844,18 +850,36 @@ fn truncate_desc(desc: &str) -> String {
     if let Some(first) = s.get(0..1) {
         s = format!("{}{}", first.to_uppercase(), &s[1..]);
     }
-    if s.len() > 120 {
-        if let Some(idx) = s[..120].rfind(' ') {
-            s = format!("{}...", &s[..idx]);
-        } else {
-            s = format!("{}...", &s[..117]);
-        }
-    }
+    // Delegate to shared truncation logic
+    s = crate::text::truncate_description(&s, crate::text::FRONTMATTER_DESCRIPTION_LIMIT, true);
     // Ensure trailing period
-    if !s.ends_with('.') && !s.ends_with("...") {
+    if !s.ends_with('.') && !s.ends_with('…') {
         s.push('.');
     }
     s
+}
+
+/// Looks up a method's full description from the Discovery Document and
+/// truncates it at the skill-body limit (longer than CLI help).
+fn lookup_method_description(
+    doc: &crate::discovery::RestDescription,
+    resource_name: &str,
+    method_name: &str,
+) -> Option<String> {
+    let resource = doc.resources.get(resource_name)?;
+    // Try direct method lookup first
+    if let Some(method) = resource.methods.get(method_name) {
+        if let Some(desc) = &method.description {
+            return Some(crate::text::truncate_description(
+                desc,
+                crate::text::SKILL_BODY_DESCRIPTION_LIMIT,
+                false,
+            ));
+        }
+    }
+    // For sub-resources listed as methods in the clap tree, return None
+    // (they show as "Operations on the 'X' resource" which is fine)
+    None
 }
 
 fn capitalize_first(s: &str) -> String {

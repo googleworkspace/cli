@@ -88,14 +88,11 @@ fn build_resource_command(name: &str, resource: &RestResource) -> Option<Command
 
         has_children = true;
 
-        let about = method
-            .description
-            .as_deref()
-            .unwrap_or("")
-            // Truncate long descriptions for help text
-            .chars()
-            .take(200)
-            .collect::<String>();
+        let about = crate::text::truncate_description(
+            method.description.as_deref().unwrap_or(""),
+            crate::text::CLI_DESCRIPTION_LIMIT,
+            true,
+        );
 
         let mut method_cmd = Command::new(method_name.to_string())
             .about(about)

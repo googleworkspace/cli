@@ -55,7 +55,7 @@ gws calendar <resource> <method> [flags]
   - `insert` — Creates a secondary calendar.
 The authenticated user for the request is made the data owner of the new calendar.
 
-Note: We recommend to authenticate as the intended data owner of the calendar. You can
+Note: We recommend to authenticate as the intended data owner of the calendar. You can use domain-wide delegation of authority to allow applications to act on behalf of a specific user. Don't use a service account for authentication. If you use a service account for authentication, the service account is the data owner, which can lead to unexpected behavior.
   - `patch` — Updates metadata for a calendar. This method supports patch semantics.
   - `update` — Updates metadata for a calendar.
 
@@ -72,11 +72,11 @@ Note: We recommend to authenticate as the intended data owner of the calendar. Y
   - `delete` — Deletes an event.
   - `get` — Returns an event based on its Google Calendar ID. To retrieve an event using its iCalendar ID, call the events.list method using the iCalUID parameter.
   - `import` — Imports an event. This operation is used to add a private copy of an existing event to a calendar. Only events with an eventType of default may be imported.
-Deprecated behavior: If a non-default event
+Deprecated behavior: If a non-default event is imported, its type will be changed to default and any event-type-specific properties it may have will be dropped.
   - `insert` — Creates an event.
   - `instances` — Returns instances of the specified recurring event.
   - `list` — Returns events on the specified calendar.
-  - `move` — Moves an event to another calendar, i.e. changes an event's organizer. Note that only default events can be moved; birthday, focusTime, fromGmail, outOfOffice and workingLocation events cannot be move
+  - `move` — Moves an event to another calendar, i.e. changes an event's organizer. Note that only default events can be moved; birthday, focusTime, fromGmail, outOfOffice and workingLocation events cannot be moved.
   - `patch` — Updates an event. This method supports patch semantics.
   - `quickAdd` — Creates an event based on a simple text string.
   - `update` — Updates an event.

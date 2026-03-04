@@ -37,6 +37,7 @@ mod schema;
 mod services;
 mod setup;
 mod setup_tui;
+mod text;
 mod token_storage;
 pub(crate) mod validate;
 
