@@ -322,9 +322,7 @@ fn resolve_method_from_matches<'a>(
     let method_input = &path[path.len() - 1];
     if let Some(method_key) = commands::resolve_name(current_resource.methods.keys(), method_input)
     {
-        if let Some(method) = current_resource.methods.get(&method_key) {
-            return Ok((method, current_matches));
-        }
+        return Ok((&current_resource.methods[&method_key], current_matches));
     }
 
     // Maybe it's a resource that has methods — need one more subcommand
