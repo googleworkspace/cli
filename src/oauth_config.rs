@@ -238,8 +238,8 @@ mod tests {
 
         // Initially no config file exists
         let result = load_client_config();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot read"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Cannot read"));
 
         // Create a valid config file
         save_client_config("test-id", "test-secret", "test-project").unwrap();
@@ -255,10 +255,10 @@ mod tests {
         std::fs::write(&path, "invalid json").unwrap();
 
         let result = load_client_config();
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid client_secret.json format"));
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Invalid client_secret.json format")
+        );
     }
 }
