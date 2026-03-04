@@ -153,6 +153,7 @@ pub(super) async fn handle_subscribe(
                     code: 400,
                     message: format!("Failed to create Pub/Sub topic: {body}"),
                     reason: "pubsubError".to_string(),
+                    enable_url: None,
                 });
             }
 
@@ -177,6 +178,7 @@ pub(super) async fn handle_subscribe(
                     code: 400,
                     message: format!("Failed to create Pub/Sub subscription: {body}"),
                     reason: "pubsubError".to_string(),
+                    enable_url: None,
                 });
             }
 
@@ -339,6 +341,7 @@ async fn pull_loop(
                 code: 400,
                 message: format!("Pub/Sub pull failed: {body}"),
                 reason: "pubsubError".to_string(),
+                enable_url: None,
             });
         }
 

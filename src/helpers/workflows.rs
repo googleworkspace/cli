@@ -249,6 +249,7 @@ async fn get_json(
             code: status.as_u16(),
             message: body,
             reason: "workflow_request_failed".to_string(),
+            enable_url: None,
         });
     }
 
@@ -516,6 +517,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
             code: status.as_u16(),
             message: body,
             reason: "task_create_failed".to_string(),
+            enable_url: None,
         });
     }
 
@@ -671,6 +673,7 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
             code: status.as_u16(),
             message: body,
             reason: "chat_send_failed".to_string(),
+            enable_url: None,
         });
     }
 

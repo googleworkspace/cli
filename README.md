@@ -233,6 +233,42 @@ gws gmail users messages get --params '...' \
 All output — success, errors, download metadata — is structured JSON.
 
 
+## Troubleshooting
+
+### API not enabled — `accessNotConfigured`
+
+If a required Google API is not enabled for your GCP project, you will see a
+403 error with reason `accessNotConfigured`:
+
+```json
+{
+  "error": {
+    "code": 403,
+    "message": "Gmail API has not been used in project 549352339482 ...",
+    "reason": "accessNotConfigured",
+    "enable_url": "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482"
+  }
+}
+```
+
+`gws` also prints an actionable hint to **stderr**:
+
+```
+💡 API not enabled for your GCP project.
+   Enable it at: https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482
+   After enabling, wait a few seconds and retry your command.
+```
+
+**Steps to fix:**
+1. Click the `enable_url` link (or copy it from the `enable_url` JSON field).
+2. In the GCP Console, click **Enable**.
+3. Wait ~10 seconds, then retry your `gws` command.
+
+> [!TIP]
+> You can also run `gws setup` which walks you through enabling all required
+> APIs for your project automatically.
+
+
 ## Development
 
 ```bash

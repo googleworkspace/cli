@@ -22,6 +22,8 @@ pub enum GwsError {
         code: u16,
         message: String,
         reason: String,
+        /// For `accessNotConfigured` errors: the GCP console URL to enable the API.
+        enable_url: Option<String>,
     },
 
     #[error("{0}")]
@@ -44,13 +46,20 @@ impl GwsError {
                 code,
                 message,
                 reason,
-            } => json!({
-                "error": {
+                enable_url,
+            } => {
+                let mut error_obj = json!({
                     "code": code,
                     "message": message,
                     "reason": reason,
+                });
+                // Include enable_url in JSON output when present (accessNotConfigured errors).
+                // This preserves machine-readable compatibility while adding new optional field.
+                if let Some(url) = enable_url {
+                    error_obj["enable_url"] = json!(url);
                 }
-            }),
+                json!({ "error": error_obj })
+            }
             GwsError::Validation(msg) => json!({
                 "error": {
                     "code": 400,
@@ -84,12 +93,33 @@ impl GwsError {
 }
 
 /// Formats any error as a JSON object and prints to stdout.
+///
+/// For `accessNotConfigured` errors (HTTP 403, reason `accessNotConfigured`),
+/// additional human-readable guidance is printed to stderr explaining how to
+/// enable the API in GCP. The JSON output on stdout is unchanged (machine-readable).
 pub fn print_error_json(err: &GwsError) {
     let json = err.to_json();
     println!(
         "{}",
         serde_json::to_string_pretty(&json).unwrap_or_default()
     );
+
+    // Print actionable guidance to stderr for accessNotConfigured errors
+    if let GwsError::Api {
+        reason, enable_url, ..
+    } = err
+    {
+        if reason == "accessNotConfigured" {
+            eprintln!();
+            eprintln!("💡 API not enabled for your GCP project.");
+            if let Some(url) = enable_url {
+                eprintln!("   Enable it at: {url}");
+            } else {
+                eprintln!("   Visit the GCP Console → APIs & Services → Library to enable the required API.");
+            }
+            eprintln!("   After enabling, wait a few seconds and retry your command.");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -102,11 +132,13 @@ mod tests {
             code: 404,
             message: "Not Found".to_string(),
             reason: "notFound".to_string(),
+            enable_url: None,
         };
         let json = err.to_json();
         assert_eq!(json["error"]["code"], 404);
         assert_eq!(json["error"]["message"], "Not Found");
         assert_eq!(json["error"]["reason"], "notFound");
+        assert!(json["error"]["enable_url"].is_null());
     }
 
     #[test]
@@ -143,5 +175,39 @@ mod tests {
         assert_eq!(json["error"]["code"], 500);
         assert_eq!(json["error"]["message"], "Something went wrong");
         assert_eq!(json["error"]["reason"], "internalError");
+    }
+
+    // --- accessNotConfigured tests ---
+
+    #[test]
+    fn test_error_to_json_access_not_configured_with_url() {
+        let err = GwsError::Api {
+            code: 403,
+            message: "Gmail API has not been used in project 549352339482 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482 then retry.".to_string(),
+            reason: "accessNotConfigured".to_string(),
+            enable_url: Some("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482".to_string()),
+        };
+        let json = err.to_json();
+        assert_eq!(json["error"]["code"], 403);
+        assert_eq!(json["error"]["reason"], "accessNotConfigured");
+        assert_eq!(
+            json["error"]["enable_url"],
+            "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482"
+        );
+    }
+
+    #[test]
+    fn test_error_to_json_access_not_configured_without_url() {
+        let err = GwsError::Api {
+            code: 403,
+            message: "API not enabled.".to_string(),
+            reason: "accessNotConfigured".to_string(),
+            enable_url: None,
+        };
+        let json = err.to_json();
+        assert_eq!(json["error"]["code"], 403);
+        assert_eq!(json["error"]["reason"], "accessNotConfigured");
+        // enable_url key should not appear in JSON when None
+        assert!(json["error"]["enable_url"].is_null());
     }
 }

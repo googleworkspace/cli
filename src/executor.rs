@@ -500,6 +500,24 @@ fn build_url(
     Ok((full_url, query_params))
 }
 
+/// Attempts to extract a GCP console enable URL from a Google API `accessNotConfigured`
+/// error message.
+///
+/// The message format is typically:
+/// `"<API> has not been used in project <N> before or it is disabled. Enable it by visiting <URL> then retry."`
+///
+/// Returns the URL string if found, otherwise `None`.
+pub fn extract_enable_url(message: &str) -> Option<String> {
+    // Look for "visiting <URL>" pattern
+    let after_visiting = message.split("visiting ").nth(1)?;
+    // URL ends at the next whitespace character
+    let url = after_visiting
+        .split_whitespace()
+        .next()
+        .filter(|s| s.starts_with("http"))?;
+    Some(url.to_string())
+}
+
 fn handle_error_response(
     status: reqwest::StatusCode,
     error_body: &str,
@@ -526,19 +544,30 @@ fn handle_error_response(
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error")
                 .to_string();
+
+            // Reason can appear in "errors[0].reason" or at the top-level "reason" field.
             let reason = err_obj
                 .get("errors")
                 .and_then(|e| e.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|e| e.get("reason"))
                 .and_then(|r| r.as_str())
+                .or_else(|| err_obj.get("reason").and_then(|r| r.as_str()))
                 .unwrap_or("unknown")
                 .to_string();
+
+            // For accessNotConfigured, extract the GCP enable URL from the message.
+            let enable_url = if reason == "accessNotConfigured" {
+                extract_enable_url(&message)
+            } else {
+                None
+            };
 
             return Err(GwsError::Api {
                 code,
                 message,
                 reason,
+                enable_url,
             });
         }
     }
@@ -547,6 +576,7 @@ fn handle_error_response(
         code: status.as_u16(),
         message: error_body.to_string(),
         reason: "httpError".to_string(),
+        enable_url: None,
     })
 }
 
@@ -1130,6 +1160,7 @@ mod tests {
                 code,
                 message,
                 reason,
+                ..
             } => {
                 assert_eq!(code, 400);
                 assert_eq!(message, "Bad Request");
@@ -1275,10 +1306,103 @@ fn test_handle_error_response_non_json() {
             code,
             message,
             reason,
+            ..
         } => {
             assert_eq!(code, 500);
             assert_eq!(message, "Internal Server Error Text");
             assert_eq!(reason, "httpError");
+        }
+        _ => panic!("Expected Api error"),
+    }
+}
+
+#[test]
+fn test_extract_enable_url_typical_message() {
+    let msg = "Gmail API has not been used in project 549352339482 before or it is disabled. \
+               Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482 then retry.";
+    let url = extract_enable_url(msg);
+    assert_eq!(
+        url.as_deref(),
+        Some("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482")
+    );
+}
+
+#[test]
+fn test_extract_enable_url_no_url() {
+    let msg = "API not enabled.";
+    assert_eq!(extract_enable_url(msg), None);
+}
+
+#[test]
+fn test_extract_enable_url_non_http() {
+    let msg = "Enable it by visiting ftp://example.com then retry.";
+    assert_eq!(extract_enable_url(msg), None);
+}
+
+#[test]
+fn test_handle_error_response_access_not_configured_with_url() {
+    // Matches the top-level "reason" field format Google actually returns for this error
+    let json_err = serde_json::json!({
+        "error": {
+            "code": 403,
+            "message": "Gmail API has not been used in project 549352339482 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482 then retry.",
+            "status": "PERMISSION_DENIED",
+            "reason": "accessNotConfigured"
+        }
+    })
+    .to_string();
+
+    let err = handle_error_response(
+        reqwest::StatusCode::FORBIDDEN,
+        &json_err,
+        &AuthMethod::OAuth,
+    )
+    .unwrap_err();
+
+    match err {
+        GwsError::Api {
+            code,
+            reason,
+            enable_url,
+            ..
+        } => {
+            assert_eq!(code, 403);
+            assert_eq!(reason, "accessNotConfigured");
+            assert_eq!(
+                enable_url.as_deref(),
+                Some("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482")
+            );
+        }
+        _ => panic!("Expected Api error"),
+    }
+}
+
+#[test]
+fn test_handle_error_response_access_not_configured_errors_array() {
+    // Some Google APIs put reason in errors[0].reason
+    let json_err = serde_json::json!({
+        "error": {
+            "code": 403,
+            "message": "Drive API has not been used in project 12345 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=12345 then retry.",
+            "errors": [{ "reason": "accessNotConfigured" }]
+        }
+    })
+    .to_string();
+
+    let err = handle_error_response(
+        reqwest::StatusCode::FORBIDDEN,
+        &json_err,
+        &AuthMethod::OAuth,
+    )
+    .unwrap_err();
+
+    match err {
+        GwsError::Api {
+            reason, enable_url, ..
+        } => {
+            assert_eq!(reason, "accessNotConfigured");
+            assert!(enable_url.is_some());
+            assert!(enable_url.unwrap().contains("drive.googleapis.com"));
         }
         _ => panic!("Expected Api error"),
     }
