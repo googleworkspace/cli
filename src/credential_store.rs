@@ -34,7 +34,10 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         if KEY.set(candidate).is_ok() {
             candidate
         } else {
-            KEY.get().copied().unwrap_or(candidate)
+            // If set() fails, another thread already initialized the key. .get() is
+            // guaranteed to return Some at this point.
+            *KEY.get()
+                .expect("key must be initialized if OnceLock::set() failed")
         }
     };
 
@@ -86,10 +89,13 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        let _ = std::fs::set_permissions(
-                            parent,
-                            std::fs::Permissions::from_mode(0o700),
-                        );
+                        if let Err(e) =
+                            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                        {
+                            eprintln!(
+                                "Warning: failed to set secure permissions on key directory: {e}"
+                            );
+                        }
                     }
                 }
 
@@ -144,7 +150,10 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            {
+                eprintln!("Warning: failed to set secure permissions on key directory: {e}");
+            }
         }
     }
 
