@@ -104,8 +104,8 @@ TIPS:
                     None,
                     &crate::helpers::modelarmor::SanitizeMode::Warn,
                     &crate::formatter::OutputFormat::default(),
-                    false
-    )
+                    false,
+                )
                 .await?;
 
                 return Ok(true);

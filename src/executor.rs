@@ -199,6 +199,7 @@ async fn build_http_request(
 
 /// Handle a JSON response: parse, sanitize via Model Armor, output, and check pagination.
 /// Returns `Ok(true)` if the pagination loop should continue.
+#[allow(clippy::too_many_arguments)]
 async fn handle_json_response(
     body_text: &str,
     pagination: &PaginationConfig,
@@ -329,11 +330,11 @@ async fn handle_binary_response(
         "mimeType": content_type,
         "bytes": total_bytes,
     });
-    
+
     if capture_output {
         return Ok(Some(result));
     }
-    
+
     println!("{}", crate::formatter::format_value(&result, output_format));
 
     Ok(None)
@@ -445,10 +446,16 @@ pub async fn execute_method(
             if should_continue {
                 continue;
             }
-        } else {
-            if let Some(res) = handle_binary_response(response, &content_type, output_path, output_format, capture_output).await? {
-                captured_values.push(res);
-            }
+        } else if let Some(res) = handle_binary_response(
+            response,
+            &content_type,
+            output_path,
+            output_format,
+            capture_output,
+        )
+        .await?
+        {
+            captured_values.push(res);
         }
 
         break;
@@ -1157,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_handle_error_response_401() {
-        let err = handle_error_response(
+        let err = handle_error_response::<()>(
             reqwest::StatusCode::UNAUTHORIZED,
             "Unauthorized",
             &AuthMethod::None,
@@ -1180,7 +1187,7 @@ mod tests {
         })
         .to_string();
 
-        let err = handle_error_response(
+        let err = handle_error_response::<()>(
             reqwest::StatusCode::BAD_REQUEST,
             &json_err,
             &AuthMethod::OAuth,
@@ -1272,7 +1279,7 @@ async fn test_execute_method_dry_run() {
         None,
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
-        false
+        false,
     )
     .await;
 
@@ -1315,7 +1322,7 @@ async fn test_execute_method_missing_path_param() {
         None,
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
-        false
+        false,
     )
     .await;
 
@@ -1328,7 +1335,7 @@ async fn test_execute_method_missing_path_param() {
 
 #[test]
 fn test_handle_error_response_non_json() {
-    let err = handle_error_response(
+    let err = handle_error_response::<()>(
         reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         "Internal Server Error Text",
         &AuthMethod::OAuth,
@@ -1395,7 +1402,7 @@ fn test_handle_error_response_access_not_configured_with_url() {
     })
     .to_string();
 
-    let err = handle_error_response(
+    let err = handle_error_response::<()>(
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,
@@ -1432,7 +1439,7 @@ fn test_handle_error_response_access_not_configured_errors_array() {
     })
     .to_string();
 
-    let err = handle_error_response(
+    let err = handle_error_response::<()>(
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,

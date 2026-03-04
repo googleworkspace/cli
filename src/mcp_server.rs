@@ -15,9 +15,9 @@
 //! Model Context Protocol (MCP) server implementation.
 //! Provides a stdio JSON-RPC server exposing Google Workspace APIs as MCP tools.
 
+use crate::discovery::RestResource;
 use crate::error::GwsError;
 use crate::services;
-use crate::discovery::RestResource;
 use clap::{Arg, Command};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -68,7 +68,10 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
     let svc_str = matches.get_one::<String>("services").unwrap();
     if !svc_str.is_empty() {
         if svc_str == "all" {
-            config.services = services::SERVICES.iter().map(|s| s.aliases[0].to_string()).collect();
+            config.services = services::SERVICES
+                .iter()
+                .map(|s| s.aliases[0].to_string())
+                .collect();
         } else {
             config.services = svc_str.split(',').map(|s| s.trim().to_string()).collect();
         }
@@ -79,7 +82,10 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
         eprintln!("[gws mcp] Re-run with: gws mcp -s <service> (e.g., -s drive,gmail,calendar)");
         eprintln!("[gws mcp] Use -s all to expose all available services.");
     } else {
-        eprintln!("[gws mcp] Starting with services: {}", config.services.join(", "));
+        eprintln!(
+            "[gws mcp] Starting with services: {}",
+            config.services.join(", ")
+        );
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
@@ -116,7 +122,7 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
                                 "code": -32603,
                                 "message": e.to_string()
                             }
-                        })
+                        }),
                     };
 
                     let mut out = serde_json::to_string(&response).unwrap();
@@ -141,7 +147,7 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -174,9 +180,7 @@ async fn handle_request(
                 "tools": tools_cache.as_ref().unwrap()
             }))
         }
-        "tools/call" => {
-            handle_tools_call(params, config).await
-        }
+        "tools/call" => handle_tools_call(params, config).await,
         _ => Err(GwsError::Validation(format!(
             "Method not supported: {}",
             method
@@ -189,7 +193,8 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
 
     // 1. Walk core services
     for svc_name in &config.services {
-        let (api_name, version) = crate::parse_service_and_version(&[svc_name.clone()], svc_name)?;
+        let (api_name, version) =
+            crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
         if let Ok(doc) = crate::discovery::fetch_discovery_document(&api_name, &version).await {
             walk_resources(&doc.name, &doc.resources, &mut tools);
         } else {
@@ -260,21 +265,17 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
     Ok(tools)
 }
 
-fn walk_resources(
-    prefix: &str,
-    resources: &HashMap<String, RestResource>,
-    tools: &mut Vec<Value>,
-) {
+fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools: &mut Vec<Value>) {
     for (res_name, res) in resources {
         let new_prefix = format!("{}_{}", prefix, res_name);
-        
+
         for (method_name, method) in &res.methods {
             let tool_name = format!("{}_{}", new_prefix, method_name);
             let mut description = method.description.clone().unwrap_or_default();
             if description.is_empty() {
                 description = format!("Execute the {} Google API method", tool_name);
             }
-            
+
             // Generate JSON Schema for MCP input
             let input_schema = json!({
                 "type": "object",
@@ -322,35 +323,45 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     let arguments = params.get("arguments").unwrap_or(&default_args);
 
     if tool_name.starts_with("workflow_") {
-        return Err(GwsError::Other(anyhow::anyhow!("Workflows are not yet fully implemented via MCP")));
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "Workflows are not yet fully implemented via MCP"
+        )));
     }
 
     let parts: Vec<&str> = tool_name.split('_').collect();
     if parts.len() < 3 {
-        return Err(GwsError::Validation(format!("Invalid API tool name: {}", tool_name)));
+        return Err(GwsError::Validation(format!(
+            "Invalid API tool name: {}",
+            tool_name
+        )));
     }
 
     let svc_alias = parts[0];
-    
+
     if !config.services.contains(&svc_alias.to_string()) {
-        return Err(GwsError::Validation(format!("Service '{}' is not enabled in this MCP session", svc_alias)));
+        return Err(GwsError::Validation(format!(
+            "Service '{}' is not enabled in this MCP session",
+            svc_alias
+        )));
     }
 
-    let (api_name, version) = crate::parse_service_and_version(&[svc_alias.to_string()], svc_alias)?;
+    let (api_name, version) =
+        crate::parse_service_and_version(&[svc_alias.to_string()], svc_alias)?;
     let doc = crate::discovery::fetch_discovery_document(&api_name, &version).await?;
 
     let mut current_resources = &doc.resources;
     let mut current_res = None;
-    
-    // e.g. ["drive", "files", "list"]
-    // i goes from 1 to len - 2. For len=3, i=1.
-    for i in 1..parts.len() - 1 {
-        let res_name = parts[i];
-        if let Some(res) = current_resources.get(res_name) {
+
+    // Walk: ["drive", "files", "list"] — iterate resource path segments between service and method
+    for res_name in &parts[1..parts.len() - 1] {
+        if let Some(res) = current_resources.get(*res_name) {
             current_res = Some(res);
             current_resources = &res.resources;
         } else {
-            return Err(GwsError::Validation(format!("Resource '{}' not found in Discovery Document", res_name)));
+            return Err(GwsError::Validation(format!(
+                "Resource '{}' not found in Discovery Document",
+                res_name
+            )));
         }
     }
 
@@ -384,7 +395,10 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     } else {
         None
     };
-    let page_all = arguments.get("page_all").and_then(|v| v.as_bool()).unwrap_or(false);
+    let page_all = arguments
+        .get("page_all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let pagination = crate::executor::PaginationConfig {
         page_all,
@@ -413,7 +427,8 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         &crate::helpers::modelarmor::SanitizeMode::Warn,
         &crate::formatter::OutputFormat::default(),
         true, // capture_output = true!
-    ).await?;
+    )
+    .await?;
 
     let text_content = match result {
         Some(val) => serde_json::to_string_pretty(&val).unwrap_or_else(|_| "[]".to_string()),
@@ -430,4 +445,3 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         "isError": false
     }))
 }
-

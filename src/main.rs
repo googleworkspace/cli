@@ -223,7 +223,7 @@ async fn run() -> Result<(), GwsError> {
         sanitize_config.template.as_deref(),
         &sanitize_config.mode,
         &output_format,
-        false
+        false,
     )
     .await
     .map(|_| ())
