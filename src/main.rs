@@ -73,7 +73,7 @@ async fn run() -> Result<(), GwsError> {
         return Ok(());
     }
 
-    if first_arg == "--version" || first_arg == "-V" {
+    if first_arg == "--version" || first_arg == "-V" || first_arg == "version" {
         println!("gws {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
