@@ -62,6 +62,10 @@ cargo install --path .
 
 **For AI agents** — every response is structured JSON. Pair it with the included agent skills and your LLM can manage Workspace without custom tooling.
 
+> **Tip:** Resource and method names mirror the underlying API (camelCase), but kebab-case equivalents are accepted as aliases.  
+> `gws gmail users getProfile` and `gws gmail users get-profile` are identical.  
+> `gws calendar calendarList list` and `gws calendar calendar-list list` both work.
+
 ```bash
 # List the 10 most recent files
 gws drive files list --params '{"pageSize": 10}'

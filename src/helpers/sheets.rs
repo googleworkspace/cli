@@ -326,8 +326,10 @@ mod tests {
             },
         );
 
-        let mut values_res = RestResource::default();
-        values_res.methods = methods;
+        let values_res = RestResource {
+            methods,
+            ..Default::default()
+        };
 
         let mut spreadsheets_res = RestResource::default();
         spreadsheets_res

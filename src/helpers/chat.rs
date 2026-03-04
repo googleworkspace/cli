@@ -200,8 +200,10 @@ mod tests {
             },
         );
 
-        let mut messages_res = RestResource::default();
-        messages_res.methods = methods;
+        let messages_res = RestResource {
+            methods,
+            ..Default::default()
+        };
 
         let mut spaces_res = RestResource::default();
         spaces_res

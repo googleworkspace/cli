@@ -275,16 +275,22 @@ fn parse_sanitize_config(
 }
 
 /// Recursively walks clap ArgMatches to find the leaf method and its matches.
+///
+/// Clap resolves alias names back to their canonical subcommand name, so path
+/// segments will normally already be camelCase.  As a defense-in-depth measure
+/// we also pass each segment through `commands::resolve_name`, which handles
+/// any kebab-case → camelCase conversion in case the alias surface is exposed
+/// by a future clap version or a test harness.
 fn resolve_method_from_matches<'a>(
     doc: &'a discovery::RestDescription,
     matches: &'a clap::ArgMatches,
 ) -> Result<(&'a discovery::RestMethod, &'a clap::ArgMatches), GwsError> {
     // Walk the subcommand chain
-    let mut path: Vec<&str> = Vec::new();
+    let mut path: Vec<String> = Vec::new();
     let mut current_matches = matches;
 
     while let Some((sub_name, sub_matches)) = current_matches.subcommand() {
-        path.push(sub_name);
+        path.push(sub_name.to_string());
         current_matches = sub_matches;
     }
 
@@ -295,38 +301,35 @@ fn resolve_method_from_matches<'a>(
     }
 
     // path looks like ["files", "list"] or ["files", "permissions", "list"]
-    // Walk the Discovery Document resources to find the method
-    let resource_name = path[0];
-    let resource = doc
-        .resources
-        .get(resource_name)
-        .ok_or_else(|| GwsError::Validation(format!("Resource '{resource_name}' not found")))?;
+    // Walk the Discovery Document resources to find the method.
+    // Use resolve_name so that a kebab-case segment transparently maps to the
+    // camelCase key stored in the Discovery Document.
+    let resource_input = &path[0];
+    let resource_key = commands::resolve_name(doc.resources.keys(), resource_input)
+        .ok_or_else(|| GwsError::Validation(format!("Resource '{resource_input}' not found")))?;
+    let resource = &doc.resources[&resource_key];
 
     let mut current_resource = resource;
 
     // Navigate sub-resources (everything except the last element, which is the method)
-    for &name in &path[1..path.len() - 1] {
-        // Check if this is a sub-resource
-        if let Some(sub) = current_resource.resources.get(name) {
-            current_resource = sub;
-        } else {
-            return Err(GwsError::Validation(format!(
-                "Sub-resource '{name}' not found"
-            )));
-        }
+    for name in &path[1..path.len() - 1] {
+        let sub_key = commands::resolve_name(current_resource.resources.keys(), name)
+            .ok_or_else(|| GwsError::Validation(format!("Sub-resource '{name}' not found")))?;
+        current_resource = &current_resource.resources[&sub_key];
     }
 
     // The last element is the method name
-    let method_name = path[path.len() - 1];
-
-    // Check if this is a method on the current resource
-    if let Some(method) = current_resource.methods.get(method_name) {
-        return Ok((method, current_matches));
+    let method_input = &path[path.len() - 1];
+    if let Some(method_key) = commands::resolve_name(current_resource.methods.keys(), method_input)
+    {
+        if let Some(method) = current_resource.methods.get(&method_key) {
+            return Ok((method, current_matches));
+        }
     }
 
     // Maybe it's a resource that has methods — need one more subcommand
     Err(GwsError::Validation(format!(
-        "Method '{method_name}' not found on resource. Available methods: {:?}",
+        "Method '{method_input}' not found on resource. Available methods: {:?}",
         current_resource.methods.keys().collect::<Vec<_>>()
     )))
 }
@@ -337,6 +340,12 @@ fn print_usage() {
     println!("USAGE:");
     println!("    gws <service> <resource> [sub-resource] <method> [flags]");
     println!("    gws schema <service.resource.method> [--resolve-refs]");
+    println!();
+    println!("NOTE:");
+    println!("    Resource and method names mirror the underlying API (camelCase).");
+    println!("    Kebab-case equivalents are accepted as aliases for convenience:");
+    println!("        getProfile  =>  get-profile");
+    println!("        calendarList  =>  calendar-list");
     println!();
     println!("EXAMPLES:");
     println!("    gws drive files list --params '{{\"pageSize\": 10}}'");
@@ -401,7 +410,7 @@ mod tests {
             .get_matches_from(vec!["test"]);
 
         let config = parse_pagination_config(&matches);
-        assert_eq!(config.page_all, false);
+        assert!(!config.page_all);
         assert_eq!(config.page_limit, 10);
         assert_eq!(config.page_delay_ms, 100);
     }
@@ -434,7 +443,7 @@ mod tests {
             ]);
 
         let config = parse_pagination_config(&matches);
-        assert_eq!(config.page_all, true);
+        assert!(config.page_all);
         assert_eq!(config.page_limit, 20);
         assert_eq!(config.page_delay_ms, 500);
     }

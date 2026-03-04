@@ -1458,7 +1458,7 @@ mod tests {
                 continue;
             }
             assert!(
-                api_ids.iter().any(|id| *id == expected_suffix),
+                api_ids.contains(&expected_suffix),
                 "Missing API ID for service '{}' (expected {})",
                 entry.api_name,
                 expected_suffix
