@@ -85,9 +85,9 @@ pub(crate) fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
             "Resource name must not be empty".to_string(),
         ));
     }
-    if s.contains("..") {
+    if s.split('/').any(|seg| seg == "..") {
         return Err(GwsError::Validation(format!(
-            "Resource name must not contain '..': {s}"
+            "Resource name must not contain path traversal ('..') segments: {s}"
         )));
     }
     if s.contains('\0') || s.chars().any(|c| c.is_control()) {
@@ -210,7 +210,7 @@ mod tests {
         assert!(err.to_string().contains("must not be empty"));
 
         let err = validate_resource_name("../bad").unwrap_err();
-        assert!(err.to_string().contains("must not contain '..'"));
+        assert!(err.to_string().contains("path traversal"));
 
         let err = validate_resource_name("bad\0id").unwrap_err();
         assert!(err.to_string().contains("invalid characters"));

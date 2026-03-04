@@ -84,7 +84,7 @@ When adding new helpers or CLI flags that accept file paths, **always validate**
 | Scenario | Validator | Rejects |
 |---|---|---|
 | File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()` | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
-| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` | Absolute paths, `../` traversal, control chars |
+| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
 | Enum/allowlist values (`--msg-format`) | clap `value_parser` (see `gmail/mod.rs`) | Any value not in the allowlist |
 
 ```rust
