@@ -98,6 +98,37 @@ gws auth login       # subsequent logins
 
 > Requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated.
 
+### Manual OAuth setup (Google Cloud Console)
+
+Use this when `gws setup` cannot automate project/client creation, or when you want explicit control.
+
+1. Open Google Cloud Console in the target project:
+   - OAuth overview: `https://console.cloud.google.com/auth/overview?project=<PROJECT_ID>`
+   - Clients: `https://console.cloud.google.com/auth/clients?project=<PROJECT_ID>`
+2. Configure OAuth branding/audience if prompted:
+   - App type: **External** (testing mode is fine)
+   - Add your account under **Test users**
+3. Create an OAuth client:
+   - Type: **Desktop app**
+4. Download the client JSON and save it to:
+   - `~/.config/gws/client_secret.json`
+
+Then run:
+
+```bash
+gws auth login
+```
+
+### Browser-assisted auth (human or agent)
+
+You can complete OAuth either manually or with browser automation.
+
+- **Human flow**: run `gws auth login`, open the printed URL, approve scopes.
+- **Agent-assisted flow**: the agent opens the URL, selects account, handles consent prompts, and returns control once the localhost callback succeeds.
+
+If consent shows **"Google hasn't verified this app"** (testing mode), click **Continue**.
+If scope checkboxes appear, select required scopes (or **Select all**) before continuing.
+
 ### Headless / CI (export flow)
 
 1. Complete interactive auth on a machine with a browser.
