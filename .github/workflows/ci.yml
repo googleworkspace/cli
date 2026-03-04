@@ -127,8 +127,7 @@ jobs:
       - name: Check for drift
         run: |
           if ! git diff --exit-code skills/; then
-            echo "::error::Skills are out of date. Run 'cargo run -- generate-skills' and commit the changes."
-            exit 1
+            echo "::warning::Skills are out of date — the hourly auto-sync PR will fix this automatically."
           fi
 
   coverage:
