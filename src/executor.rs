@@ -207,6 +207,8 @@ async fn handle_json_response(
     output_format: &crate::formatter::OutputFormat,
     pages_fetched: &mut u32,
     page_token: &mut Option<String>,
+    capture_output: bool,
+    captured: &mut Vec<Value>,
 ) -> Result<bool, GwsError> {
     if let Ok(mut json_val) = serde_json::from_str::<Value>(body_text) {
         *pages_fetched += 1;
@@ -249,7 +251,9 @@ async fn handle_json_response(
             }
         }
 
-        if pagination.page_all {
+        if capture_output {
+            captured.push(json_val.clone());
+        } else if pagination.page_all {
             let is_first_page = *pages_fetched == 1;
             println!(
                 "{}",
@@ -279,7 +283,7 @@ async fn handle_json_response(
         }
     } else {
         // Not valid JSON, output as-is
-        if !body_text.is_empty() {
+        if !capture_output && !body_text.is_empty() {
             println!("{body_text}");
         }
     }
@@ -293,7 +297,8 @@ async fn handle_binary_response(
     content_type: &str,
     output_path: Option<&str>,
     output_format: &crate::formatter::OutputFormat,
-) -> Result<(), GwsError> {
+    capture_output: bool,
+) -> Result<Option<Value>, GwsError> {
     let file_path = if let Some(p) = output_path {
         PathBuf::from(p)
     } else {
@@ -324,9 +329,14 @@ async fn handle_binary_response(
         "mimeType": content_type,
         "bytes": total_bytes,
     });
+    
+    if capture_output {
+        return Ok(Some(result));
+    }
+    
     println!("{}", crate::formatter::format_value(&result, output_format));
 
-    Ok(())
+    Ok(None)
 }
 
 /// Executes an API method call.
@@ -354,7 +364,8 @@ pub async fn execute_method(
     sanitize_template: Option<&str>,
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
     output_format: &crate::formatter::OutputFormat,
-) -> Result<(), GwsError> {
+    capture_output: bool,
+) -> Result<Option<Value>, GwsError> {
     let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
 
     if dry_run {
@@ -366,15 +377,19 @@ pub async fn execute_method(
             "body": input.body,
             "is_multipart_upload": input.is_upload,
         });
+        if capture_output {
+            return Ok(Some(dry_run_info));
+        }
         println!(
             "{}",
             crate::formatter::format_value(&dry_run_info, output_format)
         );
-        return Ok(());
+        return Ok(None);
     }
 
     let mut page_token: Option<String> = None;
     let mut pages_fetched: u32 = 0;
+    let mut captured_values = Vec::new();
 
     loop {
         let client = crate::client::build_client()?;
@@ -422,6 +437,8 @@ pub async fn execute_method(
                 output_format,
                 &mut pages_fetched,
                 &mut page_token,
+                capture_output,
+                &mut captured_values,
             )
             .await?;
 
@@ -429,13 +446,25 @@ pub async fn execute_method(
                 continue;
             }
         } else {
-            handle_binary_response(response, &content_type, output_path, output_format).await?;
+            if let Some(res) = handle_binary_response(response, &content_type, output_path, output_format, capture_output).await? {
+                if capture_output {
+                    captured_values.push(res);
+                }
+            }
         }
 
         break;
     }
 
-    Ok(())
+    if capture_output && !captured_values.is_empty() {
+        if captured_values.len() == 1 {
+            return Ok(Some(captured_values.pop().unwrap()));
+        } else {
+            return Ok(Some(Value::Array(captured_values)));
+        }
+    }
+
+    Ok(None)
 }
 
 fn build_url(
@@ -522,11 +551,11 @@ pub fn extract_enable_url(message: &str) -> Option<String> {
     Some(url.to_string())
 }
 
-fn handle_error_response(
+fn handle_error_response<T>(
     status: reqwest::StatusCode,
     error_body: &str,
     auth_method: &AuthMethod,
-) -> Result<(), GwsError> {
+) -> Result<T, GwsError> {
     // If 401/403 and no auth was provided, give a helpful message
     if (status.as_u16() == 401 || status.as_u16() == 403) && *auth_method == AuthMethod::None {
         return Err(GwsError::Auth(
@@ -1245,6 +1274,7 @@ async fn test_execute_method_dry_run() {
         None,
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
+        false
     )
     .await;
 
@@ -1287,6 +1317,7 @@ async fn test_execute_method_missing_path_param() {
         None,
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
+        false
     )
     .await;
 

@@ -15,13 +15,11 @@ Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JS
 </p>
 <br>
 
-
 ```bash
 npm install -g @googleworkspace/cli
 ```
 
 `gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google Workspace adds an API endpoint or method, `gws` picks it up automatically.
-
 
 > [!IMPORTANT]
 > This project is under active development. Expect breaking changes as we march toward v1.0.
@@ -36,6 +34,7 @@ npm install -g @googleworkspace/cli
 - [Why gws?](#why-gws)
 - [Authentication](#authentication)
 - [AI Agent Skills](#ai-agent-skills)
+- [MCP Server](#mcp-server)
 - [Advanced Usage](#advanced-usage)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -54,7 +53,6 @@ Or build from source:
 ```bash
 cargo install --path .
 ```
-
 
 ## Why gws?
 
@@ -81,7 +79,6 @@ gws schema drive.files.list
 # Stream paginated results as NDJSON
 gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
-
 
 ## Authentication
 
@@ -167,15 +164,14 @@ export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 
 ### Precedence
 
-| Priority | Source | Set via |
-|----------|--------|---------|
-| 1 | Access token | `GOOGLE_WORKSPACE_CLI_TOKEN` |
-| 2 | Credentials file | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
-| 3 | Encrypted credentials (OS keyring) | `gws auth login` |
-| 4 | Plaintext credentials | `~/.config/gws/credentials.json` |
+| Priority | Source                             | Set via                                 |
+| -------- | ---------------------------------- | --------------------------------------- |
+| 1        | Access token                       | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
+| 2        | Credentials file                   | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
+| 3        | Encrypted credentials (OS keyring) | `gws auth login`                        |
+| 4        | Plaintext credentials              | `~/.config/gws/credentials.json`        |
 
 Environment variables can also live in a `.env` file.
-
 
 ## AI Agent Skills
 
@@ -205,10 +201,10 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 </details>
 
-
 ## Gemini CLI Extension
 
 1. Authenticate the CLI first:
+
    ```bash
    gws setup
    ```
@@ -220,6 +216,39 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 Installing this extension gives your Gemini CLI agent direct access to all `gws` commands and Google Workspace agent skills. Because `gws` handles its own authentication securely, you simply need to authenticate your terminal once prior to using the agent, and the extension will automatically inherit your credentials.
 
+## MCP Server
+
+`gws mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, exposing Google Workspace APIs as structured tools that any MCP-compatible client (Claude Desktop, Gemini CLI, VS Code, etc.) can call.
+
+```bash
+gws mcp -s drive                  # expose Drive tools
+gws mcp -s drive,gmail,calendar   # expose multiple services
+gws mcp -s all                    # expose all services (many tools!)
+```
+
+Configure in your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "gws": {
+      "command": "gws",
+      "args": ["mcp", "-s", "drive,gmail,calendar"]
+    }
+  }
+}
+```
+
+> [!TIP]
+> Each service adds roughly 10–80 tools. Keep the list to what you actually need
+> to stay under your client's tool limit (typically 50–100 tools).
+
+| Flag                    | Description                                  |
+| ----------------------- | -------------------------------------------- |
+| `-s, --services <list>` | Comma-separated services to expose, or `all` |
+| `-w, --workflows`       | Also expose workflow tools                   |
+| `-e, --helpers`         | Also expose helper tools                     |
+
 ## Advanced Usage
 
 ### Multipart Uploads
@@ -230,11 +259,11 @@ gws drive files create --json '{"name": "report.pdf"}' --upload ./report.pdf
 
 ### Pagination
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--page-all` | Auto-paginate, one JSON line per page (NDJSON) | off |
-| `--page-limit <N>` | Max pages to fetch | 10 |
-| `--page-delay <MS>` | Delay between pages | 100 ms |
+| Flag                | Description                                    | Default |
+| ------------------- | ---------------------------------------------- | ------- |
+| `--page-all`        | Auto-paginate, one JSON line per page (NDJSON) | off     |
+| `--page-limit <N>`  | Max pages to fetch                             | 10      |
+| `--page-delay <MS>` | Delay between pages                            | 100 ms  |
 
 ### Model Armor (Response Sanitization)
 
@@ -245,11 +274,10 @@ gws gmail users messages get --params '...' \
   --sanitize "projects/P/locations/L/templates/T"
 ```
 
-| Variable | Description |
-|----------|-------------|
+| Variable                                 | Description                  |
+| ---------------------------------------- | ---------------------------- |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
-| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
-
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE`     | `warn` (default) or `block`  |
 
 ## Architecture
 
@@ -262,7 +290,6 @@ gws gmail users messages get --params '...' \
 5. Authenticate, build the HTTP request, execute
 
 All output — success, errors, download metadata — is structured JSON.
-
 
 ## Troubleshooting
 
@@ -291,6 +318,7 @@ If a required Google API is not enabled for your GCP project, you will see a
 ```
 
 **Steps to fix:**
+
 1. Click the `enable_url` link (or copy it from the `enable_url` JSON field).
 2. In the GCP Console, click **Enable**.
 3. Wait ~10 seconds, then retry your `gws` command.
@@ -298,7 +326,6 @@ If a required Google API is not enabled for your GCP project, you will see a
 > [!TIP]
 > You can also run `gws setup` which walks you through enabling all required
 > APIs for your project automatically.
-
 
 ## Development
 
@@ -308,7 +335,6 @@ cargo clippy -- -D warnings       # lint
 cargo test                        # unit tests
 ./scripts/coverage.sh             # HTML coverage report → target/llvm-cov/html/
 ```
-
 
 ## License
 
