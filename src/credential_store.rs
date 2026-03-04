@@ -30,9 +30,19 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         return Ok(*key);
     }
 
+    let cache_key = |candidate: [u8; 32]| -> [u8; 32] {
+        if KEY.set(candidate).is_ok() {
+            candidate
+        } else {
+            KEY.get().copied().unwrap_or(candidate)
+        }
+    };
+
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
+
+    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
 
     let entry = Entry::new("gws-cli", &username);
 
@@ -44,30 +54,68 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        let _ = KEY.set(arr);
-                        return Ok(arr);
+                        return Ok(cache_key(arr));
                     }
                 }
             }
             Err(keyring::Error::NoEntry) => {
-                // Generate a random 32-byte key
+                use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+                // If keyring is empty, prefer a persisted local key first.
+                if key_file.exists() {
+                    if let Ok(b64_key) = std::fs::read_to_string(&key_file) {
+                        if let Ok(decoded) = STANDARD.decode(b64_key.trim()) {
+                            if decoded.len() == 32 {
+                                let mut arr = [0u8; 32];
+                                arr.copy_from_slice(&decoded);
+                                // Best effort: repopulate keyring for future runs.
+                                let _ = entry.set_password(&b64_key);
+                                return Ok(cache_key(arr));
+                            }
+                        }
+                    }
+                }
+
+                // Generate a random 32-byte key and persist it locally as a stable fallback.
                 let mut key = [0u8; 32];
                 rand::thread_rng().fill_bytes(&mut key);
-
-                use base64::{engine::general_purpose::STANDARD, Engine as _};
                 let b64_key = STANDARD.encode(key);
 
-                if entry.set_password(&b64_key).is_ok() {
-                    let _ = KEY.set(key);
-                    return Ok(key);
+                if let Some(parent) = key_file.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+                    }
                 }
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let mut options = std::fs::OpenOptions::new();
+                    options.write(true).create(true).truncate(true).mode(0o600);
+                    if let Ok(mut file) = options.open(&key_file) {
+                        use std::io::Write;
+                        let _ = file.write_all(b64_key.as_bytes());
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = std::fs::write(&key_file, &b64_key);
+                }
+
+                // Best effort: also store in keyring when available.
+                let _ = entry.set_password(&b64_key);
+
+                return Ok(cache_key(key));
             }
             Err(_) => {} // Fallthrough to file storage
         }
     }
 
     // Fallback: Local file `.encryption_key`
-    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
+
     if key_file.exists() {
         if let Ok(b64_key) = std::fs::read_to_string(&key_file) {
             use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -75,8 +123,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 if decoded.len() == 32 {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&decoded);
-                    let _ = KEY.set(arr);
-                    return Ok(arr);
+                    return Ok(cache_key(arr));
                 }
             }
         }
@@ -113,8 +160,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         let _ = std::fs::write(&key_file, b64_key);
     }
 
-    let _ = KEY.set(key);
-    Ok(key)
+    Ok(cache_key(key))
 }
 
 /// Encrypts plaintext bytes using AES-256-GCM with a machine-derived key.
