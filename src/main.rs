@@ -36,6 +36,7 @@ mod services;
 mod setup;
 mod setup_tui;
 mod token_storage;
+pub(crate) mod validate;
 
 use error::{print_error_json, GwsError};
 

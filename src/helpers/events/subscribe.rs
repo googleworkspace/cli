@@ -40,6 +40,7 @@ fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsErro
     builder.cleanup(matches.get_flag("cleanup"));
     builder.no_ack(matches.get_flag("no-ack"));
     if let Some(output_dir) = matches.get_one::<String>("output-dir") {
+        crate::validate::validate_safe_output_dir(output_dir)?;
         builder.output_dir(Some(output_dir.clone()));
     }
 

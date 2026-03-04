@@ -72,6 +72,19 @@ vhs docs/demo.tape
 
 ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears the screen and cats the file. Portrait scenes use `scene*.txt`; landscape chapters use `long-*.txt`.
 
+## Input Validation
+
+When adding new helpers or CLI flags, **always validate user-supplied inputs** using the shared helpers in `src/validate.rs`:
+
+| Scenario | Validator |
+|---|---|
+| File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()` |
+| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` |
+| Enum/allowlist values (`--msg-format`) | `validate::validate_msg_format()` or clap `value_parser` |
+
+> [!IMPORTANT]
+> This CLI is frequently invoked by AI/LLM agents. Always assume inputs can be adversarial — validate paths against traversal (`../../.ssh`), restrict format strings to allowlists, and reject control characters.
+
 ## Environment Variables
 
 - `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)

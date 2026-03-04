@@ -161,6 +161,7 @@ TIPS:
                         .long("msg-format")
                         .help("Gmail message format: full, metadata, minimal, raw")
                         .value_name("FORMAT")
+                        .value_parser(["full", "metadata", "minimal", "raw"])
                         .default_value("full"),
                 )
                 .arg(

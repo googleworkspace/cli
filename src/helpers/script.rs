@@ -76,9 +76,10 @@ TIPS:
                     .get_one::<String>("dir")
                     .map(|s| s.as_str())
                     .unwrap_or(".");
+                let safe_dir = crate::validate::validate_safe_dir_path(dir_path)?;
 
                 let mut files = Vec::new();
-                visit_dirs(Path::new(dir_path), &mut files)?;
+                visit_dirs(&safe_dir, &mut files)?;
 
                 if files.is_empty() {
                     return Err(GwsError::Validation(format!(

@@ -5,7 +5,7 @@ pub(super) async fn handle_watch(
     matches: &ArgMatches,
     sanitize_config: &crate::helpers::modelarmor::SanitizeConfig,
 ) -> Result<(), GwsError> {
-    let config = parse_watch_args(matches);
+    let config = parse_watch_args(matches)?;
 
     if let Some(ref dir) = config.output_dir {
         std::fs::create_dir_all(dir).context("Failed to create output dir")?;
@@ -513,8 +513,19 @@ struct WatchConfig {
     output_dir: Option<String>,
 }
 
-fn parse_watch_args(matches: &ArgMatches) -> WatchConfig {
-    WatchConfig {
+fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
+    let format_str = matches
+        .get_one::<String>("msg-format")
+        .map(|s| s.as_str())
+        .unwrap_or("full");
+    crate::validate::validate_msg_format(format_str)?;
+
+    let output_dir = matches.get_one::<String>("output-dir").cloned();
+    if let Some(ref dir) = output_dir {
+        crate::validate::validate_safe_output_dir(dir)?;
+    }
+
+    Ok(WatchConfig {
         project: matches.get_one::<String>("project").cloned(),
         subscription: matches.get_one::<String>("subscription").cloned(),
         topic: matches.get_one::<String>("topic").cloned(),
@@ -527,15 +538,11 @@ fn parse_watch_args(matches: &ArgMatches) -> WatchConfig {
             .get_one::<String>("poll-interval")
             .and_then(|s| s.parse().ok())
             .unwrap_or(5),
-        format: matches
-            .get_one::<String>("msg-format")
-            .map(|s| s.as_str())
-            .unwrap_or("full")
-            .to_string(),
+        format: format_str.to_string(),
         once: matches.get_flag("once"),
         cleanup: matches.get_flag("cleanup"),
-        output_dir: matches.get_one::<String>("output-dir").cloned(),
-    }
+        output_dir,
+    })
 }
 
 #[cfg(test)]
@@ -634,7 +641,7 @@ mod tests {
             "20",
             "--once",
         ]);
-        let config = parse_watch_args(&matches);
+        let config = parse_watch_args(&matches).unwrap();
         assert_eq!(config.project.unwrap(), "p1");
         assert_eq!(config.subscription.unwrap(), "s1");
         assert_eq!(config.max_messages, 20);
@@ -651,7 +658,7 @@ mod tests {
     #[test]
     fn test_parse_watch_args_defaults() {
         let matches = make_matches_watch(&["test"]);
-        let config = parse_watch_args(&matches);
+        let config = parse_watch_args(&matches).unwrap();
         assert_eq!(config.project, None);
         assert_eq!(config.subscription, None);
         assert_eq!(config.max_messages, 10);
@@ -670,7 +677,7 @@ mod tests {
             "--poll-interval",
             "invalid",
         ]);
-        let config = parse_watch_args(&matches);
+        let config = parse_watch_args(&matches).unwrap();
         // Should fallback to defaults
         assert_eq!(config.max_messages, 10);
         assert_eq!(config.poll_interval, 5);
