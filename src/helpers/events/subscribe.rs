@@ -47,6 +47,7 @@ fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsErro
         builder.project(Some(ProjectId(project)));
     }
     if let Some(subscription) = matches.get_one::<String>("subscription") {
+        crate::helpers::validate_resource_name(subscription)?;
         builder.subscription(Some(SubscriptionName(subscription.clone())));
     }
     if let Some(max_messages) = matches

@@ -520,7 +520,7 @@ fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
         .get_one::<String>("msg-format")
         .map(|s| s.as_str())
         .unwrap_or("full");
-    crate::validate::validate_msg_format(format_str)?;
+    // Note: msg-format is already constrained by clap's value_parser
 
     let output_dir = matches.get_one::<String>("output-dir").cloned();
     if let Some(ref dir) = output_dir {
@@ -632,12 +632,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_watch_args_invalid_format() {
-        let matches = make_matches_watch(&["test", "--msg-format", "invalid-format"]);
-        let result = parse_watch_args(&matches);
+    fn test_parse_watch_args_invalid_format_rejected_by_clap() {
+        // msg-format is constrained by clap's value_parser, so invalid values
+        // are rejected at the clap level before parse_watch_args is called.
+        // Verify the real command definition rejects bad formats:
+        let helper = super::super::GmailHelper;
+        let doc = crate::discovery::RestDescription::default();
+        let cmd = helper.inject_commands(Command::new("test"), &doc);
+        let watch_cmd = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "+watch")
+            .unwrap()
+            .clone();
+        let result =
+            watch_cmd.try_get_matches_from(vec!["+watch", "--msg-format", "invalid-format"]);
         assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("Invalid message format"));
     }
 
     #[test]

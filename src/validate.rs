@@ -22,12 +22,14 @@ use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
 /// Allowed values for Gmail message format (`--msg-format`).
+#[allow(dead_code)]
 pub const VALID_MSG_FORMATS: &[&str] = &["full", "metadata", "minimal", "raw"];
 
 /// Validates that `value` is one of the allowed Gmail message formats.
 ///
 /// Returns the validated value on success, or a descriptive
 /// [`GwsError::Validation`] listing the allowed options.
+#[allow(dead_code)]
 pub fn validate_msg_format(value: &str) -> Result<&str, GwsError> {
     if VALID_MSG_FORMATS.contains(&value) {
         Ok(value)

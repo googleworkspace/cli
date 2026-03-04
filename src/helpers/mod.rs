@@ -95,6 +95,12 @@ pub(crate) fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
             "Resource name contains invalid characters: {s}"
         )));
     }
+    // Reject URL-special characters that could inject query params or fragments
+    if s.contains('?') || s.contains('#') {
+        return Err(GwsError::Validation(format!(
+            "Resource name must not contain '?' or '#': {s}"
+        )));
+    }
     Ok(s)
 }
 
@@ -193,10 +199,9 @@ mod tests {
 
     #[test]
     fn test_validate_resource_name_query_injection() {
-        // LLMs might append query strings to resource names — this is allowed
-        // by validation since `?` is not a traversal/control char, but the
-        // API will reject it with a clear error.
-        assert!(validate_resource_name("spaces/ABC?key=val").is_ok());
+        // LLMs might append query strings or fragments to resource names
+        assert!(validate_resource_name("spaces/ABC?key=val").is_err());
+        assert!(validate_resource_name("spaces/ABC#fragment").is_err());
     }
 
     #[test]
