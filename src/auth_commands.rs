@@ -96,21 +96,24 @@ fn token_cache_path() -> PathBuf {
 
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
-    if args.is_empty() {
-        return Err(GwsError::Validation(
-            "Usage: gws auth <login|setup|status|export|logout>\n\n\
-              login   Authenticate via OAuth2 (opens browser)\n\
-                      --readonly   Request read-only scopes\n\
-                      --full       Request all scopes incl. pubsub + cloud-platform\n\
-                                   (may trigger restricted_client for unverified apps)\n\
-                      --scopes     Comma-separated custom scopes\n\
-              setup   Configure GCP project + OAuth client (requires gcloud)\n\
-                      --project    Use a specific GCP project\n\
-              status  Show current authentication state\n\
-              export  Print decrypted credentials to stdout\n\
-              logout  Clear saved credentials and token cache"
-                .to_string(),
-        ));
+    const USAGE: &str = concat!(
+        "Usage: gws auth <login|setup|status|export|logout>\n\n",
+        "  login   Authenticate via OAuth2 (opens browser)\n",
+        "          --readonly   Request read-only scopes\n",
+        "          --full       Request all scopes incl. pubsub + cloud-platform\n",
+        "                       (may trigger restricted_client for unverified apps)\n",
+        "          --scopes     Comma-separated custom scopes\n",
+        "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
+        "          --project    Use a specific GCP project\n",
+        "  status  Show current authentication state\n",
+        "  export  Print decrypted credentials to stdout\n",
+        "  logout  Clear saved credentials and token cache",
+    );
+
+    // Honour --help / -h before treating the first arg as a subcommand.
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        println!("{USAGE}");
+        return Ok(());
     }
 
     match args[0].as_str() {
@@ -1183,14 +1186,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_auth_command_empty_args_returns_usage() {
+    async fn handle_auth_command_empty_args_prints_usage() {
         let args: Vec<String> = vec![];
         let result = handle_auth_command(&args).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            GwsError::Validation(msg) => assert!(msg.contains("login|setup|status|export|logout")),
-            other => panic!("Expected Validation error, got: {other:?}"),
-        }
+        // Empty args now prints usage and returns Ok
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_help_flag_returns_ok() {
+        let args = vec!["--help".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_help_short_flag_returns_ok() {
+        let args = vec!["-h".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
