@@ -5,8 +5,8 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
     let name = env!("CARGO_PKG_NAME");
     let version = env!("CARGO_PKG_VERSION");
 
-    // Format: name/version
-    let client_header = format!("{}/{}", name, version);
+    // Format: gl-rust/name-version (the gl-rust/ prefix is fixed)
+    let client_header = format!("gl-rust/{}-{}", name, version);
     if let Ok(header_value) = HeaderValue::from_str(&client_header) {
         headers.insert("x-goog-api-client", header_value);
     }
