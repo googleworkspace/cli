@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.3.3
+
+### Patch Changes
+
+- 92e66a3: Add `gws version` as a bare subcommand alongside `gws --version` and `gws -V`
+
 ## 0.3.2
 
 ### Patch Changes
