@@ -62,13 +62,16 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
 /// contains only data rows, making the combined output machine-parseable.
 ///
 /// For JSON the output is compact (one JSON object per line / NDJSON).
-/// For YAML the page separator is preserved as-is.
+/// For YAML each page is prefixed with a `---` document separator so the
+/// combined stream is a valid YAML multi-document file.
 pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_page: bool) -> String {
     match format {
         OutputFormat::Json => serde_json::to_string(value).unwrap_or_default(),
         OutputFormat::Csv => format_csv_page(value, is_first_page),
         OutputFormat::Table => format_table_page(value, is_first_page),
-        OutputFormat::Yaml => format_yaml(value),
+        // Prefix every page with a YAML document separator so that the
+        // concatenated stream is parseable as a multi-document YAML file.
+        OutputFormat::Yaml => format!("---\n{}", format_yaml(value)),
     }
 }
 
@@ -560,13 +563,17 @@ mod tests {
     }
 
     #[test]
-    fn test_format_value_paginated_json_is_compact() {
-        let val = json!({"files": [{"id": "1"}]});
-        let output = format_value_paginated(&val, &OutputFormat::Json, true);
-        // Compact JSON — no pretty-printed newlines inside the object
+    fn test_format_value_paginated_yaml_has_document_separator() {
+        let val = json!({"files": [{"id": "1", "name": "foo"}]});
+        let first = format_value_paginated(&val, &OutputFormat::Yaml, true);
+        let second = format_value_paginated(&val, &OutputFormat::Yaml, false);
         assert!(
-            !output.contains("\n  "),
-            "JSON must be compact in paginated mode"
+            first.starts_with("---\n"),
+            "first YAML page must start with ---"
+        );
+        assert!(
+            second.starts_with("---\n"),
+            "continuation YAML pages must also start with ---"
         );
     }
 }
