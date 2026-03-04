@@ -992,4 +992,161 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_truncate_desc_short() {
+        assert_eq!(truncate_desc("hello world"), "Hello world.");
+    }
+
+    #[test]
+    fn test_truncate_desc_capitalizes() {
+        assert_eq!(truncate_desc("lists all files."), "Lists all files.");
+    }
+
+    #[test]
+    fn test_truncate_desc_replaces_quotes() {
+        assert_eq!(
+            truncate_desc(r#"Returns a "File" resource."#),
+            "Returns a 'File' resource."
+        );
+    }
+
+    #[test]
+    fn test_truncate_desc_truncates_long() {
+        let long = "A ".repeat(100); // 200 chars
+        let result = truncate_desc(&long);
+        assert!(
+            result.chars().count() <= crate::text::FRONTMATTER_DESCRIPTION_LIMIT + 2,
+            "should respect limit"
+        );
+    }
+
+    #[test]
+    fn test_truncate_desc_adds_period() {
+        assert_eq!(truncate_desc("no period"), "No period.");
+    }
+
+    #[test]
+    fn test_truncate_desc_preserves_existing_period() {
+        assert_eq!(truncate_desc("has one."), "Has one.");
+    }
+
+    #[test]
+    fn test_truncate_desc_ellipsis_no_period() {
+        // When truncation produces an ellipsis, don't add a period
+        let long = "word ".repeat(50);
+        let result = truncate_desc(&long);
+        assert!(result.ends_with('…'));
+        assert!(!result.ends_with(".…"));
+    }
+
+    #[test]
+    fn test_lookup_method_description_found() {
+        let mut methods = std::collections::HashMap::new();
+        methods.insert(
+            "list".to_string(),
+            crate::discovery::RestMethod {
+                description: Some(
+                    "Lists all the files. For more details see the docs.".to_string(),
+                ),
+                http_method: "GET".to_string(),
+                path: "files".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut resources = std::collections::HashMap::new();
+        resources.insert(
+            "files".to_string(),
+            crate::discovery::RestResource {
+                methods,
+                ..Default::default()
+            },
+        );
+        let doc = crate::discovery::RestDescription {
+            name: "drive".to_string(),
+            resources,
+            ..Default::default()
+        };
+        let result = lookup_method_description(&doc, "files", "list");
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Lists all the files"));
+    }
+
+    #[test]
+    fn test_lookup_method_description_missing_resource() {
+        let doc = crate::discovery::RestDescription {
+            name: "drive".to_string(),
+            ..Default::default()
+        };
+        assert!(lookup_method_description(&doc, "missing", "list").is_none());
+    }
+
+    #[test]
+    fn test_lookup_method_description_missing_method() {
+        let mut resources = std::collections::HashMap::new();
+        resources.insert(
+            "files".to_string(),
+            crate::discovery::RestResource::default(),
+        );
+        let doc = crate::discovery::RestDescription {
+            name: "drive".to_string(),
+            resources,
+            ..Default::default()
+        };
+        assert!(lookup_method_description(&doc, "files", "missing").is_none());
+    }
+
+    #[test]
+    fn test_lookup_method_description_no_description() {
+        let mut methods = std::collections::HashMap::new();
+        methods.insert(
+            "list".to_string(),
+            crate::discovery::RestMethod {
+                description: None,
+                http_method: "GET".to_string(),
+                path: "files".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut resources = std::collections::HashMap::new();
+        resources.insert(
+            "files".to_string(),
+            crate::discovery::RestResource {
+                methods,
+                ..Default::default()
+            },
+        );
+        let doc = crate::discovery::RestDescription {
+            name: "drive".to_string(),
+            resources,
+            ..Default::default()
+        };
+        assert!(lookup_method_description(&doc, "files", "list").is_none());
+    }
+
+    #[test]
+    fn test_capitalize_first_empty() {
+        assert_eq!(capitalize_first(""), "");
+    }
+
+    #[test]
+    fn test_capitalize_first_basic() {
+        assert_eq!(capitalize_first("hello"), "Hello");
+    }
+
+    #[test]
+    fn test_product_name_from_title_strips_api() {
+        assert_eq!(product_name_from_title("Google Drive API"), "Google Drive");
+    }
+
+    #[test]
+    fn test_product_name_from_title_no_api_suffix() {
+        // product_name_from_title prepends "Google" if not already present
+        assert_eq!(product_name_from_title("Workspace"), "Google Workspace");
+    }
+
+    #[test]
+    fn test_product_name_from_title_adds_google() {
+        assert_eq!(product_name_from_title("Drive API"), "Google Drive");
+    }
 }

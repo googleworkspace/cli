@@ -86,9 +86,7 @@ fn strip_markdown_links(s: &str) -> String {
                 if close_bracket + 1 < len && chars[close_bracket + 1] == '(' {
                     if let Some(close_paren) = find_char_from(&chars, ')', close_bracket + 2) {
                         // Found a complete [text](url) — emit just the text
-                        for c in &chars[i + 1..close_bracket] {
-                            result.push(*c);
-                        }
+                        result.extend(&chars[i + 1..close_bracket]);
                         i = close_paren + 1;
                         continue;
                     }
@@ -104,12 +102,10 @@ fn strip_markdown_links(s: &str) -> String {
 
 /// Finds the character-index of `target` starting from position `from`.
 fn find_char_from(chars: &[char], target: char, from: usize) -> Option<usize> {
-    for (offset, c) in chars[from..].iter().enumerate() {
-        if *c == target {
-            return Some(from + offset);
-        }
-    }
-    None
+    chars[from..]
+        .iter()
+        .position(|&c| c == target)
+        .map(|p| from + p)
 }
 
 /// Finds the last sentence boundary within a char-indexed string.
@@ -121,11 +117,11 @@ fn find_last_sentence_boundary(prefix: &str) -> Option<usize> {
 
     for (i, _) in chars.iter().enumerate() {
         if chars[i] == '.' {
-            // Check if this is followed by a space (sentence boundary)
-            // or if it's the very last char in the prefix
             let after_period = i + 1;
-            if after_period < chars.len() && chars[after_period] == ' ' {
-                // Sentence boundary at position i+1 (include the period)
+            // Sentence boundary: period followed by a space, or period at end of prefix
+            if after_period == chars.len()
+                || (after_period < chars.len() && chars[after_period] == ' ')
+            {
                 last_boundary = Some(after_period);
             }
         }
@@ -136,13 +132,8 @@ fn find_last_sentence_boundary(prefix: &str) -> Option<usize> {
 
 /// Finds the last occurrence of `target` in a string, returning its char-index.
 fn rfind_char_boundary(s: &str, target: char) -> Option<usize> {
-    let mut last = None;
-    for (i, c) in s.chars().enumerate() {
-        if c == target {
-            last = Some(i);
-        }
-    }
-    last
+    let chars: Vec<char> = s.chars().collect();
+    chars.iter().rposition(|&c| c == target)
 }
 
 #[cfg(test)]
@@ -257,5 +248,18 @@ mod tests {
         let result = truncate_description(desc, 50, true);
         // Should truncate at word boundary, not at "developers."
         assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn sentence_boundary_at_exact_limit() {
+        // Period falls exactly at the end of the prefix — should still detect it
+        let desc = "This is a complete sentence. And more text follows here.";
+        let result = truncate_description(desc, 28, true);
+        assert_eq!(result, "This is a complete sentence.");
+    }
+
+    #[test]
+    fn zero_max_chars() {
+        assert_eq!(truncate_description("anything", 0, true), "");
     }
 }
