@@ -514,6 +514,9 @@ pub fn extract_enable_url(message: &str) -> Option<String> {
     let url = after_visiting
         .split_whitespace()
         .next()
+        .map(|s| {
+            s.trim_end_matches(|c: char| ['.', ',', ';', ':', ')', ']', '"', '\''].contains(&c))
+        })
         .filter(|s| s.starts_with("http"))?;
     Some(url.to_string())
 }
@@ -1337,6 +1340,16 @@ fn test_extract_enable_url_no_url() {
 fn test_extract_enable_url_non_http() {
     let msg = "Enable it by visiting ftp://example.com then retry.";
     assert_eq!(extract_enable_url(msg), None);
+}
+
+#[test]
+fn test_extract_enable_url_trims_trailing_punctuation() {
+    let msg = "Enable it by visiting https://console.cloud.google.com/apis/library?project=test123. Then retry.";
+    let url = extract_enable_url(msg);
+    assert_eq!(
+        url.as_deref(),
+        Some("https://console.cloud.google.com/apis/library?project=test123")
+    );
 }
 
 #[test]
