@@ -1238,7 +1238,9 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
         StepStatus::InProgress("Waiting for manual input...".into()),
     );
     if !ctx.interactive {
-        return Err(GwsError::Validation(manual_oauth_instructions(&ctx.project_id)));
+        return Err(GwsError::Validation(manual_oauth_instructions(
+            &ctx.project_id,
+        )));
     }
 
     let (cid_result, csecret_result) = if let Some(ref mut w) = ctx.wizard {
