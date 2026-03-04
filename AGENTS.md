@@ -125,7 +125,7 @@ let url = format!("{}?q={}", base_url, user_query);
 When a user-supplied string is used as a GCP resource identifier (project ID, topic name, space name, etc.) that gets embedded in a URL path, validate it first:
 
 ```rust
-// Validates the string contains only safe characters (alphanumeric, hyphens, underscores, dots, slashes)
+// Validates the string does not contain path traversal segments (`..`), control characters, or URL-breaking characters like `?` and `#`.
 let project = crate::helpers::validate_resource_name(&project_id)?;
 let url = format!("https://pubsub.googleapis.com/v1/projects/{}/topics/my-topic", project);
 ```

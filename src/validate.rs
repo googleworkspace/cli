@@ -166,6 +166,47 @@ fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
     Ok(resolved)
 }
 
+/// Percent-encode a value for use as a single URL path segment (e.g., file ID,
+/// calendar ID, message ID). All non-alphanumeric characters are encoded.
+pub fn encode_path_segment(s: &str) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+}
+
+/// Validate a multi-segment resource name (e.g., `spaces/ABC`, `subscriptions/123`).
+/// Rejects path traversal, control characters, and URL-special characters including `%`
+/// to prevent URL-encoded bypasses. Returns the validated name or an error.
+pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
+    if s.is_empty() {
+        return Err(GwsError::Validation(
+            "Resource name must not be empty".to_string(),
+        ));
+    }
+    if s.split('/').any(|seg| seg == "..") {
+        return Err(GwsError::Validation(format!(
+            "Resource name must not contain path traversal ('..') segments: {s}"
+        )));
+    }
+    if s.contains('\0') || s.chars().any(|c| c.is_control()) {
+        return Err(GwsError::Validation(format!(
+            "Resource name contains invalid characters: {s}"
+        )));
+    }
+    // Reject URL-special characters that could inject query params or fragments
+    if s.contains('?') || s.contains('#') {
+        return Err(GwsError::Validation(format!(
+            "Resource name must not contain '?' or '#': {s}"
+        )));
+    }
+    // Reject '%' to prevent URL-encoded bypasses (e.g. %2e%2e for ..)
+    if s.contains('%') {
+        return Err(GwsError::Validation(format!(
+            "Resource name must not contain '%' (URL encoding bypass attempt): {s}"
+        )));
+    }
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +353,122 @@ mod tests {
     #[test]
     fn test_reject_control_chars_newline() {
         assert!(reject_control_chars("hello\nworld", "test").is_err());
+    }
+
+    // -- encode_path_segment --------------------------------------------------
+
+    #[test]
+    fn test_encode_path_segment_plain_id() {
+        assert_eq!(encode_path_segment("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_encode_path_segment_email() {
+        // Calendar IDs are often email addresses
+        let encoded = encode_path_segment("user@gmail.com");
+        assert!(!encoded.contains('@'));
+        assert!(!encoded.contains('.'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_query_injection() {
+        // LLM might include query params in an ID by mistake
+        let encoded = encode_path_segment("fileid?fields=name");
+        assert!(!encoded.contains('?'));
+        assert!(!encoded.contains('='));
+    }
+
+    #[test]
+    fn test_encode_path_segment_fragment_injection() {
+        let encoded = encode_path_segment("fileid#section");
+        assert!(!encoded.contains('#'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_path_traversal() {
+        // Encoding makes traversal segments harmless
+        let encoded = encode_path_segment("../../etc/passwd");
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains(".."));
+    }
+
+    #[test]
+    fn test_encode_path_segment_unicode() {
+        // LLM might pass unicode characters
+        let encoded = encode_path_segment("日本語ID");
+        assert!(!encoded.contains('日'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_spaces() {
+        let encoded = encode_path_segment("my file id");
+        assert!(!encoded.contains(' '));
+    }
+
+    #[test]
+    fn test_encode_path_segment_already_encoded() {
+        // LLM might double-encode by passing pre-encoded values
+        let encoded = encode_path_segment("user%40gmail.com");
+        // The % itself gets encoded to %25, so %40 becomes %2540
+        // This prevents double-encoding issues at the HTTP layer
+        assert!(encoded.contains("%2540"));
+    }
+
+    // -- validate_resource_name -----------------------------------------------
+
+    #[test]
+    fn test_validate_resource_name_valid() {
+        assert!(validate_resource_name("spaces/ABC123").is_ok());
+        assert!(validate_resource_name("subscriptions/my-sub").is_ok());
+        assert!(validate_resource_name("@default").is_ok());
+        assert!(validate_resource_name("projects/p1/topics/t1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_resource_name_traversal() {
+        assert!(validate_resource_name("../../etc/passwd").is_err());
+        assert!(validate_resource_name("spaces/../other").is_err());
+        assert!(validate_resource_name("..").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_control_chars() {
+        assert!(validate_resource_name("spaces/\0bad").is_err());
+        assert!(validate_resource_name("spaces/\nbad").is_err());
+        assert!(validate_resource_name("spaces/\rbad").is_err());
+        assert!(validate_resource_name("spaces/\tbad").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_empty() {
+        assert!(validate_resource_name("").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_query_injection() {
+        // LLMs might append query strings or fragments to resource names
+        assert!(validate_resource_name("spaces/ABC?key=val").is_err());
+        assert!(validate_resource_name("spaces/ABC#fragment").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_error_messages_are_clear() {
+        let err = validate_resource_name("").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+
+        let err = validate_resource_name("../bad").unwrap_err();
+        assert!(err.to_string().contains("path traversal"));
+
+        let err = validate_resource_name("bad\0id").unwrap_err();
+        assert!(err.to_string().contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_validate_resource_name_percent_bypass() {
+        // %2e%2e is ..
+        assert!(validate_resource_name("%2e%2e").is_err());
+        assert!(validate_resource_name("spaces/%2e%2e/etc").is_err());
+        // Just % should be rejected too
+        assert!(validate_resource_name("spaces/100%").is_err());
     }
 }

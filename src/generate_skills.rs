@@ -68,7 +68,9 @@ struct SkillIndexEntry {
 /// Entry point for `gws generate-skills`.
 pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
     let output_dir = parse_output_dir(args);
-    let output_path = Path::new(&output_dir);
+    // Validate output_dir to prevent path traversal
+    let output_path_buf = crate::validate::validate_safe_output_dir(&output_dir)?;
+    let output_path = output_path_buf.as_path();
     let filter = parse_filter(args);
     let mut index: Vec<SkillIndexEntry> = Vec::new();
 

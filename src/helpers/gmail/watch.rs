@@ -37,9 +37,9 @@ pub(super) async fn handle_watch(
 
         let suffix = format!("{:08x}", rand::random::<u32>());
         let topic = if let Some(ref t) = config.topic {
-            crate::helpers::validate_resource_name(t)?.to_string()
+            crate::validate::validate_resource_name(t)?.to_string()
         } else {
-            let project = crate::helpers::validate_resource_name(&project)?;
+            let project = crate::validate::validate_resource_name(&project)?;
             let t = format!("projects/{project}/topics/gws-gmail-watch-{suffix}");
             // Create Pub/Sub topic
             eprintln!("Creating Pub/Sub topic: {t}");
@@ -98,7 +98,7 @@ pub(super) async fn handle_watch(
             t
         };
 
-        let project = crate::helpers::validate_resource_name(&project)?;
+        let project = crate::validate::validate_resource_name(&project)?;
         let sub = format!("projects/{project}/subscriptions/gws-gmail-watch-{suffix}");
 
         // 3. Create Pub/Sub subscription
@@ -209,14 +209,15 @@ pub(super) async fn handle_watch(
             eprintln!("\nCleaning up Pub/Sub resources...");
             let _ = client
                 .delete(format!(
-                    "https://pubsub.googleapis.com/v1/{pubsub_subscription}"
+                    "https://pubsub.googleapis.com/v1/{}",
+                    pubsub_subscription
                 ))
                 .bearer_auth(&pubsub_token)
                 .send()
                 .await;
             if let Some(ref topic) = topic_name {
                 let _ = client
-                    .delete(format!("https://pubsub.googleapis.com/v1/{topic}"))
+                    .delete(format!("https://pubsub.googleapis.com/v1/{}", topic))
                     .bearer_auth(&pubsub_token)
                     .send()
                     .await;
@@ -229,9 +230,9 @@ pub(super) async fn handle_watch(
                 pubsub_subscription
             );
             if let Some(ref topic) = topic_name {
-                eprintln!("Pub/Sub topic: {topic}");
+                eprintln!("Pub/Sub topic: {}", topic);
             }
-            eprintln!("Pub/Sub subscription: {pubsub_subscription}");
+            eprintln!("Pub/Sub subscription: {}", pubsub_subscription);
             eprintln!("Note: Gmail watch expires after 7 days. Re-run +watch to renew.");
         }
     }
@@ -432,7 +433,10 @@ async fn fetch_and_output_messages(
                 let json_str =
                     serde_json::to_string_pretty(&full_msg).unwrap_or_else(|_| "{}".to_string());
                 if let Some(dir) = output_dir {
-                    let path = dir.join(format!("{msg_id}.json"));
+                    let path = dir.join(format!(
+                        "{}.json",
+                        crate::validate::encode_path_segment(&msg_id)
+                    ));
                     if let Err(e) = std::fs::write(&path, &json_str) {
                         eprintln!("Warning: failed to write {}: {e}", path.display());
                     } else {

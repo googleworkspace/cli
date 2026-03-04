@@ -48,7 +48,7 @@ fn parse_subscribe_args(matches: &ArgMatches) -> Result<SubscribeConfig, GwsErro
         builder.project(Some(ProjectId(project)));
     }
     if let Some(subscription) = matches.get_one::<String>("subscription") {
-        crate::helpers::validate_resource_name(subscription)?;
+        crate::validate::validate_resource_name(subscription)?;
         builder.subscription(Some(SubscriptionName(subscription.clone())));
     }
     if let Some(max_messages) = matches
@@ -124,7 +124,7 @@ pub(super) async fn handle_subscribe(
             // Full setup: create Pub/Sub topic + subscription + Workspace Events subscription
             let target = config.target.clone().unwrap();
             let project =
-                crate::helpers::validate_resource_name(&config.project.clone().unwrap().0)?
+                crate::validate::validate_resource_name(&config.project.clone().unwrap().0)?
                     .to_string();
             let event_types_str: Vec<&str> =
                 config.event_types.iter().map(|s| s.as_str()).collect();

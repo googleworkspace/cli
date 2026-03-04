@@ -302,7 +302,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
             async move {
                 let events_url = format!(
                     "https://www.googleapis.com/calendar/v3/calendars/{}/events",
-                    crate::helpers::encode_path_segment(&cal.id),
+                    crate::validate::encode_path_segment(&cal.id),
                 );
 
                 let resp = crate::client::send_with_retry(|| {
