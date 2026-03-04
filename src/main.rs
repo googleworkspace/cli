@@ -374,6 +374,11 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
     );
+    println!();
+    println!("COMMUNITY:");
+    println!("    Star the repo: https://github.com/googleworkspace/cli");
+    println!("    Report bugs / request features: https://github.com/googleworkspace/cli/issues");
+    println!("    Please search existing issues first; if one already exists, comment there.");
 }
 
 #[cfg(test)]
