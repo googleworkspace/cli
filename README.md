@@ -103,8 +103,8 @@ gws auth login       # subsequent logins
 Use this when `gws setup` cannot automate project/client creation, or when you want explicit control.
 
 1. Open Google Cloud Console in the target project:
-   - OAuth overview: `https://console.cloud.google.com/auth/overview?project=<PROJECT_ID>`
-   - Clients: `https://console.cloud.google.com/auth/clients?project=<PROJECT_ID>`
+   - OAuth consent screen: `https://console.cloud.google.com/apis/credentials/consent?project=<PROJECT_ID>`
+   - Credentials: `https://console.cloud.google.com/apis/credentials?project=<PROJECT_ID>`
 2. Configure OAuth branding/audience if prompted:
    - App type: **External** (testing mode is fine)
    - Add your account under **Test users**
