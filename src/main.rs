@@ -68,12 +68,12 @@ async fn run() -> Result<(), GwsError> {
     let first_arg = &args[1];
 
     // Handle --help and --version at top level
-    if first_arg == "--help" || first_arg == "-h" {
+    if is_help_flag(first_arg) {
         print_usage();
         return Ok(());
     }
 
-    if first_arg == "--version" || first_arg == "-V" || first_arg == "version" {
+    if is_version_flag(first_arg) {
         println!("gws {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
@@ -399,6 +399,14 @@ fn print_usage() {
     println!("    Please search existing issues first; if one already exists, comment there.");
 }
 
+fn is_help_flag(arg: &str) -> bool {
+    matches!(arg, "--help" | "-h")
+}
+
+fn is_version_flag(arg: &str) -> bool {
+    matches!(arg, "--version" | "-V" | "version")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +486,24 @@ mod tests {
             parse_sanitize_config(None, &helpers::modelarmor::SanitizeMode::Block).unwrap();
         assert!(config.template.is_none());
         assert_eq!(config.mode, helpers::modelarmor::SanitizeMode::Block);
+    }
+
+    #[test]
+    fn test_is_version_flag() {
+        assert!(is_version_flag("--version"));
+        assert!(is_version_flag("-V"));
+        assert!(is_version_flag("version"));
+        assert!(!is_version_flag("--ver"));
+        assert!(!is_version_flag("v"));
+        assert!(!is_version_flag("drive"));
+    }
+
+    #[test]
+    fn test_is_help_flag() {
+        assert!(is_help_flag("--help"));
+        assert!(is_help_flag("-h"));
+        assert!(!is_help_flag("help"));
+        assert!(!is_help_flag("--h"));
     }
 
     #[test]
