@@ -340,9 +340,11 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             crate::accounts::add_account(&mut registry, email);
             // If this is the first account, set it as default
             if registry.default.is_none() || registry.accounts.len() == 1 {
-                let _ = crate::accounts::set_default(&mut registry, email);
+                crate::accounts::set_default(&mut registry, email)
+                    .map_err(|e| GwsError::Auth(format!("Failed to set default: {e}")))?;
             }
-            let _ = crate::accounts::save_accounts(&registry);
+            crate::accounts::save_accounts(&registry)
+                .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
 
             credential_store::encrypted_credentials_path_for(email)
         } else {
@@ -1064,7 +1066,8 @@ fn handle_logout(args: &[String]) -> Result<(), GwsError> {
             .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
             .unwrap_or_default();
         crate::accounts::remove_account(&mut registry, email);
-        let _ = crate::accounts::save_accounts(&registry);
+        crate::accounts::save_accounts(&registry)
+            .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
 
         let output = if removed.is_empty() {
             json!({
@@ -1110,7 +1113,9 @@ fn handle_logout(args: &[String]) -> Result<(), GwsError> {
         for email in registry.accounts.keys() {
             let path = credential_store::encrypted_credentials_path_for(email);
             if path.exists() {
-                let _ = std::fs::remove_file(&path);
+                std::fs::remove_file(&path).map_err(|e| {
+                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+                })?;
                 removed.push(path.display().to_string());
             }
         }
@@ -1204,8 +1209,10 @@ fn handle_default(args: &[String]) -> Result<(), GwsError> {
         )));
     }
 
-    let _ = crate::accounts::set_default(&mut registry, &email);
-    let _ = crate::accounts::save_accounts(&registry);
+    crate::accounts::set_default(&mut registry, &email)
+        .map_err(|e| GwsError::Auth(format!("Failed to set default: {e}")))?;
+    crate::accounts::save_accounts(&registry)
+        .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
 
     let output = json!({
         "status": "success",

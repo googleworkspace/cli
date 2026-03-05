@@ -91,7 +91,13 @@ pub fn save_accounts(registry: &AccountsRegistry) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            {
+                eprintln!(
+                    "Warning: failed to set directory permissions on {}: {e}",
+                    parent.display()
+                );
+            }
         }
     }
 
@@ -102,7 +108,12 @@ pub fn save_accounts(registry: &AccountsRegistry) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+            eprintln!(
+                "Warning: failed to set file permissions on {}: {e}",
+                path.display()
+            );
+        }
     }
 
     Ok(())
