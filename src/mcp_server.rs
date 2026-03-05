@@ -208,7 +208,7 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
         let (api_name, version) =
             crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
         if let Ok(doc) = crate::discovery::fetch_discovery_document(&api_name, &version).await {
-            walk_resources(&doc.name, &doc.resources, &mut tools);
+            walk_resources(svc_name, &doc.resources, &mut tools);
         } else {
             eprintln!("[gws mcp] Warning: Failed to load discovery document for service '{}'. It will not be available as a tool.", svc_name);
         }
@@ -467,4 +467,165 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         ],
         "isError": false
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::Path;
+
+    const TEST_CONFIG_DIR_ENV: &str = "GOOGLE_WORKSPACE_CLI_CONFIG_DIR";
+
+    struct EnvVarGuard {
+        key: &'static str,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(old) = &self.old {
+                    std::env::set_var(self.key, old);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    fn set_env_var_path(key: &'static str, value: &Path) -> EnvVarGuard {
+        let old = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        EnvVarGuard { key, old }
+    }
+
+    fn write_cached_doc(cache_dir: &Path, service: &str, version: &str, doc: Value) {
+        let cache_file = cache_dir.join(format!("{service}_{version}.json"));
+        fs::write(cache_file, serde_json::to_string(&doc).unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn build_tools_list_uses_alias_prefixes_for_aliased_services() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _config_guard = set_env_var_path(TEST_CONFIG_DIR_ENV, tmp.path());
+        let cache_dir = tmp.path().join("cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+
+        write_cached_doc(
+            &cache_dir,
+            "workspaceevents",
+            "v1",
+            json!({
+                "name": "workspaceevents",
+                "version": "v1",
+                "rootUrl": "https://workspaceevents.googleapis.com/",
+                "resources": {
+                    "subscriptions": {
+                        "methods": {
+                            "list": {
+                                "httpMethod": "GET",
+                                "path": "subscriptions",
+                                "description": "Lists subscriptions"
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+        write_cached_doc(
+            &cache_dir,
+            "script",
+            "v1",
+            json!({
+                "name": "script",
+                "version": "v1",
+                "rootUrl": "https://script.googleapis.com/",
+                "resources": {
+                    "projects": {
+                        "methods": {
+                            "list": {
+                                "httpMethod": "GET",
+                                "path": "projects",
+                                "description": "Lists script projects"
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+        write_cached_doc(
+            &cache_dir,
+            "admin",
+            "reports_v1",
+            json!({
+                "name": "admin",
+                "version": "reports_v1",
+                "rootUrl": "https://admin.googleapis.com/",
+                "resources": {
+                    "customerUsageReports": {
+                        "methods": {
+                            "get": {
+                                "httpMethod": "GET",
+                                "path": "customerUsageReports/{date}",
+                                "description": "Gets customer usage report"
+                            }
+                        }
+                    }
+                }
+            }),
+        );
+
+        let config = ServerConfig {
+            services: vec![
+                "events".to_string(),
+                "apps-script".to_string(),
+                "admin-reports".to_string(),
+            ],
+            workflows: false,
+            _helpers: false,
+        };
+
+        let tools = build_tools_list(&config).await.unwrap();
+        let names: HashSet<String> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .collect();
+
+        assert!(names.contains("events_subscriptions_list"));
+        assert!(names.contains("apps-script_projects_list"));
+        assert!(names.contains("admin-reports_customerUsageReports_get"));
+
+        assert!(!names.contains("workspaceevents_subscriptions_list"));
+        assert!(!names.contains("script_projects_list"));
+        assert!(!names.contains("admin_customerUsageReports_get"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn handle_tools_call_rejects_discovery_prefix_when_alias_is_enabled() {
+        let config = ServerConfig {
+            services: vec!["events".to_string()],
+            workflows: false,
+            _helpers: false,
+        };
+
+        let params = json!({
+            "name": "workspaceevents_subscriptions_list",
+            "arguments": {}
+        });
+
+        let err = handle_tools_call(&params, &config).await.unwrap_err();
+        match err {
+            GwsError::Validation(msg) => {
+                assert!(msg.contains("Service 'workspaceevents' is not enabled in this MCP session"))
+            }
+            other => panic!("Expected validation error, got: {other}"),
+        }
+    }
 }
