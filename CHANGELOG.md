@@ -1,5 +1,21 @@
 # @googleworkspace/cli
 
+## 0.6.1
+
+### Patch Changes
+
+- 88cb65c: chore: add automation workflow for auto-fmt, CLA labeling, and file-based PR triage
+- a926e3f: Fix auth failures when accounts.json registry is missing
+
+  Three related bugs caused all API calls to fail with "Access denied. No credentials provided" even after a successful `gws auth login`:
+
+  1. `resolve_account()` rejected valid `credentials.enc` as "legacy" when `accounts.json` was absent, instead of using them.
+  2. `main.rs` silently swallowed all auth errors, masking real failures behind a generic message.
+  3. `auth login` didn't include `openid`/`email` scopes, so `fetch_userinfo_email()` couldn't identify the user, causing credentials to be saved without an `accounts.json` entry.
+
+- cb1f988: Add Content-Length: 0 header for POST/PUT/PATCH requests with no body to fix HTTP 411 errors
+- 3d59b2e: fix: isolate flaky auth tests from host ADC credentials
+
 ## 0.6.0
 
 ### Minor Changes
