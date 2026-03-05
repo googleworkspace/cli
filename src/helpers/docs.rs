@@ -172,8 +172,10 @@ mod tests {
             },
         );
 
-        let mut documents_res = RestResource::default();
-        documents_res.methods = methods;
+        let documents_res = RestResource {
+            methods,
+            ..Default::default()
+        };
 
         let mut resources = HashMap::new();
         resources.insert("documents".to_string(), documents_res);

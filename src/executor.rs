@@ -891,7 +891,7 @@ mod tests {
     #[test]
     fn test_pagination_config_default() {
         let config = PaginationConfig::default();
-        assert_eq!(config.page_all, false);
+        assert!(!config.page_all);
         assert_eq!(config.page_limit, 10);
         assert_eq!(config.page_delay_ms, 100);
     }

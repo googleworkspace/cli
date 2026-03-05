@@ -432,7 +432,7 @@ mod tests {
             .get_matches_from(vec!["test"]);
 
         let config = parse_pagination_config(&matches);
-        assert_eq!(config.page_all, false);
+        assert!(!config.page_all);
         assert_eq!(config.page_limit, 10);
         assert_eq!(config.page_delay_ms, 100);
     }
@@ -465,7 +465,7 @@ mod tests {
             ]);
 
         let config = parse_pagination_config(&matches);
-        assert_eq!(config.page_all, true);
+        assert!(config.page_all);
         assert_eq!(config.page_limit, 20);
         assert_eq!(config.page_delay_ms, 500);
     }
