@@ -92,7 +92,6 @@ const READONLY_SCOPES: &[&str] = &[
 ];
 
 pub fn config_dir() -> PathBuf {
-    #[cfg(test)]
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
@@ -266,7 +265,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Determine scopes: explicit flags > interactive TUI > defaults
-    let mut scopes = resolve_scopes(
+    let scopes = resolve_scopes(
         &filtered_args,
         project_id.as_deref(),
         services_filter.as_ref(),
@@ -277,7 +276,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     // gmail.metadata blocks query parameters like `q`, and is redundant
     // when broader scopes (gmail.modify, gmail.readonly, mail.google.com)
     // are already included.
-    let scopes = filter_redundant_restrictive_scopes(scopes);
+    let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
     let secret = yup_oauth2::ApplicationSecret {
         client_id: client_id.clone(),

@@ -454,6 +454,19 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_CLI_ACCOUNT             Default account email for multi-account"
     );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER   Email for Domain-Wide Delegation (service accounts)"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
+    );
+    println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_PROJECT_ID              GCP project ID fallback for helper commands"
+    );
     println!();
     println!("COMMUNITY:");
     println!("    Star the repo: https://github.com/googleworkspace/cli");

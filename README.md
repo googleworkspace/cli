@@ -33,6 +33,7 @@ npm install -g @googleworkspace/cli
 - [AI Agent Skills](#ai-agent-skills)
 - [MCP Server](#mcp-server)
 - [Advanced Usage](#advanced-usage)
+- [Environment Variables](#environment-variables)
 - [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -355,6 +356,25 @@ gws gmail users messages get --params '...' \
 | ---------------------------------------- | ---------------------------- |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE`     | `warn` (default) or `block`  |
+
+## Environment Variables
+
+All variables are optional. See [`.env.example`](.env.example) for a copy-paste template.
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
+| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email (overridden by `--account` flag) |
+| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email for Domain-Wide Delegation (service accounts) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
+| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID fallback for helper commands |
+
+Environment variables can also be set in a `.env` file (loaded via [dotenvy](https://crates.io/crates/dotenvy)).
 
 ## Architecture
 

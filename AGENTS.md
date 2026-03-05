@@ -165,7 +165,40 @@ Use these labels to categorize pull requests and issues:
 
 ## Environment Variables
 
-- `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)
-- `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`)
-- `GOOGLE_WORKSPACE_CLI_ACCOUNT` — Default account email for multi-account usage (overridden by `--account` flag)
-- Supports `.env` files via `dotenvy`
+### Authentication
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading) |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`) |
+| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email for multi-account usage (overridden by `--account` flag) |
+| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email of user to impersonate with Domain-Wide Delegation (service accounts only) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Standard Google ADC path; used as fallback when no gws-specific credentials are configured |
+
+### Configuration
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override the config directory (default: `~/.config/gws`) |
+
+### OAuth Client
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (for `gws auth login` when no `client_secret.json` is saved) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID` above) |
+
+### Sanitization (Model Armor)
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template (overridden by `--sanitize` flag) |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
+
+### Helpers
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID fallback for `gmail watch` and `events subscribe` helpers (overridden by `--project` flag) |
+
+All variables can also live in a `.env` file (loaded via `dotenvy`).
