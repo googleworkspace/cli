@@ -221,6 +221,10 @@ async fn handle_request(
 }
 
 async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
+    if config.tool_mode == ToolMode::Compact {
+        return build_compact_tools_list(config).await;
+    }
+
     let mut tools = Vec::new();
 
     // 1. Walk core services
@@ -234,67 +238,169 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
         }
     }
 
-    // 2. Helpers and Workflows (Not fully mapped yet, but structure is here)
+    // 2. Workflows
     if config.workflows {
-        // Expose workflows
-        tools.push(json!({
-            "name": "workflow_standup_report",
-            "description": "Today's meetings + open tasks as a standup summary",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "format": { "type": "string", "description": "Output format: json, table, yaml, csv" }
-                }
+        append_workflow_tools(&mut tools);
+    }
+
+    Ok(tools)
+}
+
+async fn build_compact_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
+    let mut tools = Vec::new();
+
+    for svc_name in &config.services {
+        let (api_name, version) =
+            crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
+
+        // Build description with resource names
+        let description = if let Ok(doc) =
+            crate::discovery::fetch_discovery_document(&api_name, &version).await
+        {
+            let mut resource_names: Vec<&str> =
+                doc.resources.keys().map(|s| s.as_str()).collect();
+            resource_names.sort();
+            let svc_entry = services::SERVICES
+                .iter()
+                .find(|e| e.aliases.contains(&svc_name.as_str()));
+            let desc = svc_entry.map(|e| e.description).unwrap_or("Google API");
+            if resource_names.is_empty() {
+                desc.to_string()
+            } else {
+                format!("{}. Resources: {}", desc, resource_names.join(", "))
             }
-        }));
+        } else {
+            eprintln!(
+                "[gws mcp] Warning: Failed to load discovery document for '{}'. Tool will have minimal description.",
+                svc_name
+            );
+            format!("Google Workspace API: {}", svc_name)
+        };
+
         tools.push(json!({
-            "name": "workflow_meeting_prep",
-            "description": "Prepare for your next meeting: agenda, attendees, and linked docs",
+            "name": svc_name,
+            "description": description,
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "calendar": { "type": "string", "description": "Calendar ID (default: primary)" }
-                }
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_email_to_task",
-            "description": "Convert a Gmail message into a Google Tasks entry",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "message_id": { "type": "string", "description": "Gmail message ID" },
-                    "tasklist": { "type": "string", "description": "Task list ID" }
+                    "resource": {
+                        "type": "string",
+                        "description": "Resource name (e.g., files, permissions)"
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "Method name (e.g., list, get, create)"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Query or path parameters"
+                    },
+                    "body": {
+                        "type": "object",
+                        "description": "Request body"
+                    },
+                    "upload": {
+                        "type": "string",
+                        "description": "Local file path to upload"
+                    },
+                    "page_all": {
+                        "type": "boolean",
+                        "description": "Auto-paginate, returning all pages"
+                    }
                 },
-                "required": ["message_id"]
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_weekly_digest",
-            "description": "Weekly summary: this week's meetings + unread email count",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "format": { "type": "string", "description": "Output format" }
-                }
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_file_announce",
-            "description": "Announce a Drive file in a Chat space",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "file_id": { "type": "string", "description": "Drive file ID" },
-                    "space": { "type": "string", "description": "Chat space name" },
-                    "message": { "type": "string", "description": "Custom message" }
-                },
-                "required": ["file_id", "space"]
+                "required": ["resource", "method"]
             }
         }));
     }
 
+    // Add gws_discover meta-tool
+    tools.push(json!({
+        "name": "gws_discover",
+        "description": "Query available resources, methods, and parameter schemas for any enabled service. Call with service only to list resources; add resource to list methods; add method to get full parameter schema.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "Service name (e.g., drive, gmail)"
+                },
+                "resource": {
+                    "type": "string",
+                    "description": "Resource name to list methods for"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Method name to get full parameter schema"
+                }
+            },
+            "required": ["service"]
+        }
+    }));
+
+    // Workflows (same as full mode)
+    if config.workflows {
+        append_workflow_tools(&mut tools);
+    }
+
     Ok(tools)
+}
+
+fn append_workflow_tools(tools: &mut Vec<Value>) {
+    tools.push(json!({
+        "name": "workflow_standup_report",
+        "description": "Today's meetings + open tasks as a standup summary",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": { "type": "string", "description": "Output format: json, table, yaml, csv" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_meeting_prep",
+        "description": "Prepare for your next meeting: agenda, attendees, and linked docs",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar": { "type": "string", "description": "Calendar ID (default: primary)" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_email_to_task",
+        "description": "Convert a Gmail message into a Google Tasks entry",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message_id": { "type": "string", "description": "Gmail message ID" },
+                "tasklist": { "type": "string", "description": "Task list ID" }
+            },
+            "required": ["message_id"]
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_weekly_digest",
+        "description": "Weekly summary: this week's meetings + unread email count",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": { "type": "string", "description": "Output format" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_file_announce",
+        "description": "Announce a Drive file in a Chat space",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_id": { "type": "string", "description": "Drive file ID" },
+                "space": { "type": "string", "description": "Chat space name" },
+                "message": { "type": "string", "description": "Custom message" }
+            },
+            "required": ["file_id", "space"]
+        }
+    }));
 }
 
 fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools: &mut Vec<Value>) {
