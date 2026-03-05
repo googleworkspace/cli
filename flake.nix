@@ -24,7 +24,6 @@
 
         darwinDeps = with pkgs; [
           libiconv
-          darwin.apple_sdk.frameworks.Security
         ];
 
         gws = pkgs.rustPlatform.buildRustPackage {
@@ -38,8 +37,8 @@
           };
 
           nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux linuxDeps
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinDeps;
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux linuxDeps
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin darwinDeps;
 
           # Tests are disabled by default in buildRustPackage if not specified, 
           # but we'll be explicit. Some tests might require network.
