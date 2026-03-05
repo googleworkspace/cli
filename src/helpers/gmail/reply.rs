@@ -609,4 +609,120 @@ mod tests {
         // list@example.com is in To, should not duplicate in CC
         assert!(!cc.contains("list@example.com"));
     }
+
+    #[test]
+    fn test_extract_email_malformed_no_closing_bracket() {
+        assert_eq!(extract_email("Alice <alice@example.com"), "Alice <alice@example.com");
+    }
+
+    #[test]
+    fn test_extract_email_empty_string() {
+        assert_eq!(extract_email(""), "");
+    }
+
+    #[test]
+    fn test_extract_email_whitespace_only() {
+        assert_eq!(extract_email("  "), "");
+    }
+
+    #[test]
+    fn test_sender_with_display_name_excluded_from_cc() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "Alice <alice@example.com>".to_string(),
+            reply_to: "".to_string(),
+            to: "alice@example.com, bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        assert_eq!(recipients.to, "Alice <alice@example.com>");
+        let cc = recipients.cc.unwrap();
+        assert_eq!(cc, "bob@example.com");
+    }
+
+    #[test]
+    fn test_remove_with_display_name_format() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "sender@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com, carol@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(
+            &original,
+            None,
+            Some("Carol <carol@example.com>"),
+        );
+        let cc = recipients.cc.unwrap();
+        assert_eq!(cc, "bob@example.com");
+    }
+
+    #[test]
+    fn test_reply_all_with_extra_cc() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients =
+            build_reply_all_recipients(&original, Some("extra@example.com"), None);
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(cc.contains("extra@example.com"));
+    }
+
+    #[test]
+    fn test_reply_all_cc_none_when_all_filtered() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "alice@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        assert!(recipients.cc.is_none());
+    }
+
+    #[test]
+    fn test_case_insensitive_sender_exclusion() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "Alice@Example.COM".to_string(),
+            reply_to: "".to_string(),
+            to: "alice@example.com, bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        let cc = recipients.cc.unwrap();
+        assert_eq!(cc, "bob@example.com");
+    }
 }
