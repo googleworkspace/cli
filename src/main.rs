@@ -23,6 +23,7 @@ mod auth;
 pub(crate) mod auth_commands;
 mod client;
 mod commands;
+pub(crate) mod config;
 pub(crate) mod credential_store;
 mod discovery;
 mod error;
@@ -32,6 +33,7 @@ mod fs_util;
 mod generate_skills;
 mod helpers;
 mod oauth_config;
+pub(crate) mod sanitize;
 mod schema;
 mod services;
 mod setup;
@@ -189,7 +191,7 @@ async fn run() -> Result<(), GwsError> {
         .or_else(|| std::env::var("GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE").ok());
 
     let sanitize_mode = std::env::var("GOOGLE_WORKSPACE_CLI_SANITIZE_MODE")
-        .map(|v| helpers::modelarmor::SanitizeMode::from_str(&v))
+        .map(|v| helpers::modelarmor::SanitizeMode::from(v.as_str()))
         .unwrap_or(helpers::modelarmor::SanitizeMode::Warn);
 
     let sanitize_config = parse_sanitize_config(sanitize_template, &sanitize_mode)?;
@@ -225,7 +227,7 @@ async fn run() -> Result<(), GwsError> {
     // Select the best scope for the method. Discovery Documents list scopes as
     // alternatives (any one grants access). We pick the first (broadest) scope
     // to avoid restrictive scopes like gmail.metadata that block query parameters.
-    let scopes: Vec<&str> = select_scope(&method.scopes).into_iter().collect();
+    let scopes: Vec<&str> = services::select_scope(&method.scopes).into_iter().collect();
 
     // Authenticate: try OAuth, fail with error if credentials exist but are broken
     let (token, auth_method) = match auth::get_token(&scopes).await {
@@ -265,17 +267,6 @@ async fn run() -> Result<(), GwsError> {
     .map(|_| ())
 }
 
-/// Select the best scope from a method's scope list.
-///
-/// Discovery Documents list method scopes as alternatives — any single scope
-/// grants access. The first scope is typically the broadest. Using all scopes
-/// causes issues when restrictive scopes (e.g., `gmail.metadata`) are included,
-/// as the API enforces that scope's restrictions even when broader scopes are
-/// also present.
-pub(crate) fn select_scope(scopes: &[String]) -> Option<&str> {
-    scopes.first().map(|s| s.as_str())
-}
-
 fn parse_pagination_config(matches: &clap::ArgMatches) -> executor::PaginationConfig {
     executor::PaginationConfig {
         page_all: matches.get_flag("page-all"),
@@ -288,27 +279,7 @@ pub fn parse_service_and_version(
     args: &[String],
     first_arg: &str,
 ) -> Result<(String, String), GwsError> {
-    let mut service_arg = first_arg;
-    let mut version_override: Option<String> = None;
-
-    // Check for --api-version flag anywhere in args
-    for i in 0..args.len() {
-        if args[i] == "--api-version" && i + 1 < args.len() {
-            version_override = Some(args[i + 1].clone());
-        }
-    }
-
-    // Support "service:version" syntax on the service arg itself
-    if let Some((svc, ver)) = service_arg.split_once(':') {
-        service_arg = svc;
-        if version_override.is_none() {
-            version_override = Some(ver.to_string());
-        }
-    }
-
-    let (api_name, default_version) = services::resolve_service(service_arg)?;
-    let version = version_override.unwrap_or(default_version);
-    Ok((api_name, version))
+    services::parse_service_and_version(args, first_arg)
 }
 
 pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
@@ -663,29 +634,4 @@ mod tests {
         assert_eq!(filtered, vec!["gws", "files", "list", "--format", "table"]);
     }
 
-    #[test]
-    fn test_select_scope_picks_first() {
-        let scopes = vec![
-            "https://mail.google.com/".to_string(),
-            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
-            "https://www.googleapis.com/auth/gmail.modify".to_string(),
-            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
-        ];
-        assert_eq!(select_scope(&scopes), Some("https://mail.google.com/"));
-    }
-
-    #[test]
-    fn test_select_scope_single() {
-        let scopes = vec!["https://www.googleapis.com/auth/drive".to_string()];
-        assert_eq!(
-            select_scope(&scopes),
-            Some("https://www.googleapis.com/auth/drive")
-        );
-    }
-
-    #[test]
-    fn test_select_scope_empty() {
-        let scopes: Vec<String> = vec![];
-        assert_eq!(select_scope(&scopes), None);
-    }
 }

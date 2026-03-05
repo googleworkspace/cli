@@ -78,7 +78,7 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     }
 
     let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
-    let config_dir = crate::auth_commands::config_dir();
+    let config_dir = crate::config::config_dir();
     let enc_path = credential_store::encrypted_credentials_path();
     let default_path = config_dir.join("credentials.json");
     let token_cache = config_dir.join("token_cache.json");

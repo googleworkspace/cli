@@ -92,29 +92,7 @@ const READONLY_SCOPES: &[&str] = &[
 ];
 
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-        return PathBuf::from(dir);
-    }
-
-    // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
-    let primary = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config")
-        .join("gws");
-    if primary.exists() {
-        return primary;
-    }
-
-    // Backward compat: fall back to OS-specific config dir for existing installs
-    // (e.g. ~/Library/Application Support/gws on macOS, %APPDATA%\gws on Windows).
-    let legacy = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("gws");
-    if legacy.exists() {
-        return legacy;
-    }
-
-    primary
+    crate::config::config_dir()
 }
 
 fn plain_credentials_path() -> PathBuf {
