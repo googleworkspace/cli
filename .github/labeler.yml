@@ -1,0 +1,55 @@
+# Labels applied to PRs based on changed files.
+# Used by the actions/labeler action in .github/workflows/automation.yml
+
+"area: auth":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/auth.rs
+          - src/auth_commands.rs
+          - src/accounts.rs
+          - src/credential_store.rs
+          - src/token_storage.rs
+          - src/oauth_config.rs
+
+"area: discovery":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/discovery.rs
+          - src/services.rs
+
+"area: http":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/executor.rs
+          - src/client.rs
+
+"area: tui":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/setup_tui.rs
+          - src/formatter.rs
+
+"area: mcp":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/mcp_server.rs
+
+"area: skills":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/generate_skills.rs
+          - skills/**
+
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "*.md"
+          - docs/**
+
+"area: distribution":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/release.yml
+          - .github/workflows/release-changesets.yml
+          - dist-workspace.toml
+          - Cargo.toml
