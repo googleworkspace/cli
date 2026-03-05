@@ -1,5 +1,51 @@
 # @googleworkspace/cli
 
+## 0.6.2
+
+### Patch Changes
+
+- 28fa25a: Clean up nits from PR #175 auth fix
+
+  - Update stale docstring on `resolve_account` to match new fallthrough behavior
+  - Add breadcrumb comment on string-based error matching in `main.rs`
+  - Move identity scope injection before authenticator build for readability
+
+## 0.6.1
+
+### Patch Changes
+
+- 88cb65c: chore: add automation workflow for auto-fmt, CLA labeling, and file-based PR triage
+- a926e3f: Fix auth failures when accounts.json registry is missing
+
+  Three related bugs caused all API calls to fail with "Access denied. No credentials provided" even after a successful `gws auth login`:
+
+  1. `resolve_account()` rejected valid `credentials.enc` as "legacy" when `accounts.json` was absent, instead of using them.
+  2. `main.rs` silently swallowed all auth errors, masking real failures behind a generic message.
+  3. `auth login` didn't include `openid`/`email` scopes, so `fetch_userinfo_email()` couldn't identify the user, causing credentials to be saved without an `accounts.json` entry.
+
+- cb1f988: Add Content-Length: 0 header for POST/PUT/PATCH requests with no body to fix HTTP 411 errors
+- 3d59b2e: fix: isolate flaky auth tests from host ADC credentials
+
+## 0.6.0
+
+### Minor Changes
+
+- b38b760: Add Application Default Credentials (ADC) support.
+
+  `gws` now discovers ADC as a fourth credential source, after the encrypted
+  and plaintext credential files. The lookup order is:
+
+  1. `GOOGLE_WORKSPACE_CLI_TOKEN` env var (raw access token, highest priority)
+  2. `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var
+  3. Encrypted credentials (`~/.config/gws/credentials.enc`)
+  4. Plaintext credentials (`~/.config/gws/credentials.json`)
+  5. **ADC** — `GOOGLE_APPLICATION_CREDENTIALS` env var (hard error if file missing), then
+     `~/.config/gcloud/application_default_credentials.json` (silent if absent)
+
+  This means `gcloud auth application-default login --client-id-file=client_secret.json`
+  is now a fully supported auth flow — no need to run `gws auth login` separately.
+  Both `authorized_user` and `service_account` ADC formats are supported.
+
 ## 0.5.0
 
 ### Minor Changes
