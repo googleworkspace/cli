@@ -388,13 +388,13 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
 
     let params_json_val = arguments.get("params");
     let params_str = params_json_val
-        .map(|v| serde_json::to_string(v))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|e| GwsError::Validation(format!("Failed to serialize params: {e}")))?;
 
     let body_json_val = arguments.get("body");
     let body_str = body_json_val
-        .map(|v| serde_json::to_string(v))
+        .map(serde_json::to_string)
         .transpose()
         .map_err(|e| GwsError::Validation(format!("Failed to serialize body: {e}")))?;
 
