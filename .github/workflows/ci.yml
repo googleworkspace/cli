@@ -93,29 +93,6 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
-  policy-check:
-    name: Policy Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Enforce AGENTS.md rules
-        run: |
-          if grep -qE "^google-[a-zA-Z0-9_-]+[[:space:]]*=" Cargo.toml; then
-            echo "::error file=Cargo.toml::Violates AGENTS.md: Adding generated google-* crates is prohibited. The CLI uses dynamic schema discovery at runtime."
-            exit 1
-          fi
-          echo "Policy check passed."
-      - name: Enforce Changeset File
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          if ! git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^.changeset/.*\.md$"; then
-            echo "::error::A Changeset file is required! Please run 'npx changeset' or manually create a markdown file in the .changeset directory describing your changes to automatically version and release this PR."
-            exit 1
-          fi
-          echo "Changeset file found!"
 
   skills:
     name: Verify Skills

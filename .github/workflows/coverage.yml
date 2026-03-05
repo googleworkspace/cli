@@ -17,8 +17,10 @@ name: Coverage
 on:
   push:
     branches: [main]
+    paths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock']
   pull_request:
     branches: [main]
+    paths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
