@@ -454,13 +454,15 @@ fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools
                     }),
                 );
             }
-            properties.insert(
-                "page_all".to_string(),
-                json!({
-                    "type": "boolean",
-                    "description": "Auto-paginate, returning all pages"
-                }),
-            );
+            if method.parameters.contains_key("pageToken") {
+                properties.insert(
+                    "page_all".to_string(),
+                    json!({
+                        "type": "boolean",
+                        "description": "Auto-paginate, returning all pages"
+                    }),
+                );
+            }
             let input_schema = json!({
                 "type": "object",
                 "properties": properties
