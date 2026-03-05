@@ -1781,4 +1781,63 @@ mod tests {
             "https://www.googleapis.com/auth/chat.messages"
         ));
     }
+
+    // ── mask_secret tests ───────────────────────────────────────────────
+
+    #[test]
+    fn mask_secret_long_string_shows_prefix_and_suffix() {
+        let masked = mask_secret("abcdefghijklmnop");
+        assert_eq!(masked, "abcd...mnop");
+    }
+
+    #[test]
+    fn mask_secret_short_string_fully_masked() {
+        let masked = mask_secret("abcd1234");
+        assert_eq!(masked, "***");
+    }
+
+    #[test]
+    fn mask_secret_empty_string_fully_masked() {
+        let masked = mask_secret("");
+        assert_eq!(masked, "***");
+    }
+
+    // ── export subcommand tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn handle_export_subcommand_parses_unmasked_flag() {
+        // Verify export subcommand recognises --unmasked without crashing
+        // (will fail with "No encrypted credentials" which is expected)
+        let args = vec!["export".to_string(), "--unmasked".to_string()];
+        let result = handle_auth_command(&args).await;
+        // Should error about missing credentials, not about arg parsing
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GwsError::Auth(msg) => assert!(
+                msg.contains("No encrypted credentials") || msg.contains("resolve"),
+                "Unexpected error: {msg}"
+            ),
+            other => panic!("Expected Auth error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_export_subcommand_parses_account_flag() {
+        // Verify export subcommand recognises --account without crashing
+        let args = vec![
+            "export".to_string(),
+            "--account".to_string(),
+            "test@example.com".to_string(),
+        ];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_err());
+        // Should error about the account, not about arg parsing
+        match result.unwrap_err() {
+            GwsError::Auth(msg) => assert!(
+                msg.contains("not found") || msg.contains("No encrypted"),
+                "Unexpected error: {msg}"
+            ),
+            other => panic!("Expected Auth error, got: {other:?}"),
+        }
+    }
 }

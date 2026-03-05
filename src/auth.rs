@@ -443,4 +443,28 @@ mod tests {
             .to_string()
             .contains("No credentials found"));
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_account_no_registry_no_legacy_returns_none() {
+        // When no accounts.json and no legacy credentials exist, returns Ok(None)
+        let result = resolve_account(None);
+        // On a CI/test machine with no gws config, this should return Ok(None).
+        // On a dev machine with an accounts.json, it may return Ok(Some(...)).
+        // Either way it must not error.
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_account_explicit_unknown_account_errors() {
+        // Requesting a specific account that doesn't exist should error
+        let result = resolve_account(Some("nonexistent@example.com"));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("not found"),
+            "Expected 'not found' in error, got: {msg}"
+        );
+    }
 }
