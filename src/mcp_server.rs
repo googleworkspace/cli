@@ -407,10 +407,7 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     };
 
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match crate::auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), crate::executor::AuthMethod::OAuth),
-        Err(_) => (None, crate::executor::AuthMethod::None),
-    };
+    let (token, auth_method) = crate::executor::resolve_auth(&scopes).await;
 
     let result = crate::executor::execute_method(
         &doc,

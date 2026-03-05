@@ -183,7 +183,23 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
+/// Returns the custom API base URL override, if set.
+///
+/// When `GWS_API_BASE_URL` is set (e.g., `http://localhost:8099`), all API
+/// requests are directed to this endpoint instead of the real Google APIs.
+/// Authentication is skipped automatically. This is useful for testing against
+/// mock API servers.
+pub fn custom_api_base_url() -> Option<String> {
+    std::env::var("GWS_API_BASE_URL").ok().filter(|s| !s.is_empty())
+}
+
 /// Fetches and caches a Google Discovery Document.
+///
+/// The Discovery Document is always fetched from the real Google APIs so that
+/// gws knows the full command structure (resources, methods, parameters). When
+/// `GWS_API_BASE_URL` is set, the document's `root_url` and `base_url` are
+/// rewritten to point at the custom endpoint — actual API requests then go to
+/// the mock server while the CLI command tree remains fully functional.
 pub async fn fetch_discovery_document(
     service: &str,
     version: &str,
@@ -235,7 +251,20 @@ pub async fn fetch_discovery_document(
         let _ = e;
     }
 
-    let doc: RestDescription = serde_json::from_str(&body)?;
+    let mut doc: RestDescription = serde_json::from_str(&body)?;
+
+    // When a custom API base URL is set, rewrite the Discovery Document's
+    // root_url and base_url so that all HTTP requests go to the custom
+    // endpoint (e.g., a mock server) instead of the real Google APIs.
+    if let Some(base) = custom_api_base_url() {
+        let base_trimmed = base.trim_end_matches('/');
+        doc.root_url = format!("{base_trimmed}/");
+        doc.base_url = Some(format!(
+            "{base_trimmed}/{}/{}/",
+            doc.name, doc.version
+        ));
+    }
+
     Ok(doc)
 }
 

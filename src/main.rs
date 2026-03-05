@@ -203,11 +203,8 @@ async fn run() -> Result<(), GwsError> {
     // Get scopes from the method
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
-    // Authenticate: try OAuth, otherwise proceed unauthenticated
-    let (token, auth_method) = match auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
-    };
+    // Authenticate: skips OAuth automatically when GWS_API_BASE_URL is set.
+    let (token, auth_method) = executor::resolve_auth(&scopes).await;
 
     // Execute
     executor::execute_method(
