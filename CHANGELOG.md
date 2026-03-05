@@ -1,5 +1,32 @@
 # @googleworkspace/cli
 
+## 0.4.3
+
+### Patch Changes
+
+- fc6bc95: Exclude Workspace-admin-only scopes from the "Recommended" scope preset.
+
+  Scopes that require Google Workspace domain-admin access (`apps.*`,
+  `cloud-identity.*`, `ediscovery`, `directory.readonly`, `groups`) now return
+  `400 invalid_scope` when used by personal `@gmail.com` accounts. These scopes
+  are no longer included in the "Recommended" template, preventing login failures
+  for non-Workspace users.
+
+  Workspace admins can still select these scopes manually via the "Full Access"
+  template or by picking them individually in the scope picker.
+
+  Adds a new `is_workspace_admin_scope()` helper (mirroring the existing
+  `is_app_only_scope()`) that centralises this detection logic.
+
+- 2aa6084: docs: Comprehensive README overhaul addressing user feedback.
+
+  Added a Prerequisites section prior to the Quick Start to highlight the optional `gcloud` dependency.
+  Expanded the Authentication section with a decision matrix to help users choose the correct authentication path.
+  Added prominent warnings about OAuth "testing mode" limitations (the 25-scope cap) and the strict requirement to explicitly add the authorizing account as a "Test user" (#130).
+  Added a dedicated Troubleshooting section detailing fixes for common OAuth consent errors, "Access blocked" issues, and `redirect_uri_mismatch` failures.
+  Included shell escaping examples for Google Sheets A1 notation (`!`).
+  Clarified the `npm` installation rationale and added explicit links to pre-built native binaries on GitHub Releases.
+
 ## 0.4.2
 
 ### Patch Changes
