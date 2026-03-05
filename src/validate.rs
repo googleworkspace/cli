@@ -220,6 +220,26 @@ pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
     Ok(s)
 }
 
+/// Validate an API identifier (service name, version string) for use in
+/// cache filenames and discovery URLs. Only alphanumeric characters, hyphens,
+/// underscores, and dots are allowed to prevent path traversal and injection.
+pub fn validate_api_identifier(s: &str) -> Result<&str, GwsError> {
+    if s.is_empty() {
+        return Err(GwsError::Validation(
+            "API identifier must not be empty".to_string(),
+        ));
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(GwsError::Validation(format!(
+            "API identifier contains invalid characters (only alphanumeric, '-', '_', '.' allowed): {s}"
+        )));
+    }
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,5 +522,42 @@ mod tests {
         assert!(validate_resource_name("spaces/%2e%2e/etc").is_err());
         // Just % should be rejected too
         assert!(validate_resource_name("spaces/100%").is_err());
+    }
+
+    // --- validate_api_identifier ---
+
+    #[test]
+    fn test_validate_api_identifier_valid() {
+        assert_eq!(validate_api_identifier("drive").unwrap(), "drive");
+        assert_eq!(validate_api_identifier("v3").unwrap(), "v3");
+        assert_eq!(
+            validate_api_identifier("directory_v1").unwrap(),
+            "directory_v1"
+        );
+        assert_eq!(
+            validate_api_identifier("admin.reports_v1").unwrap(),
+            "admin.reports_v1"
+        );
+        assert_eq!(validate_api_identifier("v2beta1").unwrap(), "v2beta1");
+    }
+
+    #[test]
+    fn test_validate_api_identifier_rejects_path_traversal() {
+        assert!(validate_api_identifier("../etc/passwd").is_err());
+        assert!(validate_api_identifier("foo/../bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_api_identifier_rejects_special_chars() {
+        assert!(validate_api_identifier("drive?key=val").is_err());
+        assert!(validate_api_identifier("drive#frag").is_err());
+        assert!(validate_api_identifier("drive%2f..").is_err());
+        assert!(validate_api_identifier("v3 ").is_err());
+        assert!(validate_api_identifier("v3\n").is_err());
+    }
+
+    #[test]
+    fn test_validate_api_identifier_empty() {
+        assert!(validate_api_identifier("").is_err());
     }
 }

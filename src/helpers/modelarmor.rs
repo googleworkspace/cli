@@ -315,7 +315,8 @@ async fn handle_sanitize(
     method_name: &str,
     data_field: &str,
 ) -> Result<(), GwsError> {
-    let template = matches.get_one::<String>("template").unwrap();
+    let template_raw = matches.get_one::<String>("template").unwrap();
+    let template = crate::validate::validate_resource_name(template_raw)?;
 
     let location = extract_location(template).ok_or_else(|| {
         GwsError::Validation(
@@ -340,9 +341,12 @@ pub struct CreateTemplateConfig {
 }
 
 fn parse_create_template_args(matches: &ArgMatches) -> Result<CreateTemplateConfig, GwsError> {
-    let project = matches.get_one::<String>("project").unwrap().clone();
-    let location = matches.get_one::<String>("location").unwrap().clone();
-    let template_id = matches.get_one::<String>("template-id").unwrap().clone();
+    let project_raw = matches.get_one::<String>("project").unwrap();
+    let project = crate::validate::validate_resource_name(project_raw)?.to_string();
+    let location_raw = matches.get_one::<String>("location").unwrap();
+    let location = crate::validate::validate_resource_name(location_raw)?.to_string();
+    let template_id_raw = matches.get_one::<String>("template-id").unwrap();
+    let template_id = crate::validate::validate_resource_name(template_id_raw)?.to_string();
 
     let body = if let Some(json_str) = matches.get_one::<String>("json") {
         json_str.clone()
@@ -364,10 +368,12 @@ fn parse_create_template_args(matches: &ArgMatches) -> Result<CreateTemplateConf
 
 pub fn build_create_template_url(config: &CreateTemplateConfig) -> String {
     let base = regional_base_url(&config.location);
-    let parent = format!("projects/{}/locations/{}", config.project, config.location);
+    let project = crate::validate::encode_path_segment(&config.project);
+    let location = crate::validate::encode_path_segment(&config.location);
+    let parent = format!("projects/{project}/locations/{location}");
     format!(
         "{base}/{parent}/templates?templateId={}",
-        config.template_id
+        crate::validate::encode_path_segment(&config.template_id)
     )
 }
 
@@ -665,9 +671,10 @@ mod parsing_tests {
             body: "{}".to_string(),
         };
         let url = build_create_template_url(&config);
+        // encode_path_segment encodes hyphens ('-' → '%2D')
         assert_eq!(
             url,
-            "https://modelarmor.us-central1.rep.googleapis.com/v1/projects/p/locations/us-central1/templates?templateId=t"
+            "https://modelarmor.us-central1.rep.googleapis.com/v1/projects/p/locations/us%2Dcentral1/templates?templateId=t"
         );
     }
 
@@ -739,5 +746,35 @@ mod parsing_tests {
         assert!(subcommands.contains(&"+sanitize-prompt"));
         assert!(subcommands.contains(&"+sanitize-response"));
         assert!(subcommands.contains(&"+create-template"));
+    }
+
+    #[test]
+    fn test_build_create_template_url_encodes_segments() {
+        let config = CreateTemplateConfig {
+            project: "my-project".to_string(),
+            location: "us-central1".to_string(),
+            template_id: "my-template".to_string(),
+            body: "{}".to_string(),
+        };
+        let url = build_create_template_url(&config);
+        assert!(url.contains("projects/my%2Dproject"));
+        assert!(url.contains("locations/us%2Dcentral1"));
+        assert!(url.contains("templateId=my%2Dtemplate"));
+    }
+
+    #[test]
+    fn test_parse_create_template_args_rejects_traversal() {
+        let matches = make_matches_create(&[
+            "test",
+            "--project",
+            "../etc",
+            "--location",
+            "us-central1",
+            "--template-id",
+            "t",
+            "--preset",
+            "jailbreak",
+        ]);
+        assert!(parse_create_template_args(&matches).is_err());
     }
 }
