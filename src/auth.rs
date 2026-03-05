@@ -355,13 +355,13 @@ mod tests {
     /// restores it when dropped. This ensures cleanup even if a test panics.
     struct EnvVarGuard {
         name: String,
-        original: Option<String>,
+        original: Option<std::ffi::OsString>,
     }
 
     impl EnvVarGuard {
         /// Save the current value of `name`, then set it to `value`.
         fn set(name: &str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let original = std::env::var(name).ok();
+            let original = std::env::var_os(name);
             std::env::set_var(name, value);
             Self {
                 name: name.to_string(),
@@ -371,7 +371,7 @@ mod tests {
 
         /// Save the current value of `name`, then remove it.
         fn remove(name: &str) -> Self {
-            let original = std::env::var(name).ok();
+            let original = std::env::var_os(name);
             std::env::remove_var(name);
             Self {
                 name: name.to_string(),
