@@ -216,10 +216,15 @@ fn split_mailbox_list(header: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut in_quotes = false;
     let mut start = 0;
+    let mut prev_backslash = false;
 
     for (i, ch) in header.char_indices() {
         match ch {
-            '"' => in_quotes = !in_quotes,
+            '\\' if in_quotes => {
+                prev_backslash = !prev_backslash;
+                continue;
+            }
+            '"' if !prev_backslash => in_quotes = !in_quotes,
             ',' if !in_quotes => {
                 let token = header[start..i].trim();
                 if !token.is_empty() {
@@ -229,6 +234,7 @@ fn split_mailbox_list(header: &str) -> Vec<&str> {
             }
             _ => {}
         }
+        prev_backslash = false;
     }
 
     let token = header[start..].trim();
@@ -833,6 +839,30 @@ mod tests {
     fn test_split_mailbox_list_empty() {
         let addrs = split_mailbox_list("");
         assert!(addrs.is_empty());
+    }
+
+    #[test]
+    fn test_split_mailbox_list_escaped_quotes() {
+        let addrs =
+            split_mailbox_list(r#""Doe \"JD, Sr\"" <john@example.com>, alice@example.com"#);
+        assert_eq!(
+            addrs,
+            vec![
+                r#""Doe \"JD, Sr\"" <john@example.com>"#,
+                "alice@example.com"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_mailbox_list_double_backslash() {
+        // \\\\" inside quotes means an escaped backslash followed by a closing quote
+        let addrs =
+            split_mailbox_list(r#""Trail\\" <t@example.com>, b@example.com"#);
+        assert_eq!(
+            addrs,
+            vec![r#""Trail\\" <t@example.com>"#, "b@example.com"]
+        );
     }
 
     #[test]
