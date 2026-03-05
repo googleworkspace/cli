@@ -7,6 +7,9 @@
 **One CLI for all of Google Workspace — built for humans and AI agents.**<br>
 Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
 
+> [!NOTE]
+> This is **not** an officially supported Google product.
+
 <p>
   <a href="https://www.npmjs.com/package/@googleworkspace/cli"><img src="https://img.shields.io/npm/v/@googleworkspace/cli" alt="npm version"></a>
   <a href="https://github.com/googleworkspace/cli/blob/main/LICENSE"><img src="https://img.shields.io/github/license/googleworkspace/cli" alt="license"></a>
@@ -23,9 +26,6 @@ npm install -g @googleworkspace/cli
 
 > [!IMPORTANT]
 > This project is under active development. Expect breaking changes as we march toward v1.0.
-
-> [!NOTE]
-> This is **not** an officially supported Google product.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/docs/demo.gif" alt="Demo">
