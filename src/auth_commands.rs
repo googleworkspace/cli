@@ -559,7 +559,9 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
 
     // Parse -s / --services flag: limit the scope picker to specific services.
     // E.g. `gws auth login -s drive,gmail,calendar` only shows scopes for those APIs.
-    let services_filter: Option<Vec<String>> = parse_services_filter(args);
+    // Store as a HashSet<String> for O(1) membership tests when intersecting large API lists.
+    let services_filter: Option<std::collections::HashSet<String>> =
+        parse_services_filter(args).map(|v| v.into_iter().collect());
 
     // Interactive scope picker when running in a TTY
     if !cfg!(test) && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
@@ -571,7 +573,7 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
                 let api_ids: Vec<String> = if let Some(ref filter) = services_filter {
                     enabled_apis
                         .into_iter()
-                        .filter(|id| filter.contains(id))
+                        .filter(|id| filter.contains(id.as_str()))
                         .collect()
                 } else {
                     enabled_apis
@@ -588,7 +590,8 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
         // No project_id but -s was given: fetch scopes for the specified services directly
         // (no enabled-API gating needed — the user knows what they want).
         if let Some(ref filter) = services_filter {
-            let scopes = crate::setup::fetch_scopes_for_apis(filter).await;
+            let filter_vec: Vec<String> = filter.iter().cloned().collect();
+            let scopes = crate::setup::fetch_scopes_for_apis(&filter_vec).await;
             if !scopes.is_empty() {
                 if let Some(selected) = run_discovery_scope_picker(&scopes) {
                     return selected;
@@ -596,10 +599,29 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
             }
         }
 
-        // Fallback: simple scope picker using static SCOPE_ENTRIES
-        if let Some(selected) = run_simple_scope_picker() {
+        // Fallback: simple scope picker using static SCOPE_ENTRIES.
+        // Apply the services filter so the picker only shows relevant entries.
+        if let Some(selected) = run_simple_scope_picker(services_filter.as_ref()) {
             return selected;
         }
+    } else if let Some(ref filter) = services_filter {
+        // Non-TTY mode with -s: can't show a picker, but must still honour the
+        // scope restriction. Return all SCOPE_ENTRIES that match the requested
+        // services rather than the unfiltered DEFAULT_SCOPES.
+        let restricted: Vec<String> = SCOPE_ENTRIES
+            .iter()
+            .filter(|e| filter.contains(e.service_api_id))
+            .map(|e| e.scope.to_string())
+            .collect();
+        if !restricted.is_empty() {
+            return restricted;
+        }
+        // If nothing matched (e.g. services not in the static list), fall through
+        // to DEFAULT_SCOPES — but warn the user.
+        eprintln!(
+            "gws: warning: -s flag specified but no matching scopes found in static list; \
+             using default scopes"
+        );
     }
 
     DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
@@ -845,10 +867,29 @@ fn run_discovery_scope_picker(
 }
 
 /// Run the simple static scope picker (fallback when no project_id available).
-fn run_simple_scope_picker() -> Option<Vec<String>> {
+///
+/// When `services_filter` is `Some`, only entries whose `service_api_id` is in
+/// the set are shown. This ensures the `-s` flag is honoured even in the fallback path.
+fn run_simple_scope_picker(
+    services_filter: Option<&std::collections::HashSet<String>>,
+) -> Option<Vec<String>> {
     use crate::setup_tui::{PickerResult, SelectItem};
 
-    let items: Vec<SelectItem> = SCOPE_ENTRIES
+    // Collect the entries that pass the filter (all entries when filter is None).
+    let filtered: Vec<&ScopeEntry> = SCOPE_ENTRIES
+        .iter()
+        .filter(|e| {
+            services_filter
+                .map(|f| f.contains(e.service_api_id))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        return None;
+    }
+
+    let items: Vec<SelectItem> = filtered
         .iter()
         .map(|entry| SelectItem {
             label: entry.label.to_string(),
@@ -871,7 +912,7 @@ fn run_simple_scope_picker() -> Option<Vec<String>> {
                 .iter()
                 .enumerate()
                 .filter(|(_, item)| item.selected)
-                .map(|(i, _)| SCOPE_ENTRIES[i].scope.to_string())
+                .map(|(i, _)| filtered[i].scope.to_string())
                 .collect();
             if selected.is_empty() {
                 None
@@ -1374,44 +1415,56 @@ pub fn extract_refresh_token(token_data: &str) -> Option<String> {
 struct ScopeEntry {
     scope: &'static str,
     label: &'static str,
+    /// GCP API service ID (e.g. `"drive.googleapis.com"`) used to filter
+    /// entries when `-s` / `--services` is supplied.
+    service_api_id: &'static str,
 }
 
 const SCOPE_ENTRIES: &[ScopeEntry] = &[
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/drive",
         label: "Google Drive",
+        service_api_id: "drive.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/spreadsheets",
         label: "Google Sheets",
+        service_api_id: "sheets.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/gmail.modify",
         label: "Gmail",
+        service_api_id: "gmail.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/calendar",
         label: "Google Calendar",
+        service_api_id: "calendar.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/documents",
         label: "Google Docs",
+        service_api_id: "docs.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/presentations",
         label: "Google Slides",
+        service_api_id: "slides.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/tasks",
         label: "Google Tasks",
+        service_api_id: "tasks.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/pubsub",
         label: "Cloud Pub/Sub",
+        service_api_id: "pubsub.googleapis.com",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/cloud-platform",
         label: "Cloud Platform",
+        service_api_id: "cloudresourcemanager.googleapis.com",
     },
 ];
 
