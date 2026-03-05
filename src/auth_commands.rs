@@ -273,6 +273,12 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     )
     .await;
 
+    // Remove restrictive scopes when broader alternatives are present.
+    // gmail.metadata blocks query parameters like `q`, and is redundant
+    // when broader scopes (gmail.modify, gmail.readonly, mail.google.com)
+    // are already included.
+    let scopes = filter_redundant_restrictive_scopes(scopes);
+
     let secret = yup_oauth2::ApplicationSecret {
         client_id: client_id.clone(),
         client_secret: client_secret.clone(),
@@ -602,6 +608,41 @@ fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
         };
         prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}."))
     })
+}
+
+/// Remove restrictive scopes that are redundant when broader alternatives
+/// are present. For example, `gmail.metadata` restricts query parameters
+/// and is unnecessary when `gmail.modify`, `gmail.readonly`, or the full
+/// `https://mail.google.com/` scope is already included.
+///
+/// This prevents Google from enforcing the restrictive scope's limitations
+/// on the access token even though broader access was granted.
+fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
+    // Scopes that restrict API behavior when present in a token, even alongside
+    // broader scopes. Each entry maps a restrictive scope to the broader scopes
+    // that make it redundant. The restrictive scope is removed only if at least
+    // one of its broader alternatives is already in the list.
+    const RESTRICTIVE_SCOPES: &[(&str, &[&str])] = &[(
+        "https://www.googleapis.com/auth/gmail.metadata",
+        &[
+            "https://mail.google.com/",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.readonly",
+        ],
+    )];
+
+    let scope_set: std::collections::HashSet<String> =
+        scopes.iter().cloned().collect();
+
+    scopes
+        .into_iter()
+        .filter(|scope| {
+            !RESTRICTIVE_SCOPES.iter().any(|(restrictive, broader)| {
+                scope.as_str() == *restrictive
+                    && broader.iter().any(|b| scope_set.contains(*b))
+            })
+        })
+        .collect()
 }
 
 /// Filter a list of scope URLs to only those matching the given services.
@@ -2083,6 +2124,38 @@ mod tests {
         ];
         let empty: HashSet<String> = HashSet::new();
         let result = filter_scopes_by_services(scopes.clone(), Some(&empty));
+        assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn filter_restrictive_removes_metadata_when_broader_present() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/drive".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes);
+        assert!(!result.iter().any(|s| s.contains("gmail.metadata")));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_restrictive_removes_metadata_when_full_gmail_present() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes);
+        assert_eq!(result, vec!["https://mail.google.com/"]);
+    }
+
+    #[test]
+    fn filter_restrictive_keeps_metadata_when_only_scope() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/drive".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes.clone());
         assert_eq!(result, scopes);
     }
 }

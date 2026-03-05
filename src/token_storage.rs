@@ -103,18 +103,9 @@ impl TokenStorage for EncryptedTokenStorage {
         }
 
         if let Some(map) = map_lock.as_ref() {
-            // First look for exact match
             let key = Self::cache_key(scopes);
             if let Some(token) = map.get(&key) {
                 return Some(token.clone());
-            }
-
-            // Fallback: check if we have a superset of the scopes (simplistic check compared to yup-oauth2 internal, but functional for this CLI)
-            for (cached_key, token) in map.iter() {
-                let cached_scopes: Vec<&str> = cached_key.split(' ').collect();
-                if scopes.iter().all(|s| cached_scopes.contains(s)) {
-                    return Some(token.clone());
-                }
             }
         }
 
