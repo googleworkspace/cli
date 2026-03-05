@@ -487,7 +487,30 @@ fn build_url(
         format!("{}{}", doc.root_url, doc.service_path)
     };
 
-    let path_template = method.flat_path.as_deref().unwrap_or(&method.path);
+    // Prefer flatPath when its placeholders match the method's path parameters.
+    // Some Discovery Documents (e.g., Slides presentations.get) have flatPath
+    // placeholders that don't match parameter names ({presentationsId} vs
+    // {presentationId}). In those cases, fall back to path which uses RFC 6570
+    // operators ({+var}) that this function already handles.
+    let path_template = match method.flat_path.as_deref() {
+        Some(fp) => {
+            let all_match = method
+                .parameters
+                .iter()
+                .filter(|(_, p)| p.location.as_deref() == Some("path"))
+                .all(|(name, _)| {
+                    let plain = format!("{{{name}}}");
+                    let plus = format!("{{+{name}}}");
+                    fp.contains(&plain) || fp.contains(&plus)
+                });
+            if all_match {
+                fp
+            } else {
+                method.path.as_str()
+            }
+        }
+        None => method.path.as_str(),
+    };
 
     // Substitute path parameters and separate query parameters
     let mut url_path = path_template.to_string();
@@ -1343,6 +1366,36 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Path parameter 'fileId' was provided but is not present"));
+    }
+
+    #[test]
+    fn test_build_url_flatpath_fallback_on_mismatch() {
+        // Reproduces the Slides presentations.get bug where flatPath uses
+        // {presentationsId} (plural) but the parameter is presentationId (singular).
+        let doc = RestDescription {
+            base_url: Some("https://slides.googleapis.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "presentationId".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                required: true,
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "v1/presentations/{+presentationId}".to_string(),
+            flat_path: Some("v1/presentations/{presentationsId}".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("presentationId".to_string(), json!("abc123"));
+
+        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(url, "https://slides.googleapis.com/v1/presentations/abc123");
     }
 
     #[test]
