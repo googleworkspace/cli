@@ -615,11 +615,12 @@ fn get_access_token() -> Result<String, GwsError> {
 
 // ── API enabling ────────────────────────────────────────────────
 
-/// Enable selected Workspace APIs for a project. Returns (enabled, skipped, failed).
+/// Enable selected Workspace APIs for a project.
+/// Returns (enabled, skipped, failed) where failed includes the gcloud error message.
 async fn enable_apis(
     project_id: &str,
     api_ids: &[String],
-) -> (Vec<String>, Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     // First, get already-enabled APIs
     let already_enabled = get_enabled_apis(project_id);
 
@@ -638,23 +639,40 @@ async fn enable_apis(
         return (Vec::new(), skipped, Vec::new());
     }
 
-    // Batch enable all APIs in a single gcloud call
-    let mut args = vec!["services".to_string(), "enable".to_string()];
-    args.extend(to_enable.clone());
-    args.push("--project".to_string());
-    args.push(project_id.to_string());
+    // Enable each API individually so one failure doesn't block the rest
+    let mut enabled = Vec::new();
+    let mut failed = Vec::new();
 
-    let result = gcloud_cmd()
-        .args(&args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output();
+    for api_id in &to_enable {
+        let result = gcloud_cmd()
+            .args(["services", "enable", api_id, "--project", project_id])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output();
 
-    match result {
-        Ok(output) if output.status.success() => (to_enable, skipped, Vec::new()),
-        Ok(_) => (Vec::new(), skipped, to_enable),
-        Err(_) => (Vec::new(), skipped, to_enable),
+        match result {
+            Ok(output) if output.status.success() => {
+                enabled.push(api_id.clone());
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let msg = if stderr.is_empty() {
+                    format!(
+                        "gcloud services enable failed (exit code {:?})",
+                        output.status.code()
+                    )
+                } else {
+                    stderr
+                };
+                failed.push((api_id.clone(), msg));
+            }
+            Err(e) => {
+                failed.push((api_id.clone(), format!("Failed to run gcloud: {e}")));
+            }
+        }
     }
+
+    (enabled, skipped, failed)
 }
 
 /// Get the list of already-enabled API service names for a project.
@@ -784,7 +802,7 @@ struct SetupContext {
     client_secret: String,
     enabled: Vec<String>,
     skipped: Vec<String>,
-    failed: Vec<String>,
+    failed: Vec<(String, String)>,
 }
 
 impl SetupContext {
@@ -1151,15 +1169,32 @@ async fn stage_enable_apis(ctx: &mut SetupContext) -> Result<SetupStage, GwsErro
         enable_apis(&ctx.project_id, &ctx.api_ids).await;
     ctx.enabled = enabled_apis;
     ctx.skipped = skipped_apis;
-    ctx.failed = failed_apis;
-    ctx.wiz(
-        3,
-        StepStatus::Done(format!(
+    ctx.failed = failed_apis.clone();
+
+    // Show failure details so the user knows what went wrong
+    if !failed_apis.is_empty() {
+        eprintln!();
+        for (api, err) in &failed_apis {
+            eprintln!("  ⚠  {} — {}", api, err);
+        }
+        eprintln!();
+    }
+
+    let status_msg = if ctx.failed.is_empty() {
+        format!(
             "{} enabled, {} skipped",
             ctx.enabled.len(),
             ctx.skipped.len()
-        )),
-    );
+        )
+    } else {
+        format!(
+            "{} enabled, {} skipped, {} failed",
+            ctx.enabled.len(),
+            ctx.skipped.len(),
+            ctx.failed.len()
+        )
+    };
+    ctx.wiz(3, StepStatus::Done(status_msg));
     Ok(SetupStage::ConfigureOauth)
 }
 
@@ -1388,7 +1423,7 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         "project": ctx.project_id,
         "apis_enabled": ctx.enabled.len(),
         "apis_skipped": ctx.skipped.len(),
-        "apis_failed": ctx.failed.len(),
+        "apis_failed": ctx.failed.iter().map(|(api, err)| json!({"api": api, "error": err})).collect::<Vec<_>>(),
         "client_config": crate::oauth_config::client_config_path().display().to_string(),
     });
     println!(
