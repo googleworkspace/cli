@@ -389,9 +389,9 @@ fn run_picker_loop(
                     let label_style = if item.is_fixed {
                         Style::default().fg(Color::DarkGray)
                     } else if item.selected {
-                        Style::default().fg(Color::White)
+                        Style::default()
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(Color::DarkGray)
                     };
                     let desc_style = Style::default().fg(Color::DarkGray);
 
@@ -699,7 +699,7 @@ impl SetupWizard {
                             Span::styled("  ▸ ", Style::default().fg(Color::Yellow).bold()),
                             Span::styled(num, Style::default().fg(Color::Yellow)),
                             Span::raw(" "),
-                            Span::styled(&step.label, Style::default().fg(Color::White).bold()),
+                            Span::styled(&step.label, Style::default().bold()),
                         ];
                         if !detail.is_empty() {
                             spans.push(Span::styled(
@@ -773,9 +773,9 @@ impl SetupWizard {
                     Style::default().fg(Color::DarkGray)
                 };
                 let label_style = if item.selected {
-                    Style::default().fg(Color::White)
+                    Style::default()
                 } else {
-                    Style::default().fg(Color::Gray)
+                    Style::default().fg(Color::DarkGray)
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(checkbox, checkbox_style),
@@ -828,7 +828,7 @@ impl SetupWizard {
 
         let p = Paragraph::new(Line::from(vec![
             Span::raw("> "),
-            Span::styled(&input.value, Style::default().fg(Color::White)),
+            Span::styled(&input.value, Style::default()),
             Span::styled(
                 "█",
                 Style::default()
