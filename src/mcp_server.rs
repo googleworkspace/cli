@@ -212,7 +212,18 @@ async fn handle_request(
                 "tools": tools_cache.as_ref().unwrap()
             }))
         }
-        "tools/call" => handle_tools_call(params, config).await,
+        "tools/call" => {
+            // MCP spec: tool execution errors should be returned as successful results
+            // with isError: true, NOT as JSON-RPC protocol errors. Returning JSON-RPC
+            // errors causes clients to show generic "Tool execution failed" with no detail.
+            match handle_tools_call(params, config).await {
+                Ok(val) => Ok(val),
+                Err(e) => Ok(json!({
+                    "content": [{ "type": "text", "text": e.to_string() }],
+                    "isError": true
+                })),
+            }
+        }
         _ => Err(GwsError::Validation(format!(
             "Method not supported: {}",
             method
