@@ -18,7 +18,7 @@
 //! Responsibilities include multipart file uploads, response pagination,
 //! error mapping, and optionally running text content through Model Armor for sanitization.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -490,7 +490,7 @@ fn build_url(
     let path_template = method.flat_path.as_deref().unwrap_or(&method.path);
 
     // Substitute path parameters and separate query parameters
-    let mut url_path = path_template.to_string();
+    let path_parameters = extract_template_path_parameters(path_template);
     let mut query_params: HashMap<String, String> = HashMap::new();
 
     for (key, value) in params {
@@ -499,29 +499,7 @@ fn build_url(
             other => other.to_string(),
         };
 
-        let placeholder = format!("{{{key}}}");
-        // Also handle {+key} style
-        let plus_placeholder = format!("{{+{key}}}");
-        let has_plain_placeholder = url_path.contains(&placeholder);
-        let has_plus_placeholder = url_path.contains(&plus_placeholder);
-
-        if has_plain_placeholder || has_plus_placeholder {
-            // RFC 6570-like expansion:
-            // - {var}: path segment expansion (encode all reserved characters)
-            // - {+var}: reserved expansion (preserve '/' path separators only)
-            if has_plain_placeholder {
-                // TODO: This iterative `replace` can expand placeholder-looking
-                // substrings that appear inside another parameter's value.
-                // A single-pass template renderer would avoid that class of bugs.
-                let encoded = crate::validate::encode_path_segment(&val_str);
-                url_path = url_path.replace(&placeholder, &encoded);
-            } else if has_plus_placeholder {
-                // `{+var}` keeps `/` separators, so validate before encoding to
-                // block traversal and URL-special injection payloads.
-                let validated = crate::validate::validate_resource_name(&val_str)?;
-                let encoded = crate::validate::encode_path_preserving_slashes(validated);
-                url_path = url_path.replace(&plus_placeholder, &encoded);
-            }
+        if path_parameters.contains(key.as_str()) {
             continue;
         }
 
@@ -542,6 +520,8 @@ fn build_url(
         query_params.insert(key.clone(), val_str);
     }
 
+    let url_path = render_path_template(path_template, params)?;
+
     let full_url = if is_upload {
         // Use the upload endpoint from the Discovery Document
         let upload_endpoint = method
@@ -556,12 +536,83 @@ fn build_url(
                         .to_string(),
                 )
             })?;
-        format!("{}{}", doc.root_url.trim_end_matches('/'), upload_endpoint)
+        let upload_path = render_path_template(upload_endpoint, params)?;
+        format!("{}{}", doc.root_url.trim_end_matches('/'), upload_path)
     } else {
         format!("{base_url}{url_path}")
     };
 
     Ok((full_url, query_params))
+}
+
+fn extract_template_path_parameters(path_template: &str) -> HashSet<&str> {
+    let mut found = HashSet::new();
+    let mut cursor = 0;
+
+    while let Some(open_idx) = path_template[cursor..].find('{') {
+        let token_start = cursor + open_idx;
+        let Some(close_idx) = path_template[token_start..].find('}') else {
+            break;
+        };
+
+        let token_end = token_start + close_idx;
+        let token = &path_template[token_start + 1..token_end];
+        if let Some(key) = token.strip_prefix('+') {
+            found.insert(key);
+        } else {
+            found.insert(token);
+        }
+        cursor = token_end + 1;
+    }
+
+    found
+}
+
+fn render_path_template(
+    path_template: &str,
+    params: &Map<String, Value>,
+) -> Result<String, GwsError> {
+    let mut rendered = String::with_capacity(path_template.len());
+    let mut cursor = 0;
+
+    while let Some(open_idx) = path_template[cursor..].find('{') {
+        let token_start = cursor + open_idx;
+        rendered.push_str(&path_template[cursor..token_start]);
+
+        let Some(close_idx) = path_template[token_start..].find('}') else {
+            rendered.push_str(&path_template[token_start..]);
+            return Ok(rendered);
+        };
+
+        let token_end = token_start + close_idx;
+        let token = &path_template[token_start + 1..token_end];
+        let (is_plus, key) = if let Some(key) = token.strip_prefix('+') {
+            (true, key)
+        } else {
+            (false, token)
+        };
+
+        if let Some(value) = params.get(key) {
+            let val_str = match value {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let encoded = if is_plus {
+                let validated = crate::validate::validate_resource_name(&val_str)?;
+                crate::validate::encode_path_preserving_slashes(validated)
+            } else {
+                crate::validate::encode_path_segment(&val_str)
+            };
+            rendered.push_str(&encoded);
+        } else {
+            rendered.push_str(&path_template[token_start..=token_end]);
+        }
+
+        cursor = token_end + 1;
+    }
+
+    rendered.push_str(&path_template[cursor..]);
+    Ok(rendered)
 }
 
 /// Attempts to extract a GCP console enable URL from a Google API `accessNotConfigured`
@@ -1314,6 +1365,68 @@ mod tests {
 
         let err = build_url(&doc, &method, &params, false).unwrap_err();
         assert!(err.to_string().contains("path traversal"));
+    }
+
+    #[test]
+    fn test_build_url_upload_endpoint_substitutes_path_params() {
+        let doc = RestDescription {
+            root_url: "https://www.googleapis.com/".to_string(),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "fileId".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "drive/v3/files/{fileId}".to_string(),
+            flat_path: Some("drive/v3/files/{fileId}".to_string()),
+            parameters,
+            media_upload: Some(crate::discovery::MediaUpload {
+                protocols: Some(crate::discovery::MediaUploadProtocols {
+                    simple: Some(crate::discovery::MediaUploadProtocol {
+                        path: "/upload/drive/v3/files/{fileId}".to_string(),
+                        multipart: Some(true),
+                    }),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mut params = Map::new();
+        params.insert("fileId".to_string(), json!("abc/123"));
+
+        let (url, _) = build_url(&doc, &method, &params, true).unwrap();
+        assert_eq!(
+            url,
+            "https://www.googleapis.com/upload/drive/v3/files/abc%2F123"
+        );
+    }
+
+    #[test]
+    fn test_build_url_does_not_replace_placeholder_like_values() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            path: "v1/{parent}/{child}".to_string(),
+            flat_path: Some("v1/{parent}/{child}".to_string()),
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("parent".to_string(), json!("literal-{child}-value"));
+        params.insert("child".to_string(), json!("ok"));
+
+        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(
+            url,
+            "https://api.example.com/v1/literal%2D%7Bchild%7D%2Dvalue/ok"
+        );
     }
 
     #[test]
