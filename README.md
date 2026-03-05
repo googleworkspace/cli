@@ -263,6 +263,23 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 </details>
 
+## Factory Droid
+
+The repo includes native [Factory Droid](https://docs.factory.ai/) integration via `.factory/skills/` and `.factory/droids/`. Once `gws` is authenticated, Factory Droid can use Google Workspace APIs directly through the bundled `gws` skill.
+
+1. Authenticate the CLI first:
+
+   ```bash
+   gws auth setup
+   ```
+
+2. The skill is automatically discovered when Droid runs inside this repository. To use the skill in other projects, copy the `.factory/skills/gws/` directory to your project's `.factory/skills/` folder:
+   ```bash
+   cp -r .factory/skills/gws /path/to/your/project/.factory/skills/
+   ```
+
+The `gws` skill teaches Droid the CLI syntax, authentication patterns, field masks, pagination, and safety rules. Droid will automatically invoke it when tasks involve Google Workspace resources.
+
 ## Gemini CLI Extension
 
 1. Authenticate the CLI first:
