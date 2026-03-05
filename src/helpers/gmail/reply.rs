@@ -193,9 +193,13 @@ fn build_reply_all_recipients(
     remove: Option<&str>,
 ) -> ReplyRecipients {
     let to = extract_reply_to_address(original);
-    let to_email = extract_email(&to).to_lowercase();
+    let to_emails: Vec<String> = to
+        .split(',')
+        .map(|s| extract_email(s.trim()).to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    // Combine original To and Cc for the CC field (excluding the reply-to recipient)
+    // Combine original To and Cc for the CC field (excluding the reply-to recipients)
     let mut cc_addrs: Vec<&str> = Vec::new();
 
     if !original.to.is_empty() {
@@ -238,8 +242,9 @@ fn build_reply_all_recipients(
         .into_iter()
         .filter(|addr| {
             let email = extract_email(addr).to_lowercase();
-            // Filter out the reply-to recipient (already in To) and removed addresses
-            email != to_email && !remove_set.iter().any(|r| &email == r)
+            // Filter out the reply-to recipients (already in To) and removed addresses
+            !to_emails.iter().any(|t| t == &email)
+                && !remove_set.iter().any(|r| r == &email)
         })
         .collect();
 
@@ -724,5 +729,30 @@ mod tests {
         let recipients = build_reply_all_recipients(&original, None, None);
         let cc = recipients.cc.unwrap();
         assert_eq!(cc, "bob@example.com");
+    }
+
+    #[test]
+    fn test_reply_all_multi_address_reply_to_deduplicates_cc() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "list@example.com, owner@example.com".to_string(),
+            to: "bob@example.com, list@example.com".to_string(),
+            cc: "owner@example.com, dave@example.com".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        // To should be the full Reply-To value
+        assert_eq!(recipients.to, "list@example.com, owner@example.com");
+        // CC should exclude both Reply-To addresses (already in To)
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(cc.contains("dave@example.com"));
+        assert!(!cc.contains("list@example.com"));
+        assert!(!cc.contains("owner@example.com"));
     }
 }
