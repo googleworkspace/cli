@@ -119,7 +119,9 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 
                 return Ok(cache_key(key));
             }
-            Err(_) => {} // Fallthrough to file storage
+            Err(e) => {
+                eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
+            }
         }
     }
 
