@@ -545,6 +545,16 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
         Err(e) => return (Vec::new(), Some(format!("Failed to run gcloud: {e}"))),
     };
 
+    // Drain stdout in a background thread to prevent pipe buffer deadlock.
+    // Without this, gcloud blocks once the OS pipe buffer (~64 KB) fills up,
+    // and the parent blocks waiting for gcloud to exit — a classic deadlock.
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let reader_handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut { stdout }, &mut buf).ok();
+        buf
+    });
+
     // Wait with timeout
     let timeout = std::time::Duration::from_secs(10);
     let start = std::time::Instant::now();
@@ -552,15 +562,7 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if status.success() {
-                    let stdout = child
-                        .stdout
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = String::new();
-                            std::io::Read::read_to_string(&mut s, &mut buf).ok();
-                            buf
-                        })
-                        .unwrap_or_default();
+                    let stdout = reader_handle.join().unwrap_or_default();
                     let projects = stdout
                         .lines()
                         .filter_map(|line| {
