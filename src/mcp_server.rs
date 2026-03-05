@@ -429,26 +429,38 @@ fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools
             // Generate JSON Schema for MCP input — only include body/upload
             // when the Discovery Document method actually supports them.
             let mut properties = serde_json::Map::new();
-            properties.insert("params".to_string(), json!({
-                "type": "object",
-                "description": "Query or path parameters (e.g. fileId, q, pageSize)"
-            }));
-            if method.request.is_some() {
-                properties.insert("body".to_string(), json!({
+            properties.insert(
+                "params".to_string(),
+                json!({
                     "type": "object",
-                    "description": "Request body API object"
-                }));
+                    "description": "Query or path parameters (e.g. fileId, q, pageSize)"
+                }),
+            );
+            if method.request.is_some() {
+                properties.insert(
+                    "body".to_string(),
+                    json!({
+                        "type": "object",
+                        "description": "Request body API object"
+                    }),
+                );
             }
             if method.supports_media_upload {
-                properties.insert("upload".to_string(), json!({
-                    "type": "string",
-                    "description": "Local file path to upload as media content"
-                }));
+                properties.insert(
+                    "upload".to_string(),
+                    json!({
+                        "type": "string",
+                        "description": "Local file path to upload as media content"
+                    }),
+                );
             }
-            properties.insert("page_all".to_string(), json!({
-                "type": "boolean",
-                "description": "Auto-paginate, returning all pages"
-            }));
+            properties.insert(
+                "page_all".to_string(),
+                json!({
+                    "type": "boolean",
+                    "description": "Auto-paginate, returning all pages"
+                }),
+            );
             let input_schema = json!({
                 "type": "object",
                 "properties": properties
@@ -763,15 +775,19 @@ async fn execute_mcp_method(
 
     // Drop empty body objects — LLMs commonly send "body": {} even on GET
     // methods, which causes Google APIs to return 400.
-    let body_json_val = arguments.get("body").filter(|v| {
-        !v.as_object().is_some_and(|m| m.is_empty())
-    });
+    let body_json_val = arguments
+        .get("body")
+        .filter(|v| !v.as_object().is_some_and(|m| m.is_empty()));
     let body_str = body_json_val
         .map(serde_json::to_string)
         .transpose()
         .map_err(|e| GwsError::Validation(format!("Failed to serialize body: {e}")))?;
 
-    let upload_path = if let Some(raw) = arguments.get("upload").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+    let upload_path = if let Some(raw) = arguments
+        .get("upload")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         let p = std::path::Path::new(raw);
         if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
             return Err(GwsError::Validation(format!(

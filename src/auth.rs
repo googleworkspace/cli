@@ -225,20 +225,31 @@ async fn get_token_inner(
 /// - anything else (including `"authorized_user"`) → [`Credential::AuthorizedUser`]
 ///
 /// Uses the already-parsed `serde_json::Value` to avoid a second string parse.
-async fn parse_credential_file(path: &std::path::Path, content: &str) -> anyhow::Result<Credential> {
+async fn parse_credential_file(
+    path: &std::path::Path,
+    content: &str,
+) -> anyhow::Result<Credential> {
     let json: serde_json::Value = serde_json::from_str(content)
         .with_context(|| format!("Failed to parse credentials JSON at {}", path.display()))?;
 
     if json.get("type").and_then(|v| v.as_str()) == Some("service_account") {
-        let key = yup_oauth2::parse_service_account_key(content)
-            .with_context(|| format!("Failed to parse service account key from {}", path.display()))?;
+        let key = yup_oauth2::parse_service_account_key(content).with_context(|| {
+            format!(
+                "Failed to parse service account key from {}",
+                path.display()
+            )
+        })?;
         return Ok(Credential::ServiceAccount(key));
     }
 
     // Deserialize from the Value we already have — avoids a second string parse.
-    let secret: yup_oauth2::authorized_user::AuthorizedUserSecret =
-        serde_json::from_value(json)
-            .with_context(|| format!("Failed to parse authorized user credentials from {}", path.display()))?;
+    let secret: yup_oauth2::authorized_user::AuthorizedUserSecret = serde_json::from_value(json)
+        .with_context(|| {
+            format!(
+                "Failed to parse authorized user credentials from {}",
+                path.display()
+            )
+        })?;
     Ok(Credential::AuthorizedUser(secret))
 }
 
@@ -422,7 +433,10 @@ mod tests {
 
         match res.unwrap() {
             Credential::ServiceAccount(key) => {
-                assert_eq!(key.client_email, "adc-sa@test-project.iam.gserviceaccount.com");
+                assert_eq!(
+                    key.client_email,
+                    "adc-sa@test-project.iam.gserviceaccount.com"
+                );
             }
             _ => panic!("Expected ServiceAccount from ADC"),
         }
