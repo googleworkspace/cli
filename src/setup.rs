@@ -704,6 +704,17 @@ async fn enable_apis(
     (enabled, skipped, failed)
 }
 
+/// Look up the GCP API service ID (e.g. `"drive.googleapis.com"`) for a CLI
+/// service name / discovery name (e.g. `"drive"`, `"gmail"`, `"calendar"`).
+///
+/// Returns `None` if the name is not a recognised Workspace API.
+pub fn api_id_for_service(service_name: &str) -> Option<&'static str> {
+    WORKSPACE_APIS
+        .iter()
+        .find(|a| a.discovery == service_name)
+        .map(|a| a.id)
+}
+
 /// Get the list of already-enabled API service names for a project.
 pub fn get_enabled_apis(project_id: &str) -> Vec<String> {
     let output = gcloud_cmd()
@@ -2036,5 +2047,37 @@ mod tests {
         } else {
             assert_eq!(bin, "gcloud");
         }
+    }
+
+    #[test]
+    fn api_id_for_service_known_services() {
+        assert_eq!(
+            api_id_for_service("drive"),
+            Some("drive.googleapis.com")
+        );
+        assert_eq!(
+            api_id_for_service("gmail"),
+            Some("gmail.googleapis.com")
+        );
+        // Calendar uses a non-obvious ID
+        assert_eq!(
+            api_id_for_service("calendar"),
+            Some("calendar-json.googleapis.com")
+        );
+        assert_eq!(
+            api_id_for_service("sheets"),
+            Some("sheets.googleapis.com")
+        );
+        assert_eq!(
+            api_id_for_service("docs"),
+            Some("docs.googleapis.com")
+        );
+    }
+
+    #[test]
+    fn api_id_for_service_unknown_returns_none() {
+        assert_eq!(api_id_for_service("nonexistent"), None);
+        assert_eq!(api_id_for_service(""), None);
+        assert_eq!(api_id_for_service("DRIVE"), None); // case-sensitive
     }
 }

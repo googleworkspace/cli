@@ -138,6 +138,8 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --full           Request all scopes incl. pubsub + cloud-platform\n",
         "                            (may trigger restricted_client for unverified apps)\n",
         "           --scopes         Comma-separated custom scopes\n",
+        "           -s, --services   Comma-separated services to limit scope picker\n",
+        "                            (e.g. -s drive,gmail,calendar)\n",
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
@@ -492,6 +494,51 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
     }
 }
 
+/// Parse the `-s` / `--services` flag from login args.
+///
+/// Returns a list of GCP API IDs (e.g. `["drive.googleapis.com", "gmail.googleapis.com"]`)
+/// when the flag is present, or `None` if the flag was not supplied.
+/// Unknown service names are warned about and skipped.
+fn parse_services_filter(args: &[String]) -> Option<Vec<String>> {
+    let mut i = 0;
+    while i < args.len() {
+        let val: Option<&str> = if args[i] == "-s" || args[i] == "--services" {
+            i += 1;
+            args.get(i).map(|s| s.as_str())
+        } else if let Some(v) = args[i]
+            .strip_prefix("--services=")
+            .or_else(|| args[i].strip_prefix("-s="))
+        {
+            Some(v)
+        } else {
+            i += 1;
+            continue;
+        };
+
+        if let Some(v) = val {
+            let ids: Vec<String> = v
+                .split(',')
+                .filter_map(|name| {
+                    let name = name.trim();
+                    let id = crate::setup::api_id_for_service(name);
+                    if id.is_none() {
+                        eprintln!(
+                            "gws: warning: unknown service '{}' in -s flag (ignored)",
+                            name
+                        );
+                    }
+                    id.map(|s| s.to_string())
+                })
+                .collect();
+            if !ids.is_empty() {
+                return Some(ids);
+            }
+        }
+        break;
+    }
+    None
+}
+
 /// Resolve OAuth scopes: explicit flags > interactive picker > defaults.
 async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String> {
     // Explicit --scopes flag takes priority
@@ -510,18 +557,41 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
         return FULL_SCOPES.iter().map(|s| s.to_string()).collect();
     }
 
+    // Parse -s / --services flag: limit the scope picker to specific services.
+    // E.g. `gws auth login -s drive,gmail,calendar` only shows scopes for those APIs.
+    let services_filter: Option<Vec<String>> = parse_services_filter(args);
+
     // Interactive scope picker when running in a TTY
     if !cfg!(test) && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         // If we have a project_id, use discovery-based scope picker (rich templates)
         if let Some(pid) = project_id {
             let enabled_apis = crate::setup::get_enabled_apis(pid);
             if !enabled_apis.is_empty() {
-                let api_ids: Vec<String> = enabled_apis;
+                // If -s was given, intersect with the enabled set; otherwise use all enabled.
+                let api_ids: Vec<String> = if let Some(ref filter) = services_filter {
+                    enabled_apis
+                        .into_iter()
+                        .filter(|id| filter.contains(id))
+                        .collect()
+                } else {
+                    enabled_apis
+                };
                 let scopes = crate::setup::fetch_scopes_for_apis(&api_ids).await;
                 if !scopes.is_empty() {
                     if let Some(selected) = run_discovery_scope_picker(&scopes) {
                         return selected;
                     }
+                }
+            }
+        }
+
+        // No project_id but -s was given: fetch scopes for the specified services directly
+        // (no enabled-API gating needed — the user knows what they want).
+        if let Some(ref filter) = services_filter {
+            let scopes = crate::setup::fetch_scopes_for_apis(filter).await;
+            if !scopes.is_empty() {
+                if let Some(selected) = run_discovery_scope_picker(&scopes) {
+                    return selected;
                 }
             }
         }
@@ -1764,5 +1834,76 @@ mod tests {
         assert!(!is_workspace_admin_scope(
             "https://www.googleapis.com/auth/chat.messages"
         ));
+    }
+
+    #[test]
+    fn parse_services_filter_short_flag() {
+        let args: Vec<String> = ["-s", "drive,gmail"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let result = parse_services_filter(&args);
+        assert_eq!(
+            result,
+            Some(vec![
+                "drive.googleapis.com".to_string(),
+                "gmail.googleapis.com".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_services_filter_long_flag() {
+        let args: Vec<String> = ["--services", "calendar,sheets"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let result = parse_services_filter(&args);
+        assert_eq!(
+            result,
+            Some(vec![
+                "calendar-json.googleapis.com".to_string(),
+                "sheets.googleapis.com".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_services_filter_equals_syntax() {
+        let args: Vec<String> = ["--services=drive,docs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let result = parse_services_filter(&args);
+        assert_eq!(
+            result,
+            Some(vec![
+                "drive.googleapis.com".to_string(),
+                "docs.googleapis.com".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_services_filter_absent_returns_none() {
+        let args: Vec<String> = ["--readonly"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_services_filter(&args), None);
+    }
+
+    #[test]
+    fn parse_services_filter_unknown_service_skipped() {
+        let args: Vec<String> = ["-s", "drive,notaservice,gmail"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let result = parse_services_filter(&args);
+        // "notaservice" is silently dropped; the other two are resolved
+        assert_eq!(
+            result,
+            Some(vec![
+                "drive.googleapis.com".to_string(),
+                "gmail.googleapis.com".to_string()
+            ])
+        );
     }
 }
