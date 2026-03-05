@@ -235,10 +235,20 @@ async fn run() -> Result<(), GwsError> {
     // Get scopes from the method
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
-    // Authenticate: try OAuth, otherwise proceed unauthenticated
+    // Authenticate
     let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
+        Err(e) => {
+            eprintln!("Authentication failed: {e:#}");
+            eprintln!();
+            eprintln!("Troubleshooting:");
+            eprintln!("  1. Run `gws auth login --account <your-email>` to re-authenticate");
+            eprintln!("  2. Run `gws auth status` to check credential state");
+            eprintln!(
+                "  3. If the problem persists, run `gws auth logout` then `gws auth login`"
+            );
+            std::process::exit(1);
+        }
     };
 
     // Execute
