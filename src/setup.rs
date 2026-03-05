@@ -373,12 +373,14 @@ pub async fn fetch_scopes_for_apis(enabled_api_ids: &[String]) -> Vec<Discovered
 pub struct SetupOptions {
     pub project: Option<String>,
     pub dry_run: bool,
+    pub login: bool,
 }
 
 /// Parse setup flags from args.
 pub fn parse_setup_args(args: &[String]) -> SetupOptions {
     let mut project = None;
     let mut dry_run = false;
+    let mut login = false;
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--project" && i + 1 < args.len() {
@@ -390,11 +392,18 @@ pub fn parse_setup_args(args: &[String]) -> SetupOptions {
         } else if args[i] == "--dry-run" {
             dry_run = true;
             i += 1;
+        } else if args[i] == "--login" {
+            login = true;
+            i += 1;
         } else {
             i += 1;
         }
     }
-    SetupOptions { project, dry_run }
+    SetupOptions {
+        project,
+        dry_run,
+        login,
+    }
 }
 
 // ── gcloud helpers ──────────────────────────────────────────────
@@ -637,7 +646,6 @@ fn is_tos_precondition_error(gcloud_output: &str) -> bool {
 fn is_invalid_project_id_error(gcloud_output: &str) -> bool {
     let lower = gcloud_output.to_ascii_lowercase();
     lower.contains("argument project_id: bad value")
-        || lower.contains("project ids are immutable")
         || lower.contains("project ids must be between 6 and 30 characters")
 }
 
@@ -646,6 +654,7 @@ fn is_project_id_in_use_error(gcloud_output: &str) -> bool {
     lower.contains("already in use")
         || lower.contains("already exists")
         || lower.contains("already being used")
+        || lower.contains("project ids are immutable")
 }
 
 fn primary_gcloud_error_line(gcloud_output: &str) -> Option<String> {
@@ -1555,6 +1564,38 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
     Ok(SetupStage::Finish)
 }
 
+fn should_offer_login_prompt(
+    interactive: bool,
+    dry_run: bool,
+    login_requested: bool,
+    stdout_is_terminal: bool,
+) -> bool {
+    interactive && !dry_run && !login_requested && stdout_is_terminal
+}
+
+fn prompt_login_after_setup() -> Result<bool, GwsError> {
+    use std::io::Write;
+
+    let mut input = String::new();
+    loop {
+        eprint!("Run `gws auth login` now? [Y/n]: ");
+        std::io::stderr()
+            .flush()
+            .map_err(|e| GwsError::Validation(format!("Failed to flush prompt: {e}")))?;
+
+        input.clear();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| GwsError::Validation(format!("Failed to read prompt input: {e}")))?;
+
+        match input.trim().to_ascii_lowercase().as_str() {
+            "" | "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => eprintln!("Please answer 'y' or 'n'."),
+        }
+    }
+}
+
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
     let opts = parse_setup_args(args);
@@ -1604,9 +1645,28 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
 
     ctx.finish_wizard();
 
+    let run_login = if ctx.opts.login {
+        true
+    } else if should_offer_login_prompt(
+        ctx.interactive,
+        ctx.dry_run,
+        ctx.opts.login,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    ) {
+        prompt_login_after_setup()?
+    } else {
+        false
+    };
+
+    let message = if run_login {
+        "Setup complete! Starting `gws auth login`..."
+    } else {
+        "Setup complete! Run `gws auth login` to authenticate."
+    };
+
     let output = json!({
         "status": "success",
-        "message": "Setup complete! Run `gws auth login` to authenticate.",
+        "message": message,
         "account": ctx.account,
         "project": ctx.project_id,
         "apis_enabled": ctx.enabled.len(),
@@ -1619,7 +1679,11 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
 
-    eprintln!("\n✅ Setup complete! Run `gws auth login` to authenticate.");
+    eprintln!("\n✅ {message}");
+
+    if run_login {
+        crate::auth_commands::run_login(&[]).await?;
+    }
 
     Ok(())
 }
@@ -1764,6 +1828,7 @@ mod tests {
         let opts = parse_setup_args(&[]);
         assert!(opts.project.is_none());
         assert!(!opts.dry_run);
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1771,6 +1836,7 @@ mod tests {
         let args = vec!["--project".into(), "my-project".into()];
         let opts = parse_setup_args(&args);
         assert_eq!(opts.project.as_deref(), Some("my-project"));
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1778,6 +1844,7 @@ mod tests {
         let args = vec!["--project=my-project".into()];
         let opts = parse_setup_args(&args);
         assert_eq!(opts.project.as_deref(), Some("my-project"));
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1785,6 +1852,7 @@ mod tests {
         let args = vec!["--verbose".into(), "--unknown".into()];
         let opts = parse_setup_args(&args);
         assert!(opts.project.is_none());
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1792,6 +1860,7 @@ mod tests {
         let args = vec!["--dry-run".into()];
         let opts = parse_setup_args(&args);
         assert!(opts.dry_run);
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1800,6 +1869,36 @@ mod tests {
         let opts = parse_setup_args(&args);
         assert!(opts.dry_run);
         assert_eq!(opts.project.as_deref(), Some("p"));
+        assert!(!opts.login);
+    }
+
+    #[test]
+    fn test_parse_setup_args_login_flag() {
+        let args: Vec<String> = vec!["--login".into()];
+        let opts = parse_setup_args(&args);
+        assert!(opts.login);
+        assert!(!opts.dry_run);
+        assert!(opts.project.is_none());
+    }
+
+    #[test]
+    fn test_should_offer_login_prompt_default_interactive() {
+        assert!(should_offer_login_prompt(true, false, false, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_when_login_requested() {
+        assert!(!should_offer_login_prompt(true, false, true, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_non_interactive() {
+        assert!(!should_offer_login_prompt(false, false, false, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_dry_run() {
+        assert!(!should_offer_login_prompt(true, true, false, true));
     }
 
     #[test]
@@ -1841,6 +1940,17 @@ mod tests {
 
         assert!(msg.contains("ID is already in use"));
         assert!(msg.contains("different unique project ID"));
+    }
+
+    #[test]
+    fn test_format_project_create_failure_immutable_guidance() {
+        let msg = format_project_create_failure(
+            "example-project-123456",
+            "",
+            "Project IDs are immutable and can be set only during project creation.",
+        );
+
+        assert!(msg.contains("ID is already in use"));
     }
 
     // ── Account selection → gcloud action ───────────────────────

@@ -141,6 +141,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "                            (e.g. -s drive,gmail,sheets)\n",
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
+        "           --login          Run `gws auth login` after successful setup\n",
         "  status   Show current authentication state\n",
         "  export   Print decrypted credentials to stdout\n",
         "  logout   Clear saved credentials and token cache",
@@ -153,7 +154,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     }
 
     match args[0].as_str() {
-        "login" => handle_login(&args[1..]).await,
+        "login" => run_login(&args[1..]).await,
         "setup" => crate::setup::run_setup(&args[1..]).await,
         "status" => handle_status().await,
         "export" => {
@@ -165,6 +166,13 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
             "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
         ))),
     }
+}
+
+/// Run the `auth login` flow.
+///
+/// Exposed for internal orchestration (e.g. `auth setup --login`).
+pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
+    handle_login(args).await
 }
 /// Custom delegate that prints the OAuth URL on its own line for easy copying.
 /// Optionally includes `login_hint` in the URL for account pre-selection.
