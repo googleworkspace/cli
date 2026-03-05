@@ -24,7 +24,7 @@
 
         darwinDeps = with pkgs; [
           libiconv
-          darwin.apple_sdk.frameworks.Security
+          apple-sdk
         ];
 
         gws = pkgs.rustPlatform.buildRustPackage {
