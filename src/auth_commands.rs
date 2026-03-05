@@ -282,6 +282,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         ..Default::default()
     };
 
+    // Ensure openid + email scopes are always present so we can identify the user
+    // via the userinfo endpoint after login.
+    let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
+    for s in &identity_scopes {
+        if !scopes.iter().any(|existing| existing == s) {
+            scopes.push(s.to_string());
+        }
+    }
+
     // Use a temp file for yup-oauth2's token persistence, then encrypt it
     let temp_path = config_dir().join("credentials.tmp");
 
@@ -310,15 +319,6 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     .build()
     .await
     .map_err(|e| GwsError::Auth(format!("Failed to build authenticator: {e}")))?;
-
-    // Ensure openid + email scopes are always present so we can identify the user
-    // via the userinfo endpoint after login.
-    let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
-    for s in &identity_scopes {
-        if !scopes.iter().any(|existing| existing == s) {
-            scopes.push(s.to_string());
-        }
-    }
 
     // Request a token — this triggers the browser OAuth flow
     let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();

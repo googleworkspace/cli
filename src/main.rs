@@ -243,6 +243,7 @@ async fn run() -> Result<(), GwsError> {
             // propagate the error instead of silently falling back to unauthenticated.
             // Only fall back to None if no credentials exist at all.
             let err_msg = format!("{e:#}");
+            // NB: matches the bail!() message in auth::load_credentials_inner
             if err_msg.starts_with("No credentials found") {
                 (None, executor::AuthMethod::None)
             } else {
