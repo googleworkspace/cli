@@ -49,7 +49,7 @@
             description = cargoToml.package.description;
             homepage = cargoToml.package.homepage;
             license = licenses.asl20;
-            maintainers = [ ];
+            maintainers = [{ name = "Justin Poehnelt"; email = "justin.poehnelt@mgail.com"; }];
             mainProgram = "gws";
           };
         };
@@ -71,8 +71,6 @@
             clippy
             rustfmt
           ];
-          
-          nativeBuildInputs = [ pkgs.pkg-config ];
         };
       }
     );
