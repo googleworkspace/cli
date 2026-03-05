@@ -24,6 +24,12 @@ use anyhow::Context;
 
 use crate::credential_store;
 
+/// Returns the well-known Application Default Credentials path:
+/// `~/.config/gcloud/application_default_credentials.json`.
+fn adc_well_known_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("gcloud").join("application_default_credentials.json"))
+}
+
 /// Types of credentials we support
 #[derive(Debug)]
 enum Credential {
@@ -38,6 +44,10 @@ enum Credential {
 /// 1. `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var (plaintext JSON, can be User or Service Account)
 /// 2. Per-account encrypted credentials via `accounts.json` registry
 /// 3. Plaintext credentials at `~/.config/gws/credentials.json` (User only)
+/// 4. Application Default Credentials (ADC):
+///    - `GOOGLE_APPLICATION_CREDENTIALS` env var (path to a JSON credentials file), then
+///    - Well-known ADC path: `~/.config/gcloud/application_default_credentials.json`
+///      (populated by `gcloud auth application-default login`)
 ///
 /// When `account` is `Some`, a specific registered account is used.
 /// When `account` is `None`, the default account from `accounts.json` is used.
@@ -281,9 +291,37 @@ async fn load_credentials_inner(
         ));
     }
 
+    // 4. Application Default Credentials (ADC)
+    // Checks GOOGLE_APPLICATION_CREDENTIALS env var first, then the well-known path.
+    let adc_path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(adc_well_known_path);
+
+    if let Some(ref adc) = adc_path {
+        if adc.exists() {
+            let content = tokio::fs::read_to_string(adc)
+                .await
+                .with_context(|| format!("Failed to read ADC from {}", adc.display()))?;
+            let json: serde_json::Value =
+                serde_json::from_str(&content).context("Failed to parse ADC JSON")?;
+            if json.get("type").and_then(|v| v.as_str()) == Some("service_account") {
+                let key = yup_oauth2::parse_service_account_key(&content)
+                    .context("Failed to parse service account key from ADC")?;
+                return Ok(Credential::ServiceAccount(key));
+            }
+            let secret: yup_oauth2::authorized_user::AuthorizedUserSecret =
+                serde_json::from_str(&content)
+                    .context("Failed to parse authorized user credentials from ADC")?;
+            return Ok(Credential::AuthorizedUser(secret));
+        }
+    }
+
     anyhow::bail!(
         "No credentials found. Run `gws auth setup` to configure, \
-         `gws auth login` to authenticate, or set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"
+         `gws auth login` to authenticate, or set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE.\n\
+         Tip: Application Default Credentials (ADC) are also supported — run \
+         `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS."
     )
 }
 
@@ -306,6 +344,73 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("No credentials found"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_adc_env_var_authorized_user() {
+        let mut file = NamedTempFile::new().unwrap();
+        let json = r#"{
+            "client_id": "adc_id",
+            "client_secret": "adc_secret",
+            "refresh_token": "adc_refresh",
+            "type": "authorized_user"
+        }"#;
+        file.write_all(json.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                file.path().to_str().unwrap(),
+            );
+        }
+
+        let res = load_credentials_inner(
+            None,
+            &PathBuf::from("/missing/enc"),
+            &PathBuf::from("/missing/plain"),
+        )
+        .await;
+
+        unsafe {
+            std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
+        }
+
+        match res.unwrap() {
+            Credential::AuthorizedUser(secret) => {
+                assert_eq!(secret.client_id, "adc_id");
+                assert_eq!(secret.refresh_token, "adc_refresh");
+            }
+            _ => panic!("Expected AuthorizedUser from ADC"),
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_adc_env_var_missing_file() {
+        unsafe {
+            std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", "/does/not/exist.json");
+        }
+
+        // A missing ADC file pointed to by env var should fall through to the
+        // "No credentials found" error, not a hard failure.  The env var path
+        // is only used when it points to an existing file.
+        let err = load_credentials_inner(
+            None,
+            &PathBuf::from("/missing/enc"),
+            &PathBuf::from("/missing/plain"),
+        )
+        .await;
+
+        unsafe {
+            std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
+        }
+
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err().to_string().contains("No credentials found"),
+            "Should fall through when ADC env var points to missing file"
+        );
     }
 
     #[tokio::test]
