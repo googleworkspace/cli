@@ -235,11 +235,9 @@ async fn run() -> Result<(), GwsError> {
     // Get scopes from the method
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
-    // Authenticate: try OAuth, otherwise proceed unauthenticated
-    let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
-    };
+    // Authenticate: skips OAuth automatically when GOOGLE_WORKSPACE_CLI_API_BASE_URL is set.
+    let (token, auth_method) =
+        executor::resolve_auth(&scopes, account.as_deref()).await;
 
     // Execute
     executor::execute_method(
@@ -429,6 +427,9 @@ fn print_usage() {
     );
     println!(
         "    GOOGLE_WORKSPACE_CLI_ACCOUNT             Default account email for multi-account"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_API_BASE_URL        Custom API endpoint (e.g., mock server); disables auth"
     );
     println!();
     println!("COMMUNITY:");

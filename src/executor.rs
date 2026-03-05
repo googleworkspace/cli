@@ -38,6 +38,21 @@ pub enum AuthMethod {
     None,
 }
 
+/// Resolve authentication, skipping OAuth when a custom API endpoint is set.
+///
+/// When `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set, all requests go to a mock
+/// server that doesn't need (or support) Google OAuth. This helper centralises
+/// that check so every call-site doesn't need to know about the env var.
+pub async fn resolve_auth(scopes: &[&str], account: Option<&str>) -> (Option<String>, AuthMethod) {
+    if crate::discovery::custom_api_base_url().is_some() {
+        return (None, AuthMethod::None);
+    }
+    match crate::auth::get_token(scopes, account).await {
+        Ok(t) => (Some(t), AuthMethod::OAuth),
+        Err(_) => (None, AuthMethod::None),
+    }
+}
+
 /// Configuration for auto-pagination.
 #[derive(Debug, Clone)]
 pub struct PaginationConfig {

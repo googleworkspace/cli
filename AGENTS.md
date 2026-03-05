@@ -155,4 +155,5 @@ When adding a new helper or CLI command:
 - `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)
 - `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`)
 - `GOOGLE_WORKSPACE_CLI_ACCOUNT` — Default account email for multi-account usage (overridden by `--account` flag)
+- `GOOGLE_WORKSPACE_CLI_API_BASE_URL` — Redirects all API requests to a custom endpoint (e.g., `http://localhost:8099`). Authentication is automatically disabled. **Security: never set this in production** — it silently disables OAuth and sends all requests to an arbitrary endpoint.
 - Supports `.env` files via `dotenvy`
