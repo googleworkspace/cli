@@ -123,6 +123,12 @@ impl Helper for GmailHelper {
                         .required(true)
                         .value_name("TEXT"),
                 )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
                 .after_help(
                     "\
 EXAMPLES:
