@@ -1,0 +1,567 @@
+use super::*;
+
+/// Handle the `+reply` and `+reply-all` subcommands.
+pub(super) async fn handle_reply(
+    doc: &crate::discovery::RestDescription,
+    matches: &ArgMatches,
+    reply_all: bool,
+) -> Result<(), GwsError> {
+    let config = parse_reply_args(matches);
+
+    let token = auth::get_token(&[GMAIL_SCOPE])
+        .await
+        .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+
+    let client = crate::client::build_client()?;
+
+    // Fetch original message metadata
+    let original = fetch_message_metadata(&client, &token, &config.message_id).await?;
+
+    // Build reply headers
+    let reply_to = if reply_all {
+        build_reply_all_recipients(&original, config.cc.as_deref(), config.remove.as_deref())
+    } else {
+        ReplyRecipients {
+            to: extract_reply_to_address(&original),
+            cc: config.cc.clone(),
+        }
+    };
+
+    let subject = build_reply_subject(&original.subject);
+    let in_reply_to = original.message_id_header.clone();
+    let references = build_references(&original.references, &original.message_id_header);
+
+    let raw = create_reply_raw_message(
+        &reply_to.to,
+        reply_to.cc.as_deref(),
+        &subject,
+        &in_reply_to,
+        &references,
+        &config.body_text,
+        &original,
+    );
+
+    let encoded = URL_SAFE.encode(&raw);
+    let body = json!({
+        "raw": encoded,
+        "threadId": original.thread_id,
+    });
+    let body_str = body.to_string();
+
+    let send_method = resolve_send_method(doc)?;
+    let params = json!({ "userId": "me" });
+    let params_str = params.to_string();
+
+    let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+    let (token, auth_method) = match auth::get_token(&scopes).await {
+        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+        Err(_) => (None, executor::AuthMethod::None),
+    };
+
+    let pagination = executor::PaginationConfig {
+        page_all: false,
+        page_limit: 10,
+        page_delay_ms: 100,
+    };
+
+    executor::execute_method(
+        doc,
+        send_method,
+        Some(&params_str),
+        Some(&body_str),
+        token.as_deref(),
+        auth_method,
+        None,
+        None,
+        matches.get_flag("dry-run"),
+        &pagination,
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
+
+// --- Data structures ---
+
+pub(super) struct OriginalMessage {
+    pub thread_id: String,
+    pub message_id_header: String,
+    pub references: String,
+    pub from: String,
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    pub date: String,
+    pub snippet: String,
+}
+
+struct ReplyRecipients {
+    to: String,
+    cc: Option<String>,
+}
+
+pub struct ReplyConfig {
+    pub message_id: String,
+    pub body_text: String,
+    pub cc: Option<String>,
+    pub remove: Option<String>,
+}
+
+// --- Message fetching ---
+
+pub(super) async fn fetch_message_metadata(
+    client: &reqwest::Client,
+    token: &str,
+    message_id: &str,
+) -> Result<OriginalMessage, GwsError> {
+    let url = format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata\
+         &metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc\
+         &metadataHeaders=Subject&metadataHeaders=Date\
+         &metadataHeaders=Message-ID&metadataHeaders=References",
+        message_id
+    );
+
+    let resp = crate::client::send_with_retry(|| client.get(&url).bearer_auth(token))
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let err = resp.text().await.unwrap_or_default();
+        return Err(GwsError::Api {
+            code: status,
+            message: format!("Failed to fetch message {message_id}: {err}"),
+            reason: "fetchFailed".to_string(),
+            enable_url: None,
+        });
+    }
+
+    let msg: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
+
+    let thread_id = msg
+        .get("threadId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let snippet = msg
+        .get("snippet")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let headers = msg
+        .get("payload")
+        .and_then(|p| p.get("headers"))
+        .and_then(|h| h.as_array());
+
+    let mut from = String::new();
+    let mut to = String::new();
+    let mut cc = String::new();
+    let mut subject = String::new();
+    let mut date = String::new();
+    let mut message_id_header = String::new();
+    let mut references = String::new();
+
+    if let Some(headers) = headers {
+        for h in headers {
+            let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            match name {
+                "From" => from = value.to_string(),
+                "To" => to = value.to_string(),
+                "Cc" => cc = value.to_string(),
+                "Subject" => subject = value.to_string(),
+                "Date" => date = value.to_string(),
+                "Message-ID" | "Message-Id" => message_id_header = value.to_string(),
+                "References" => references = value.to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(OriginalMessage {
+        thread_id,
+        message_id_header,
+        references,
+        from,
+        to,
+        cc,
+        subject,
+        date,
+        snippet,
+    })
+}
+
+// --- Header construction ---
+
+fn extract_reply_to_address(original: &OriginalMessage) -> String {
+    original.from.clone()
+}
+
+fn build_reply_all_recipients(
+    original: &OriginalMessage,
+    extra_cc: Option<&str>,
+    remove: Option<&str>,
+) -> ReplyRecipients {
+    let to = original.from.clone();
+
+    // Combine original To and Cc for the CC field (excluding the original sender)
+    let mut cc_addrs: Vec<&str> = Vec::new();
+
+    if !original.to.is_empty() {
+        for addr in original.to.split(',') {
+            let addr = addr.trim();
+            if !addr.is_empty() {
+                cc_addrs.push(addr);
+            }
+        }
+    }
+    if !original.cc.is_empty() {
+        for addr in original.cc.split(',') {
+            let addr = addr.trim();
+            if !addr.is_empty() {
+                cc_addrs.push(addr);
+            }
+        }
+    }
+
+    // Add extra CC if provided
+    if let Some(extra) = extra_cc {
+        for addr in extra.split(',') {
+            let addr = addr.trim();
+            if !addr.is_empty() {
+                cc_addrs.push(addr);
+            }
+        }
+    }
+
+    // Remove addresses if requested
+    let remove_set: Vec<String> = remove
+        .map(|r| {
+            r.split(',')
+                .map(|s| s.trim().to_lowercase())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let cc_addrs: Vec<&str> = cc_addrs
+        .into_iter()
+        .filter(|addr| {
+            let lower = addr.to_lowercase();
+            // Filter out the sender (already in To) and removed addresses
+            !lower.contains(&original.from.to_lowercase())
+                && !remove_set.iter().any(|r| lower.contains(r))
+        })
+        .collect();
+
+    let cc = if cc_addrs.is_empty() {
+        None
+    } else {
+        Some(cc_addrs.join(", "))
+    };
+
+    ReplyRecipients { to, cc }
+}
+
+fn build_reply_subject(original_subject: &str) -> String {
+    if original_subject
+        .to_lowercase()
+        .starts_with("re:")
+    {
+        original_subject.to_string()
+    } else {
+        format!("Re: {}", original_subject)
+    }
+}
+
+fn build_references(original_references: &str, original_message_id: &str) -> String {
+    if original_references.is_empty() {
+        original_message_id.to_string()
+    } else {
+        format!("{} {}", original_references, original_message_id)
+    }
+}
+
+fn create_reply_raw_message(
+    to: &str,
+    cc: Option<&str>,
+    subject: &str,
+    in_reply_to: &str,
+    references: &str,
+    body: &str,
+    original: &OriginalMessage,
+) -> String {
+    let mut headers = format!(
+        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}",
+        to, subject, in_reply_to, references
+    );
+
+    if let Some(cc) = cc {
+        headers.push_str(&format!("\r\nCc: {}", cc));
+    }
+
+    let quoted = format_quoted_original(original);
+
+    format!("{}\r\n\r\n{}\r\n\r\n{}", headers, body, quoted)
+}
+
+fn format_quoted_original(original: &OriginalMessage) -> String {
+    let quoted_body: String = original
+        .snippet
+        .lines()
+        .map(|line| format!("> {}", line))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "On {}, {} wrote:\n{}",
+        original.date, original.from, quoted_body
+    )
+}
+
+// --- Helpers ---
+
+pub(super) fn resolve_send_method(
+    doc: &crate::discovery::RestDescription,
+) -> Result<&crate::discovery::RestMethod, GwsError> {
+    let users_res = doc
+        .resources
+        .get("users")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users' not found".to_string()))?;
+    let messages_res = users_res
+        .resources
+        .get("messages")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users.messages' not found".to_string()))?;
+    messages_res
+        .methods
+        .get("send")
+        .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
+}
+
+fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
+    ReplyConfig {
+        message_id: matches
+            .get_one::<String>("message-id")
+            .unwrap()
+            .to_string(),
+        body_text: matches.get_one::<String>("body").unwrap().to_string(),
+        cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
+        remove: matches.get_one::<String>("remove").map(|s| s.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_reply_subject_without_prefix() {
+        assert_eq!(build_reply_subject("Hello"), "Re: Hello");
+    }
+
+    #[test]
+    fn test_build_reply_subject_with_prefix() {
+        assert_eq!(build_reply_subject("Re: Hello"), "Re: Hello");
+    }
+
+    #[test]
+    fn test_build_reply_subject_case_insensitive() {
+        assert_eq!(build_reply_subject("RE: Hello"), "RE: Hello");
+    }
+
+    #[test]
+    fn test_build_references_empty() {
+        assert_eq!(
+            build_references("", "<msg-1@example.com>"),
+            "<msg-1@example.com>"
+        );
+    }
+
+    #[test]
+    fn test_build_references_with_existing() {
+        assert_eq!(
+            build_references("<msg-0@example.com>", "<msg-1@example.com>"),
+            "<msg-0@example.com> <msg-1@example.com>"
+        );
+    }
+
+    #[test]
+    fn test_create_reply_raw_message_basic() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            snippet: "Original body".to_string(),
+        };
+
+        let raw = create_reply_raw_message(
+            "alice@example.com",
+            None,
+            "Re: Hello",
+            "<abc@example.com>",
+            "<abc@example.com>",
+            "My reply",
+            &original,
+        );
+
+        assert!(raw.contains("To: alice@example.com"));
+        assert!(raw.contains("Subject: Re: Hello"));
+        assert!(raw.contains("In-Reply-To: <abc@example.com>"));
+        assert!(raw.contains("References: <abc@example.com>"));
+        assert!(raw.contains("My reply"));
+        assert!(raw.contains("> Original body"));
+    }
+
+    #[test]
+    fn test_create_reply_raw_message_with_cc() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            snippet: "Original body".to_string(),
+        };
+
+        let raw = create_reply_raw_message(
+            "alice@example.com",
+            Some("carol@example.com"),
+            "Re: Hello",
+            "<abc@example.com>",
+            "<abc@example.com>",
+            "Reply with CC",
+            &original,
+        );
+
+        assert!(raw.contains("Cc: carol@example.com"));
+    }
+
+    #[test]
+    fn test_build_reply_all_recipients() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            to: "bob@example.com, carol@example.com".to_string(),
+            cc: "dave@example.com".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            snippet: "".to_string(),
+        };
+
+        let recipients = build_reply_all_recipients(&original, None, None);
+        assert_eq!(recipients.to, "alice@example.com");
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(cc.contains("carol@example.com"));
+        assert!(cc.contains("dave@example.com"));
+        // Sender should not be in CC
+        assert!(!cc.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn test_build_reply_all_with_remove() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            to: "bob@example.com, carol@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+
+        let recipients =
+            build_reply_all_recipients(&original, None, Some("carol@example.com"));
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(!cc.contains("carol@example.com"));
+    }
+
+    fn make_reply_matches(args: &[&str]) -> ArgMatches {
+        let cmd = Command::new("test")
+            .arg(Arg::new("message-id").long("message-id"))
+            .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("cc").long("cc"))
+            .arg(Arg::new("remove").long("remove"))
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .action(ArgAction::SetTrue),
+            );
+        cmd.try_get_matches_from(args).unwrap()
+    }
+
+    #[test]
+    fn test_parse_reply_args() {
+        let matches = make_reply_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--body",
+            "My reply",
+        ]);
+        let config = parse_reply_args(&matches);
+        assert_eq!(config.message_id, "abc123");
+        assert_eq!(config.body_text, "My reply");
+        assert!(config.cc.is_none());
+        assert!(config.remove.is_none());
+    }
+
+    #[test]
+    fn test_parse_reply_args_with_cc_and_remove() {
+        let matches = make_reply_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--body",
+            "Reply",
+            "--cc",
+            "extra@example.com",
+            "--remove",
+            "unwanted@example.com",
+        ]);
+        let config = parse_reply_args(&matches);
+        assert_eq!(config.cc.unwrap(), "extra@example.com");
+        assert_eq!(config.remove.unwrap(), "unwanted@example.com");
+    }
+
+    #[test]
+    fn test_extract_reply_to_address() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "Alice <alice@example.com>".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        assert_eq!(
+            extract_reply_to_address(&original),
+            "Alice <alice@example.com>"
+        );
+    }
+}

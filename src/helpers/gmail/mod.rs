@@ -13,10 +13,14 @@
 // limitations under the License.
 
 use super::Helper;
+pub mod forward;
+pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
+use forward::handle_forward;
+use reply::handle_reply;
 use send::handle_send;
 use triage::handle_triage;
 use watch::handle_watch;
@@ -112,6 +116,127 @@ EXAMPLES:
 TIPS:
   Read-only — never modifies your mailbox.
   Defaults to table output format.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+reply")
+                .about("[Helper] Reply to a message (handles threading automatically)")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to reply to")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Reply body (plain text)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("Additional CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
+
+TIPS:
+  Automatically sets In-Reply-To, References, and threadId headers.
+  Quotes the original message in the reply body.
+  For reply-all, use +reply-all instead.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+reply-all")
+                .about("[Helper] Reply-all to a message (handles threading automatically)")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to reply to")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Reply body (plain text)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("Additional CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("remove")
+                        .long("remove")
+                        .help("Remove recipients from the reply (comma-separated emails)")
+                        .value_name("EMAILS"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
+
+TIPS:
+  Replies to the sender and all original To/CC recipients.
+  Use --remove to drop recipients from the thread.
+  Use --cc to add new recipients.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+forward")
+                .about("[Helper] Forward a message to new recipients")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to forward")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Recipient email address(es), comma-separated")
+                        .required(true)
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Optional note to include above the forwarded message")
+                        .value_name("TEXT"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
+
+TIPS:
+  Includes the original message with sender, date, subject, and recipients.
+  Keeps the message in the same thread.",
                 ),
         );
 
@@ -212,6 +337,21 @@ TIPS:
                 return Ok(true);
             }
 
+            if let Some(matches) = matches.subcommand_matches("+reply") {
+                handle_reply(doc, matches, false).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+reply-all") {
+                handle_reply(doc, matches, true).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+forward") {
+                handle_forward(doc, matches).await?;
+                return Ok(true);
+            }
+
             if let Some(matches) = matches.subcommand_matches("+triage") {
                 handle_triage(matches).await?;
                 return Ok(true);
@@ -242,5 +382,8 @@ mod tests {
         let subcommands: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         assert!(subcommands.contains(&"+watch"));
         assert!(subcommands.contains(&"+send"));
+        assert!(subcommands.contains(&"+reply"));
+        assert!(subcommands.contains(&"+reply-all"));
+        assert!(subcommands.contains(&"+forward"));
     }
 }
