@@ -536,6 +536,11 @@ impl SetupWizard {
         multiselect: bool,
     ) -> std::io::Result<PickerResult> {
         let mut picker = PickerState::new(title, help_text, items, multiselect);
+        // Drain any queued key events from the previous interaction
+        // to prevent stale keypresses from leaking into the picker.
+        while crossterm::event::poll(std::time::Duration::ZERO)? {
+            let _ = event::read()?;
+        }
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
@@ -598,6 +603,11 @@ impl SetupWizard {
         initial: Option<&str>,
     ) -> std::io::Result<InputResult> {
         let mut input = InputState::new(title, help_text, initial);
+        // Drain any queued key events from the previous interaction
+        // to prevent stale keypresses from leaking into the input.
+        while crossterm::event::poll(std::time::Duration::ZERO)? {
+            let _ = event::read()?;
+        }
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
