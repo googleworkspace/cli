@@ -183,14 +183,18 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
+/// Cached custom API base URL, read once from the environment.
+static CUSTOM_API_BASE_URL: std::sync::LazyLock<Option<String>> =
+    std::sync::LazyLock::new(|| std::env::var("GWS_API_BASE_URL").ok().filter(|s| !s.is_empty()));
+
 /// Returns the custom API base URL override, if set.
 ///
 /// When `GWS_API_BASE_URL` is set (e.g., `http://localhost:8099`), all API
 /// requests are directed to this endpoint instead of the real Google APIs.
 /// Authentication is skipped automatically. This is useful for testing against
 /// mock API servers.
-pub fn custom_api_base_url() -> Option<String> {
-    std::env::var("GWS_API_BASE_URL").ok().filter(|s| !s.is_empty())
+pub fn custom_api_base_url() -> Option<&'static str> {
+    CUSTOM_API_BASE_URL.as_deref()
 }
 
 /// Fetches and caches a Google Discovery Document.
