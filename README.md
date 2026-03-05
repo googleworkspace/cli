@@ -127,9 +127,10 @@ gws auth login       # subsequent scope selection and login
 > [!WARNING]
 > **Scope limits in testing mode:** If your OAuth app is unverified (testing mode),
 > Google limits consent to ~25 scopes. The `recommended` scope preset includes 85+
-> scopes and **will fail** for unverified apps. Choose individual service scopes instead:
+> scopes and **will fail** for unverified apps (especially for `@gmail.com` accounts).
+> Choose individual services instead to filter the scope picker:
 > ```bash
-> gws auth login --scopes drive,gmail,calendar
+> gws auth login -s drive,gmail,sheets
 > ```
 
 ### Multiple accounts
