@@ -1,5 +1,18 @@
 # @googleworkspace/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- 9cf6e0e: Add `--tool-mode compact|full` flag to `gws mcp`. Compact mode exposes one tool per service plus a `gws_discover` meta-tool, reducing context window usage from 200-400 tools to ~26.
+
+### Patch Changes
+
+- 0a16d0b: Add `-s`/`--services` flag to `gws auth login` to filter the scope picker
+  by service name (e.g. `-s drive,gmail,sheets`). Also expands the workspace
+  admin scope blocklist to include `chat.admin.*` and `classroom.*` patterns.
+- 5205467: fix(setup): drain stale keypresses between TUI screen transitions
+
 ## 0.4.4
 
 ### Patch Changes
