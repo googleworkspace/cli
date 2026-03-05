@@ -451,6 +451,128 @@ fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools
     }
 }
 
+async fn handle_discover(arguments: &Value, config: &ServerConfig) -> Result<Value, GwsError> {
+    let service = arguments
+        .get("service")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| GwsError::Validation("Missing 'service' in gws_discover".to_string()))?;
+
+    if !config.services.contains(&service.to_string()) {
+        return Err(GwsError::Validation(format!(
+            "Service '{}' is not enabled. Enabled: {}",
+            service,
+            config.services.join(", ")
+        )));
+    }
+
+    let (api_name, version) =
+        crate::parse_service_and_version(&[service.to_string()], service)?;
+    let doc = crate::discovery::fetch_discovery_document(&api_name, &version).await?;
+
+    let resource_name = arguments.get("resource").and_then(|v| v.as_str());
+    let method_name = arguments.get("method").and_then(|v| v.as_str());
+
+    let result = match (resource_name, method_name) {
+        // Level 1: list resources
+        (None, _) => {
+            let resources: Vec<Value> = doc
+                .resources
+                .iter()
+                .map(|(name, res)| {
+                    let methods: Vec<&str> = res.methods.keys().map(|s| s.as_str()).collect();
+                    json!({
+                        "name": name,
+                        "methods": methods
+                    })
+                })
+                .collect();
+            json!({ "service": service, "resources": resources })
+        }
+        // Level 2: list methods for a resource
+        (Some(res), None) => {
+            let resource = find_resource(&doc.resources, res)
+                .ok_or_else(|| GwsError::Validation(format!(
+                    "Resource '{}' not found in {}. Available: {}",
+                    res, service,
+                    doc.resources.keys().cloned().collect::<Vec<_>>().join(", ")
+                )))?;
+            let methods: Vec<Value> = resource
+                .methods
+                .iter()
+                .map(|(name, m)| {
+                    json!({
+                        "name": name,
+                        "httpMethod": m.http_method,
+                        "description": m.description.as_deref().unwrap_or("")
+                    })
+                })
+                .collect();
+            json!({ "service": service, "resource": res, "methods": methods })
+        }
+        // Level 3: full param schema for a method
+        (Some(res), Some(meth)) => {
+            let resource = find_resource(&doc.resources, res)
+                .ok_or_else(|| GwsError::Validation(format!(
+                    "Resource '{}' not found in {}", res, service
+                )))?;
+            let method = resource.methods.get(meth)
+                .ok_or_else(|| GwsError::Validation(format!(
+                    "Method '{}' not found in {}.{}. Available: {}",
+                    meth, service, res,
+                    resource.methods.keys().cloned().collect::<Vec<_>>().join(", ")
+                )))?;
+            let params: Vec<Value> = method
+                .parameters
+                .iter()
+                .map(|(name, p)| {
+                    json!({
+                        "name": name,
+                        "type": p.param_type.as_deref().unwrap_or("string"),
+                        "required": p.required,
+                        "location": p.location.as_deref().unwrap_or("query"),
+                        "description": p.description.as_deref().unwrap_or("")
+                    })
+                })
+                .collect();
+            json!({
+                "service": service,
+                "resource": res,
+                "method": meth,
+                "httpMethod": method.http_method,
+                "description": method.description.as_deref().unwrap_or(""),
+                "parameters": params,
+                "supportsMediaUpload": method.supports_media_upload,
+                "supportsMediaDownload": method.supports_media_download
+            })
+        }
+    };
+
+    Ok(json!({
+        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }],
+        "isError": false
+    }))
+}
+
+/// Walk into potentially nested resources by dot-separated path (e.g., "projects.locations.templates").
+fn find_resource<'a>(
+    resources: &'a HashMap<String, RestResource>,
+    path: &str,
+) -> Option<&'a RestResource> {
+    let segments: Vec<&str> = path.split('.').collect();
+    let mut current = resources;
+    let mut found = None;
+    for seg in &segments {
+        match current.get(*seg) {
+            Some(res) => {
+                found = Some(res);
+                current = &res.resources;
+            }
+            None => return None,
+        }
+    }
+    found
+}
+
 async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Value, GwsError> {
     let tool_name = params
         .get("name")
@@ -464,6 +586,10 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         return Err(GwsError::Other(anyhow::anyhow!(
             "Workflows are not yet fully implemented via MCP"
         )));
+    }
+
+    if tool_name == "gws_discover" {
+        return handle_discover(arguments, config).await;
     }
 
     let parts: Vec<&str> = tool_name.split('_').collect();
