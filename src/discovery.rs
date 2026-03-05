@@ -229,12 +229,12 @@ pub async fn fetch_discovery_document(
         resp.text().await?
     } else {
         // Try the $discovery/rest URL pattern used by newer APIs (Forms, Keep, Meet, etc.)
-        let alt_url = format!(
-            "https://{}.googleapis.com/$discovery/rest?version={}",
-            crate::validate::encode_path_segment(service),
-            crate::validate::encode_path_segment(version),
-        );
-        let alt_resp = client.get(&alt_url).send().await?;
+        let alt_url = format!("https://{service}.googleapis.com/$discovery/rest");
+        let alt_resp = client
+            .get(&alt_url)
+            .query(&[("version", version)])
+            .send()
+            .await?;
         if !alt_resp.status().is_success() {
             anyhow::bail!(
                 "Failed to fetch Discovery Document for {service}/{version}: HTTP {} (tried both standard and $discovery URLs)",
