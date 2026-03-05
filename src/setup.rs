@@ -398,17 +398,28 @@ pub fn parse_setup_args(args: &[String]) -> SetupOptions {
 
 // ── gcloud helpers ──────────────────────────────────────────────
 
+/// Returns the gcloud executable name for the current platform.
+/// On Windows, gcloud is installed as `gcloud.cmd` which Rust's
+/// `Command` cannot find without the extension.
+fn gcloud_bin() -> &'static str {
+    if cfg!(windows) {
+        "gcloud.cmd"
+    } else {
+        "gcloud"
+    }
+}
+
 /// Create a gcloud Command with interactive prompts disabled.
 /// This prevents CBA proxy install prompts from blocking subprocess calls.
 fn gcloud_cmd() -> Command {
-    let mut cmd = Command::new("gcloud");
+    let mut cmd = Command::new(gcloud_bin());
     cmd.env("CLOUDSDK_CORE_DISABLE_PROMPTS", "1");
     cmd
 }
 
 /// Check if gcloud CLI is installed.
 pub fn is_gcloud_installed() -> bool {
-    Command::new("gcloud")
+    Command::new(gcloud_bin())
         .arg("version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -647,7 +658,7 @@ async fn enable_apis(
         .map(|api_id| {
             let project_id = project_id.to_string();
             async move {
-                let result = tokio::process::Command::new("gcloud")
+                let result = tokio::process::Command::new(gcloud_bin())
                     .env("CLOUDSDK_CORE_DISABLE_PROMPTS", "1")
                     .args(["services", "enable", &api_id, "--project", &project_id])
                     .stdout(std::process::Stdio::null())
@@ -1259,7 +1270,7 @@ fn manual_oauth_instructions(project_id: &str) -> String {
             "     gws auth login\n\n",
             "   Option B — Download the JSON file:\n",
             "     Download 'client_secret_*.json' from the Cloud Console dialog\n",
-            "     and save it to: ~/.config/gws/client_secret.json\n",
+            "     and save it to: {config_path}\n",
             "     Then run: gws auth login\n\n",
             "   Option C — Re-run setup interactively (recommended for first-time setup):\n",
             "     gws auth setup\n\n",
@@ -1267,7 +1278,8 @@ fn manual_oauth_instructions(project_id: &str) -> String {
             "Desktop app clients do not require you to register a redirect URI manually."
         ),
         consent_url = consent_url,
-        creds_url = creds_url
+        creds_url = creds_url,
+        config_path = crate::oauth_config::client_config_path().display()
     )
 }
 
@@ -1961,5 +1973,15 @@ mod tests {
             .map(|(api, err)| json!({"api": api, "error": err}))
             .collect();
         assert!(json_failed.is_empty());
+    }
+
+    #[test]
+    fn gcloud_bin_returns_platform_appropriate_name() {
+        let bin = gcloud_bin();
+        if cfg!(windows) {
+            assert_eq!(bin, "gcloud.cmd");
+        } else {
+            assert_eq!(bin, "gcloud");
+        }
     }
 }

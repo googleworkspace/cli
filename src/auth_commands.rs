@@ -339,13 +339,15 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
             Some(config.project_id),
         )),
         Err(_) => Err(GwsError::Auth(
-            "No OAuth client configured.\n\n\
-             Either:\n  \
-               1. Run `gws auth setup` to configure a GCP project and OAuth client\n  \
-               2. Download client_secret.json from Google Cloud Console and save it to:\n     \
-                  ~/.config/gws/client_secret.json\n  \
-               3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"
-                .to_string(),
+            format!(
+                "No OAuth client configured.\n\n\
+                 Either:\n  \
+                   1. Run `gws auth setup` to configure a GCP project and OAuth client\n  \
+                   2. Download client_secret.json from Google Cloud Console and save it to:\n     \
+                      {}\n  \
+                   3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
+                crate::oauth_config::client_config_path().display()
+            ),
         )),
     }
 }
