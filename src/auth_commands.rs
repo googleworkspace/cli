@@ -133,7 +133,7 @@ fn token_cache_path() -> PathBuf {
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
         "Usage: gws auth <login|setup|status|export|logout|list|default> [options]\n\n",
-        "  login    Authenticate via OAuth2 (opens browser)\n",
+        "  login    [MANUAL] Authenticate via OAuth2 (opens browser for consent)\n",
         "           --account EMAIL  Associate credentials with a specific account\n",
         "           --readonly       Request read-only scopes\n",
         "           --full           Request all scopes incl. pubsub + cloud-platform\n",
@@ -141,7 +141,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --scopes         Comma-separated custom scopes\n",
         "           -s, --services   Comma-separated service names to limit scope picker\n",
         "                            (e.g. -s drive,gmail,sheets)\n",
-        "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
+        "  setup    [MANUAL] Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
         "  export   Print decrypted credentials to stdout\n",
@@ -203,7 +203,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
             } else {
                 url.to_string()
             };
-            eprintln!("Open this URL in your browser to authenticate:\n");
+            eprintln!("[MANUAL] Open this URL in your browser to authenticate:\n");
             eprintln!("  {display_url}\n");
             Ok(String::new())
         })
@@ -508,8 +508,8 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
             format!(
                 "No OAuth client configured.\n\n\
                  Either:\n  \
-                   1. Run `gws auth setup` to configure a GCP project and OAuth client\n  \
-                   2. Download client_secret.json from Google Cloud Console and save it to:\n     \
+                   1. [MANUAL] Run `gws auth setup` (interactive wizard, opens browser)\n  \
+                   2. [MANUAL] Download client_secret.json from Google Cloud Console and save it to:\n     \
                       {}\n  \
                    3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
                 crate::oauth_config::client_config_path().display()

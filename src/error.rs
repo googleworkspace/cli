@@ -111,11 +111,11 @@ pub fn print_error_json(err: &GwsError) {
     {
         if reason == "accessNotConfigured" {
             eprintln!();
-            eprintln!("💡 API not enabled for your GCP project.");
+            eprintln!("💡 [MANUAL] API not enabled for your GCP project.");
             if let Some(url) = enable_url {
-                eprintln!("   Enable it at: {url}");
+                eprintln!("   [MANUAL] Enable it at: {url}");
             } else {
-                eprintln!("   Visit the GCP Console → APIs & Services → Library to enable the required API.");
+                eprintln!("   [MANUAL] Visit the GCP Console → APIs & Services → Library to enable the required API.");
             }
             eprintln!("   After enabling, wait a few seconds and retry your command.");
         }

@@ -921,7 +921,7 @@ fn stage_account(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
                             .unwrap()
                             .suspend()
                             .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
-                        eprintln!("  → Opening browser for login...");
+                        eprintln!("  → [MANUAL] Opening browser for login...");
                         gcloud_auth_login()?;
                         let acct = get_gcloud_account()?.ok_or_else(|| {
                             GwsError::Auth("Authentication failed — no active account".to_string())
@@ -1285,21 +1285,21 @@ fn manual_oauth_instructions(project_id: &str) -> String {
 
     format!(
         concat!(
-            "OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
+            "[MANUAL] OAuth client creation requires manual setup in the Google Cloud Console.\n\n",
             "Follow these steps:\n\n",
-            "1. Configure the OAuth consent screen (if not already done):\n",
+            "1. [MANUAL] Configure the OAuth consent screen (if not already done):\n",
             "   {consent_url}\n",
             "   → User Type: External\n",
             "   → App name: gws CLI (or your preferred name)\n",
             "   → Support email: your Google account email\n",
             "   → Save and continue through all screens\n\n",
-            "2. Create an OAuth client ID:\n",
+            "2. [MANUAL] Create an OAuth client ID:\n",
             "   {creds_url}\n",
             "   → Click 'Create Credentials' → 'OAuth client ID'\n",
             "   → Application type: Desktop app\n",
             "   → Name: gws CLI (or your preferred name)\n",
             "   → Click 'Create'\n\n",
-            "3. Copy the Client ID and Client Secret shown in the dialog.\n\n",
+            "3. [MANUAL] Copy the Client ID and Client Secret shown in the dialog.\n\n",
             "4. Provide the credentials to gws using one of these methods:\n\n",
             "   Option A — Environment variables (recommended for CI/scripts):\n",
             "     export GOOGLE_WORKSPACE_CLI_CLIENT_ID=\"<your-client-id>\"\n",
