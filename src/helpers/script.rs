@@ -23,6 +23,7 @@ use std::fs;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
+use std::process::Command as OsCommand;
 
 pub struct ScriptHelper;
 
@@ -32,6 +33,26 @@ impl Helper for ScriptHelper {
         mut cmd: Command,
         _doc: &crate::discovery::RestDescription,
     ) -> Command {
+        cmd = cmd.subcommand(
+            Command::new("+open")
+                .about("[MANUAL] Open the Apps Script editor in your browser")
+                .arg(
+                    Arg::new("script")
+                        .long("script")
+                        .help("Script Project ID")
+                        .required(true)
+                        .value_name("SCRIPT_ID"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws script +open --script SCRIPT_ID
+
+NOTE:
+  [MANUAL] This opens a browser window. AI agents should hand control
+  to the user for this step.",
+                ),
+        );
         cmd = cmd.subcommand(
             Command::new("+push")
                 .about("[Helper] Upload local files to an Apps Script project")
@@ -70,6 +91,27 @@ TIPS:
         _sanitize_config: &'a crate::helpers::modelarmor::SanitizeConfig,
     ) -> Pin<Box<dyn Future<Output = Result<bool, GwsError>> + Send + 'a>> {
         Box::pin(async move {
+            if let Some(matches) = matches.subcommand_matches("+open") {
+                let script_id = matches.get_one::<String>("script").unwrap();
+                let url = format!(
+                    "https://script.google.com/home/projects/{}/edit",
+                    script_id
+                );
+                eprintln!("[MANUAL] Opening Apps Script editor in your browser...");
+                #[cfg(target_os = "macos")]
+                let _ = OsCommand::new("open").arg(&url).status();
+                #[cfg(target_os = "linux")]
+                let _ = OsCommand::new("xdg-open").arg(&url).status();
+                #[cfg(target_os = "windows")]
+                let _ = OsCommand::new("cmd").args(["/C", "start", &url]).status();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({ "status": "opened", "url": url }))
+                        .unwrap_or_default()
+                );
+                return Ok(true);
+            }
+
             if let Some(matches) = matches.subcommand_matches("+push") {
                 let script_id = matches.get_one::<String>("script").unwrap();
                 let dir_path = matches
