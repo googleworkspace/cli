@@ -6,6 +6,7 @@
       - any-glob-to-any-file:
           - src/auth.rs
           - src/auth_commands.rs
+          - src/setup.rs
           - src/accounts.rs
           - src/credential_store.rs
           - src/token_storage.rs
@@ -27,7 +28,6 @@
   - changed-files:
       - any-glob-to-any-file:
           - src/setup_tui.rs
-          - src/formatter.rs
 
 "area: mcp":
   - changed-files:
@@ -53,3 +53,16 @@
           - .github/workflows/release-changesets.yml
           - dist-workspace.toml
           - Cargo.toml
+
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/main.rs
+          - src/commands.rs
+          - src/error.rs
+          - src/formatter.rs
+          - src/fs_util.rs
+          - src/helpers/**
+          - src/text.rs
+          - src/validate.rs
+          - src/schema.rs
