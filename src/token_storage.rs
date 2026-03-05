@@ -35,16 +35,38 @@ impl EncryptedTokenStorage {
     }
 
     async fn load_from_disk(&self) -> HashMap<String, TokenInfo> {
-        if let Ok(data) = tokio::fs::read(&self.file_path).await {
-            if let Ok(decrypted) = crate::credential_store::decrypt(&data) {
-                if let Ok(json) = String::from_utf8(decrypted) {
-                    if let Ok(map) = serde_json::from_str(&json) {
-                        return map;
-                    }
-                }
+        let data = match tokio::fs::read(&self.file_path).await {
+            Ok(d) => d,
+            Err(_) => return HashMap::new(), // File doesn't exist yet — normal on first run
+        };
+
+        let decrypted = match crate::credential_store::decrypt(&data) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "warning: failed to decrypt token cache ({}): {e:#}",
+                    self.file_path.display()
+                );
+                eprintln!("hint: you may need to re-authenticate with `gws auth login`");
+                return HashMap::new();
+            }
+        };
+
+        let json = match String::from_utf8(decrypted) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("warning: token cache contains invalid UTF-8: {e}");
+                return HashMap::new();
+            }
+        };
+
+        match serde_json::from_str(&json) {
+            Ok(map) => map,
+            Err(e) => {
+                eprintln!("warning: failed to parse token cache JSON: {e}");
+                HashMap::new()
             }
         }
-        HashMap::new()
     }
 
     async fn save_to_disk(&self, map: &HashMap<String, TokenInfo>) -> anyhow::Result<()> {

@@ -191,6 +191,8 @@ async fn build_http_request(
         } else if let Some(ref body_val) = input.body {
             request = request.header("Content-Type", "application/json");
             request = request.json(body_val);
+        } else if matches!(method.http_method.as_str(), "POST" | "PUT" | "PATCH") {
+            request = request.header("Content-Length", "0");
         }
     }
 
@@ -1526,6 +1528,44 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_error_response_401_with_oauth_does_not_mask_error() {
+        // When auth was attempted (OAuth) but the server still returns 401,
+        // the error should be an API error with the actual message, NOT
+        // the generic "Access denied. No credentials provided" message.
+        let json_err = json!({
+            "error": {
+                "code": 401,
+                "message": "Request had invalid authentication credentials.",
+                "errors": [{ "reason": "authError" }]
+            }
+        })
+        .to_string();
+
+        let err = handle_error_response::<()>(
+            reqwest::StatusCode::UNAUTHORIZED,
+            &json_err,
+            &AuthMethod::OAuth,
+        )
+        .unwrap_err();
+        match err {
+            GwsError::Api {
+                code,
+                message,
+                reason,
+                ..
+            } => {
+                assert_eq!(code, 401);
+                assert!(message.contains("invalid authentication credentials"));
+                assert_eq!(reason, "authError");
+            }
+            GwsError::Auth(msg) => {
+                panic!("Should NOT get generic Auth error when OAuth was used, got: {msg}");
+            }
+            other => panic!("Expected Api error, got: {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_handle_error_response_api_error() {
         let json_err = json!({
             "error": {
@@ -1816,4 +1856,118 @@ fn test_get_value_type_helper() {
     assert_eq!(get_value_type(&json!("string")), "string");
     assert_eq!(get_value_type(&json!([1, 2])), "array");
     assert_eq!(get_value_type(&json!({"a": 1})), "object");
+}
+
+#[tokio::test]
+async fn test_post_without_body_sets_content_length_zero() {
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "messages/trash".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/messages/trash".to_string(),
+        body: None,
+        params: Map::new(),
+        query_params: HashMap::new(),
+        is_upload: false,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        None,
+        &AuthMethod::None,
+        None,
+        0,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    assert_eq!(
+        built
+            .headers()
+            .get("Content-Length")
+            .map(|v| v.to_str().unwrap()),
+        Some("0"),
+        "POST with no body must include Content-Length: 0"
+    );
+}
+
+#[tokio::test]
+async fn test_post_with_body_does_not_add_content_length_zero() {
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: Some(json!({"name": "test"})),
+        params: Map::new(),
+        query_params: HashMap::new(),
+        is_upload: false,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        None,
+        &AuthMethod::None,
+        None,
+        0,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    // When body is present, Content-Length should NOT be "0"
+    let cl = built
+        .headers()
+        .get("Content-Length")
+        .map(|v| v.to_str().unwrap().to_string());
+    assert!(cl.is_none() || cl.as_deref() != Some("0"));
+}
+
+#[tokio::test]
+async fn test_get_does_not_set_content_length_zero() {
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: None,
+        params: Map::new(),
+        query_params: HashMap::new(),
+        is_upload: false,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        None,
+        &AuthMethod::None,
+        None,
+        0,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    assert!(
+        built.headers().get("Content-Length").is_none(),
+        "GET with no body should not have Content-Length header"
+    );
 }

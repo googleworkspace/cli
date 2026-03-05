@@ -266,7 +266,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Determine scopes: explicit flags > interactive TUI > defaults
-    let scopes = resolve_scopes(
+    let mut scopes = resolve_scopes(
         &filtered_args,
         project_id.as_deref(),
         services_filter.as_ref(),
@@ -281,6 +281,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         redirect_uris: vec!["http://localhost".to_string()],
         ..Default::default()
     };
+
+    // Ensure openid + email scopes are always present so we can identify the user
+    // via the userinfo endpoint after login.
+    let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
+    for s in &identity_scopes {
+        if !scopes.iter().any(|existing| existing == s) {
+            scopes.push(s.to_string());
+        }
+    }
 
     // Use a temp file for yup-oauth2's token persistence, then encrypt it
     let temp_path = config_dir().join("credentials.tmp");
@@ -2084,5 +2093,25 @@ mod tests {
         let empty: HashSet<String> = HashSet::new();
         let result = filter_scopes_by_services(scopes.clone(), Some(&empty));
         assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn mask_secret_long_string() {
+        let masked = mask_secret("GOCSPX-abcdefghijklmnopqrstuvwxyz");
+        assert_eq!(masked, "GOCS...wxyz");
+    }
+
+    #[test]
+    fn mask_secret_short_string() {
+        // 8 chars or fewer should be fully masked
+        assert_eq!(mask_secret("12345678"), "***");
+        assert_eq!(mask_secret("short"), "***");
+        assert_eq!(mask_secret(""), "***");
+    }
+
+    #[test]
+    fn mask_secret_boundary() {
+        // Exactly 9 chars — first 4 + last 4 with "..." in between
+        assert_eq!(mask_secret("123456789"), "1234...6789");
     }
 }

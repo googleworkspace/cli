@@ -111,8 +111,7 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
 /// Resolve which account to use:
 /// 1. Explicit `account` parameter takes priority.
 /// 2. Fall back to `accounts.json` default.
-/// 3. If no registry exists but legacy `credentials.enc` exists, fail with upgrade message.
-/// 4. If nothing exists, return None (will fall through to standard error).
+/// 3. If no registry exists, return None to allow legacy `credentials.enc` fallthrough.
 fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
     let registry = crate::accounts::load_accounts()?;
 
@@ -148,18 +147,10 @@ fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
                 );
             }
         }
-        // No account, no registry — check for legacy credentials
+        // No account, no registry — use legacy credentials if they exist
         (None, None) => {
-            let legacy_path = credential_store::encrypted_credentials_path();
-            if legacy_path.exists() {
-                anyhow::bail!(
-                    "Legacy credentials found at {}. \
-                     gws now supports multiple accounts. \
-                     Please run 'gws auth login' to upgrade your credentials.",
-                    legacy_path.display()
-                );
-            }
-            // No registry, no legacy — fall through to standard credential loading
+            // Fall through to standard credential loading which will pick up
+            // the legacy credentials.enc file if it exists.
             Ok(None)
         }
     }
@@ -351,14 +342,60 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    /// RAII guard that saves the current value of an environment variable and
+    /// restores it when dropped. This ensures cleanup even if a test panics.
+    struct EnvVarGuard {
+        name: String,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        /// Save the current value of `name`, then set it to `value`.
+        fn set(name: &str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self {
+                name: name.to_string(),
+                original,
+            }
+        }
+
+        /// Save the current value of `name`, then remove it.
+        fn remove(name: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::remove_var(name);
+            Self {
+                name: name.to_string(),
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var(&self.name, v),
+                None => std::env::remove_var(&self.name),
+            }
+        }
+    }
+
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_load_credentials_no_options() {
+        // Isolate from host ADC: override HOME so adc_well_known_path()
+        // resolves to a non-existent directory, and clear the env var.
+        let tmp = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+
         let err = load_credentials_inner(
             None,
             &PathBuf::from("/does/not/exist1"),
             &PathBuf::from("/does/not/exist2"),
         )
         .await;
+
         assert!(err.is_err());
         assert!(err
             .unwrap_err()
@@ -378,7 +415,7 @@ mod tests {
         }"#;
         file.write_all(json.as_bytes()).unwrap();
 
-        std::env::set_var(
+        let _adc_guard = EnvVarGuard::set(
             "GOOGLE_APPLICATION_CREDENTIALS",
             file.path().to_str().unwrap(),
         );
@@ -389,8 +426,6 @@ mod tests {
             &PathBuf::from("/missing/plain"),
         )
         .await;
-
-        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
 
         match res.unwrap() {
             Credential::AuthorizedUser(secret) => {
@@ -417,7 +452,7 @@ mod tests {
         }"#;
         file.write_all(json.as_bytes()).unwrap();
 
-        std::env::set_var(
+        let _adc_guard = EnvVarGuard::set(
             "GOOGLE_APPLICATION_CREDENTIALS",
             file.path().to_str().unwrap(),
         );
@@ -428,8 +463,6 @@ mod tests {
             &PathBuf::from("/missing/plain"),
         )
         .await;
-
-        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
 
         match res.unwrap() {
             Credential::ServiceAccount(key) => {
@@ -445,7 +478,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_load_credentials_adc_env_var_missing_file() {
-        std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", "/does/not/exist.json");
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", "/does/not/exist.json");
 
         // When GOOGLE_APPLICATION_CREDENTIALS points to a missing file, we error immediately
         // rather than falling through — the user explicitly asked for this file.
@@ -455,8 +488,6 @@ mod tests {
             &PathBuf::from("/missing/plain"),
         )
         .await;
-
-        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
 
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
@@ -563,22 +594,94 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn test_get_token_from_env_var() {
-        // Save the old token
-        let old_token = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN").ok();
-
-        // Set the token env var
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
+        let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
 
         let result = get_token(&["https://www.googleapis.com/auth/drive"], None).await;
 
-        if let Some(t) = old_token {
-            std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", t);
-        } else {
-            std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
-        }
-
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "my-test-token");
+    }
+
+    #[test]
+    fn test_resolve_account_no_registry_no_account_returns_none() {
+        // When there is no accounts.json and no explicit account,
+        // resolve_account should return Ok(None) to allow legacy
+        // credentials.enc to be picked up by load_credentials_inner.
+        let result = resolve_account(None);
+        // This will return Ok(None) if accounts.json doesn't exist,
+        // or Ok(Some(...)) if it does with a default. Either way, it
+        // should NOT error for the no-registry case.
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_credentials_encrypted_file() {
+        // Simulate an encrypted credentials file
+        let json = r#"{
+            "client_id": "enc_test_id",
+            "client_secret": "enc_test_secret",
+            "refresh_token": "enc_test_refresh",
+            "type": "authorized_user"
+        }"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+
+        // Encrypt and write
+        let encrypted = crate::credential_store::encrypt(json.as_bytes()).unwrap();
+        std::fs::write(&enc_path, &encrypted).unwrap();
+
+        let res = load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
+            .await
+            .unwrap();
+
+        match res {
+            Credential::AuthorizedUser(secret) => {
+                assert_eq!(secret.client_id, "enc_test_id");
+                assert_eq!(secret.client_secret, "enc_test_secret");
+                assert_eq!(secret.refresh_token, "enc_test_refresh");
+            }
+            _ => panic!("Expected AuthorizedUser from encrypted credentials"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_credentials_encrypted_takes_priority_over_default() {
+        // Encrypted credentials should be loaded before the default plaintext path
+        let enc_json = r#"{
+            "client_id": "encrypted_id",
+            "client_secret": "encrypted_secret",
+            "refresh_token": "encrypted_refresh",
+            "type": "authorized_user"
+        }"#;
+        let plain_json = r#"{
+            "client_id": "plaintext_id",
+            "client_secret": "plaintext_secret",
+            "refresh_token": "plaintext_refresh",
+            "type": "authorized_user"
+        }"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let plain_path = dir.path().join("credentials.json");
+
+        let encrypted = crate::credential_store::encrypt(enc_json.as_bytes()).unwrap();
+        std::fs::write(&enc_path, &encrypted).unwrap();
+        std::fs::write(&plain_path, plain_json).unwrap();
+
+        let res = load_credentials_inner(None, &enc_path, &plain_path)
+            .await
+            .unwrap();
+
+        match res {
+            Credential::AuthorizedUser(secret) => {
+                assert_eq!(
+                    secret.client_id, "encrypted_id",
+                    "Encrypted credentials should take priority over plaintext"
+                );
+            }
+            _ => panic!("Expected AuthorizedUser"),
+        }
     }
 
     #[tokio::test]
@@ -586,8 +689,11 @@ mod tests {
     async fn test_get_token_env_var_empty_falls_through() {
         // An empty token should not short-circuit — it should be ignored
         // and fall through to normal credential loading.
-        // We test with non-existent credential paths to ensure fallthrough.
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "");
+        // Isolate from host ADC so the well-known path doesn't match.
+        let tmp = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+        let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "");
 
         let result = load_credentials_inner(
             None,
@@ -595,8 +701,6 @@ mod tests {
             &PathBuf::from("/does/not/exist2"),
         )
         .await;
-
-        std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
 
         // Should fall through to normal credential loading, which fails
         // because we pointed at non-existent paths
