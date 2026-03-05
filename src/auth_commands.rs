@@ -433,8 +433,8 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
 
 async fn handle_export(unmasked: bool, account: Option<&str>) -> Result<(), GwsError> {
     // Resolve account: explicit flag → registry default → legacy path
-    let resolved = crate::auth::resolve_account(account)
-        .map_err(|e| GwsError::Auth(e.to_string()))?;
+    let resolved =
+        crate::auth::resolve_account(account).map_err(|e| GwsError::Auth(e.to_string()))?;
 
     let enc_path = match &resolved {
         Some(email) => credential_store::encrypted_credentials_path_for(email),
