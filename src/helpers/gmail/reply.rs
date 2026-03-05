@@ -41,48 +41,7 @@ pub(super) async fn handle_reply(
         &original,
     );
 
-    let encoded = URL_SAFE.encode(&raw);
-    let body = json!({
-        "raw": encoded,
-        "threadId": original.thread_id,
-    });
-    let body_str = body.to_string();
-
-    let send_method = resolve_send_method(doc)?;
-    let params = json!({ "userId": "me" });
-    let params_str = params.to_string();
-
-    let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match auth::get_token(&scopes, None).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
-    };
-
-    let pagination = executor::PaginationConfig {
-        page_all: false,
-        page_limit: 10,
-        page_delay_ms: 100,
-    };
-
-    executor::execute_method(
-        doc,
-        send_method,
-        Some(&params_str),
-        Some(&body_str),
-        token.as_deref(),
-        auth_method,
-        None,
-        None,
-        matches.get_flag("dry-run"),
-        &pagination,
-        None,
-        &crate::helpers::modelarmor::SanitizeMode::Warn,
-        &crate::formatter::OutputFormat::default(),
-        false,
-    )
-    .await?;
-
-    Ok(())
+    super::send_raw_email(doc, matches, &raw, &original.thread_id).await
 }
 
 // --- Data structures ---
