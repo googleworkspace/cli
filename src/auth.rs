@@ -24,6 +24,17 @@ use anyhow::Context;
 
 use crate::credential_store;
 
+/// Returns the `quota_project_id` from Application Default Credentials, if present.
+/// This is used to set the `x-goog-user-project` header on API requests.
+pub fn get_quota_project() -> Option<String> {
+    let path = adc_well_known_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("quota_project_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Returns the well-known Application Default Credentials path:
 /// `~/.config/gcloud/application_default_credentials.json`.
 ///
@@ -636,5 +647,21 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("No credentials found"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_quota_project_reads_adc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let adc_dir = tmp.path().join(".config").join("gcloud");
+        std::fs::create_dir_all(&adc_dir).unwrap();
+        std::fs::write(
+            adc_dir.join("application_default_credentials.json"),
+            r#"{"quota_project_id": "my-project-123"}"#,
+        )
+        .unwrap();
+
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        assert_eq!(get_quota_project(), Some("my-project-123".to_string()));
     }
 }
