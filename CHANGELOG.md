@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.4.4
+
+### Patch Changes
+
+- e1e08eb: Fix highlight color on light terminal themes by using reverse video instead of a dark-gray background
+
 ## 0.4.3
 
 ### Patch Changes
