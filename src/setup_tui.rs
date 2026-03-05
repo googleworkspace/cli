@@ -448,6 +448,15 @@ fn run_picker_loop(
     }
 }
 
+/// Drains any queued crossterm events to prevent stale keypresses from leaking
+/// between TUI interactions.
+fn drain_pending_events() -> std::io::Result<()> {
+    while crossterm::event::poll(std::time::Duration::ZERO)? {
+        let _ = event::read()?;
+    }
+    Ok(())
+}
+
 // ── Setup Wizard (unified TUI session) ──────────────────────────
 
 /// Status of a single setup step.
@@ -536,11 +545,7 @@ impl SetupWizard {
         multiselect: bool,
     ) -> std::io::Result<PickerResult> {
         let mut picker = PickerState::new(title, help_text, items, multiselect);
-        // Drain any queued key events from the previous interaction
-        // to prevent stale keypresses from leaking into the picker.
-        while crossterm::event::poll(std::time::Duration::ZERO)? {
-            let _ = event::read()?;
-        }
+        drain_pending_events()?;
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
@@ -603,11 +608,7 @@ impl SetupWizard {
         initial: Option<&str>,
     ) -> std::io::Result<InputResult> {
         let mut input = InputState::new(title, help_text, initial);
-        // Drain any queued key events from the previous interaction
-        // to prevent stale keypresses from leaking into the input.
-        while crossterm::event::poll(std::time::Duration::ZERO)? {
-            let _ = event::read()?;
-        }
+        drain_pending_events()?;
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
