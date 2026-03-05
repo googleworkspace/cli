@@ -385,6 +385,28 @@ cargo test                        # unit tests
 ./scripts/coverage.sh             # HTML coverage report → target/llvm-cov/html/
 ```
 
+### AI-DLC 開発サイクル
+
+本プロジェクト (HODL1 fork) では [AI-DLC (AI-Driven Development Life Cycle)](https://aws.amazon.com/jp/blogs/devops/ai-driven-development-life-cycle/) に基づく開発サイクルを採用しています。
+
+各フィーチャーの中間成果物は `specs/<feature-name>/` に配置します。
+
+```
+specs/
+  remote-mcp-gateway/
+    requirements.md   # Inception: 要件定義
+    design.md          # Inception → Construction: 設計・決定事項
+    tasks.md           # Construction: 実装タスクのブレイクダウン
+```
+
+**開発の流れ:**
+
+1. **Inception** — 要件を `requirements.md` に整理し、設計判断を `design.md` にまとめる
+2. **Construction** — `tasks.md` のタスクリストに従い実装する。AI エージェントは specs を読んでコンテキストを得る
+3. **Operations** — デプロイ・運用に関する知見を specs にフィードバックする
+
+新しいフィーチャーを始めるときは `specs/<feature-name>/` ディレクトリを作成し、同じ 3 ファイル構成で進めてください。
+
 ## License
 
 Apache-2.0
