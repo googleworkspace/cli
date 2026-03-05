@@ -1,10 +1,32 @@
-<h1 align="center">gws</h1>
+<h1 align="center">gws (HODL1 Fork)</h1>
 
 **One CLI for all of Google Workspace — built for humans and AI agents.**<br>
 Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
 
 > [!NOTE]
+> This is a fork of [googleworkspace/cli](https://github.com/googleworkspace/cli) maintained by **HODL1** (kushim-team).
 > This is **not** an officially supported Google product.
+
+## Fork Branch Strategy
+
+This repository is a fork of [googleworkspace/cli](https://github.com/googleworkspace/cli) with the following branch strategy:
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Kept in sync with upstream `googleworkspace/cli` main. No custom changes. |
+| `custom` | All HODL1-specific changes are developed here. |
+
+### Syncing with upstream
+
+```bash
+git fetch upstream
+git checkout main
+git merge upstream/main
+git checkout custom
+git merge main
+```
+
+Upstream updates are merged (not rebased) into `custom` to preserve a clean, shared-friendly history.
 
 <p>
   <a href="https://www.npmjs.com/package/@googleworkspace/cli"><img src="https://img.shields.io/npm/v/@googleworkspace/cli" alt="npm version"></a>
