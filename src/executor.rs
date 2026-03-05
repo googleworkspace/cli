@@ -43,13 +43,19 @@ pub enum AuthMethod {
 /// When `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set, all requests go to a mock
 /// server that doesn't need (or support) Google OAuth. This helper centralises
 /// that check so every call-site doesn't need to know about the env var.
-pub async fn resolve_auth(scopes: &[&str], account: Option<&str>) -> (Option<String>, AuthMethod) {
+///
+/// Returns `Err` when OAuth fails so call-sites can log context-appropriate
+/// warnings (e.g. `[gws mcp]` prefix in MCP mode).
+pub async fn resolve_auth(
+    scopes: &[&str],
+    account: Option<&str>,
+) -> anyhow::Result<(Option<String>, AuthMethod)> {
     if crate::discovery::custom_api_base_url().is_some() {
-        return (None, AuthMethod::None);
+        return Ok((None, AuthMethod::None));
     }
     match crate::auth::get_token(scopes, account).await {
-        Ok(t) => (Some(t), AuthMethod::OAuth),
-        Err(_) => (None, AuthMethod::None),
+        Ok(t) => Ok((Some(t), AuthMethod::OAuth)),
+        Err(e) => Err(e),
     }
 }
 

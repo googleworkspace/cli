@@ -236,8 +236,10 @@ async fn run() -> Result<(), GwsError> {
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
     // Authenticate: skips OAuth automatically when GOOGLE_WORKSPACE_CLI_API_BASE_URL is set.
-    let (token, auth_method) =
-        executor::resolve_auth(&scopes, account.as_deref()).await;
+    let (token, auth_method) = match executor::resolve_auth(&scopes, account.as_deref()).await {
+        Ok(auth) => auth,
+        Err(_) => (None, executor::AuthMethod::None),
+    };
 
     // Execute
     executor::execute_method(

@@ -425,7 +425,15 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     };
 
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = crate::executor::resolve_auth(&scopes, None).await;
+    let (token, auth_method) = match crate::executor::resolve_auth(&scopes, None).await {
+        Ok(auth) => auth,
+        Err(e) => {
+            eprintln!(
+                "[gws mcp] Warning: Authentication failed, proceeding without credentials: {e}"
+            );
+            (None, crate::executor::AuthMethod::None)
+        }
+    };
 
     let result = crate::executor::execute_method(
         &doc,

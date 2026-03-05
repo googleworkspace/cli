@@ -185,15 +185,16 @@ pub struct JsonSchemaProperty {
 
 /// Cached custom API base URL, read once from the environment.
 /// Prints a warning on first access so the redirect is never silent.
-static CUSTOM_API_BASE_URL: std::sync::LazyLock<Option<String>> =
-    std::sync::LazyLock::new(|| {
-        let url = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE_URL").ok().filter(|s| !s.is_empty());
-        if let Some(ref u) = url {
-            eprintln!("[gws] Custom API endpoint active: {u}");
-            eprintln!("[gws] Authentication is disabled. Requests will NOT go to Google APIs.");
-        }
-        url
-    });
+static CUSTOM_API_BASE_URL: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+    let url = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if let Some(ref u) = url {
+        eprintln!("[gws] Custom API endpoint active: {u}");
+        eprintln!("[gws] Authentication is disabled. Requests will NOT go to Google APIs.");
+    }
+    url
+});
 
 /// Returns the custom API base URL override, if set.
 ///
@@ -294,12 +295,17 @@ fn apply_base_url_override(doc: &mut RestDescription) {
 }
 
 /// Rewrites `root_url` and `base_url` in a Discovery Document to point at a
-/// custom endpoint. Extracted for testability (the env-var path goes through
-/// `LazyLock` which is hard to toggle in tests).
+/// custom endpoint while preserving the service path (e.g., `drive/v3/`).
+/// Extracted for testability (the env-var path goes through `LazyLock` which
+/// is hard to toggle in tests).
 fn rewrite_base_url(doc: &mut RestDescription, base: &str) {
     let base_trimmed = base.trim_end_matches('/');
-    doc.root_url = format!("{base_trimmed}/");
-    doc.base_url = Some(format!("{base_trimmed}/"));
+    let new_root_url = format!("{base_trimmed}/");
+    let original_root_url = std::mem::replace(&mut doc.root_url, new_root_url);
+
+    if let Some(base_url) = &mut doc.base_url {
+        *base_url = base_url.replace(&original_root_url, &doc.root_url);
+    }
 }
 
 #[cfg(test)]
@@ -373,13 +379,15 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_base_url() {
+    fn test_rewrite_base_url_empty_service_path() {
+        // Gmail-style: rootUrl includes the host, servicePath is empty,
+        // method paths include the full path (e.g., "gmail/v1/users/{userId}/profile")
         let mut doc = RestDescription {
             name: "gmail".to_string(),
             version: "v1".to_string(),
             root_url: "https://gmail.googleapis.com/".to_string(),
-            base_url: Some("https://gmail.googleapis.com/gmail/v1/".to_string()),
-            service_path: "gmail/v1/".to_string(),
+            base_url: Some("https://gmail.googleapis.com/".to_string()),
+            service_path: "".to_string(),
             ..Default::default()
         };
 
@@ -389,17 +397,41 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_base_url_trailing_slash() {
+    fn test_rewrite_base_url_preserves_service_path() {
+        // Drive-style: rootUrl is the shared host, servicePath is "drive/v3/",
+        // method paths are short (e.g., "files")
         let mut doc = RestDescription {
             name: "drive".to_string(),
             version: "v3".to_string(),
             root_url: "https://www.googleapis.com/".to_string(),
             base_url: Some("https://www.googleapis.com/drive/v3/".to_string()),
+            service_path: "drive/v3/".to_string(),
             ..Default::default()
         };
 
         rewrite_base_url(&mut doc, "http://localhost:8099/");
         assert_eq!(doc.root_url, "http://localhost:8099/");
-        assert_eq!(doc.base_url.as_deref(), Some("http://localhost:8099/"));
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("http://localhost:8099/drive/v3/")
+        );
+    }
+
+    #[test]
+    fn test_rewrite_base_url_none() {
+        // Some Discovery Documents omit base_url; build_url() falls back to
+        // root_url + service_path in that case. Verify we don't panic.
+        let mut doc = RestDescription {
+            name: "customsearch".to_string(),
+            version: "v1".to_string(),
+            root_url: "https://www.googleapis.com/".to_string(),
+            base_url: None,
+            service_path: "customsearch/v1/".to_string(),
+            ..Default::default()
+        };
+
+        rewrite_base_url(&mut doc, "http://localhost:8099");
+        assert_eq!(doc.root_url, "http://localhost:8099/");
+        assert!(doc.base_url.is_none());
     }
 }
