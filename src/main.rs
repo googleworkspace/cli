@@ -232,8 +232,12 @@ async fn run() -> Result<(), GwsError> {
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
 
-    // Get scopes from the method
-    let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
+    // Select the best scope for the method. Discovery Documents list scopes as
+    // alternatives (any one grants access). We pick the first (broadest) scope
+    // to avoid restrictive scopes like gmail.metadata that block query parameters.
+    let scopes: Vec<&str> = select_scope(&method.scopes)
+        .into_iter()
+        .collect();
 
     // Authenticate: try OAuth, otherwise proceed unauthenticated
     let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {
@@ -260,6 +264,17 @@ async fn run() -> Result<(), GwsError> {
     )
     .await
     .map(|_| ())
+}
+
+/// Select the best scope from a method's scope list.
+///
+/// Discovery Documents list method scopes as alternatives — any single scope
+/// grants access. The first scope is typically the broadest. Using all scopes
+/// causes issues when restrictive scopes (e.g., `gmail.metadata`) are included,
+/// as the API enforces that scope's restrictions even when broader scopes are
+/// also present.
+fn select_scope(scopes: &[String]) -> Option<&str> {
+    scopes.first().map(|s| s.as_str())
 }
 
 fn parse_pagination_config(matches: &clap::ArgMatches) -> executor::PaginationConfig {
@@ -771,5 +786,31 @@ mod tests {
         let filtered = filter_args_for_subcommand(&args);
         assert!(!filtered.iter().any(|a| a.contains("account")));
         assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_select_scope_picks_first() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+        ];
+        assert_eq!(select_scope(&scopes), Some("https://mail.google.com/"));
+    }
+
+    #[test]
+    fn test_select_scope_single() {
+        let scopes = vec!["https://www.googleapis.com/auth/drive".to_string()];
+        assert_eq!(
+            select_scope(&scopes),
+            Some("https://www.googleapis.com/auth/drive")
+        );
+    }
+
+    #[test]
+    fn test_select_scope_empty() {
+        let scopes: Vec<String> = vec![];
+        assert_eq!(select_scope(&scopes), None);
     }
 }
