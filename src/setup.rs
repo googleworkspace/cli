@@ -989,14 +989,24 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
         }
         let current = get_gcloud_project()?.unwrap_or_default();
 
-        let mut items: Vec<SelectItem> = vec![SelectItem {
-            label: "➕ Create new project".to_string(),
-            description: "Create a new GCP project for gws".to_string(),
-            selected: false,
-            is_fixed: false,
-            is_template: false,
-            template_selects: vec![],
-        }];
+        let mut items: Vec<SelectItem> = vec![
+            SelectItem {
+                label: "➕ Create new project".to_string(),
+                description: "Create a new GCP project for gws".to_string(),
+                selected: false,
+                is_fixed: false,
+                is_template: false,
+                template_selects: vec![],
+            },
+            SelectItem {
+                label: "⌨ Enter project ID manually".to_string(),
+                description: "Use an existing project ID you already know".to_string(),
+                selected: false,
+                is_fixed: false,
+                is_template: false,
+                template_selects: vec![],
+            },
+        ];
         items.extend(projects.iter().map(|(id, name)| SelectItem {
             label: id.clone(),
             description: name.clone(),
@@ -1059,6 +1069,30 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
                         set_gcloud_project(&project_name)?;
                         ctx.wiz(2, StepStatus::Done(project_name.clone()));
                         ctx.project_id = project_name;
+                        Ok(SetupStage::EnableApis)
+                    }
+                    Some(item) if item.label.starts_with('⌨') => {
+                        let project_id = match ctx
+                            .wizard
+                            .as_mut()
+                            .unwrap()
+                            .show_input(
+                                "Enter GCP project ID",
+                                "Type your existing project ID",
+                                None,
+                            )
+                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
+                        {
+                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
+                            _ => {
+                                return Err(GwsError::Validation(
+                                    "Project entry cancelled by user".to_string(),
+                                ))
+                            }
+                        };
+                        set_gcloud_project(&project_id)?;
+                        ctx.wiz(2, StepStatus::Done(project_id.clone()));
+                        ctx.project_id = project_id;
                         Ok(SetupStage::EnableApis)
                     }
                     Some(item) => {
@@ -1466,6 +1500,7 @@ mod tests {
         LoginNewAccount,
         SetProject(String),
         CreateProject(String),
+        EnterProjectId,
         EnableApis(Vec<String>),
         NoSelection,
     }
@@ -1483,6 +1518,7 @@ mod tests {
             Some(item) if item.label.starts_with('➕') => {
                 SetupAction::CreateProject(String::new())
             }
+            Some(item) if item.label.starts_with('⌨') => SetupAction::EnterProjectId,
             Some(item) => SetupAction::SetProject(item.label.clone()),
             None => SetupAction::NoSelection,
         }
@@ -1674,6 +1710,20 @@ mod tests {
         assert_eq!(
             resolve_project_selection(&items),
             SetupAction::CreateProject(String::new())
+        );
+    }
+
+    #[test]
+    fn test_project_select_enter_manually() {
+        let mut items = make_items(&[
+            "➕ Create new project",
+            "⌨ Enter project ID manually",
+            "existing",
+        ]);
+        items[1].selected = true;
+        assert_eq!(
+            resolve_project_selection(&items),
+            SetupAction::EnterProjectId
         );
     }
 
