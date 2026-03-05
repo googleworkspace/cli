@@ -28,8 +28,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      nix: ${{ steps.filter.outputs.nix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - '.cargo/**'
+            nix:
+              - 'flake.nix'
+              - 'flake.lock'
+
   test:
     name: Test
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -53,6 +77,8 @@ jobs:
 
   nix:
     name: Nix
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.nix == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +92,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +124,8 @@ jobs:
 
   skills:
     name: Verify Skills
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,26 +150,10 @@ jobs:
             echo "::warning::Skills are out of date — the hourly auto-sync PR will fix this automatically."
           fi
 
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: coverage
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate code coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
