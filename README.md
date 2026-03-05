@@ -54,6 +54,15 @@ Or build from source:
 cargo install --path .
 ```
 
+A Nix flake is also available at `github:googleworkspace/cli`
+
+```bash
+nix run github:googleworkspace/cli
+```
+
+
+
+
 ## Why gws?
 
 **For humans** — stop writing `curl` calls against REST docs. `gws` gives you tab‑completion, `--help` on every resource, `--dry-run` to preview requests, and auto‑pagination.
