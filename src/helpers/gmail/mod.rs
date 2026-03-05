@@ -194,6 +194,12 @@ TIPS:
                         .help("Additional CC recipients (comma-separated)")
                         .value_name("EMAILS"),
                 )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
                 .after_help(
                     "\
 EXAMPLES:
@@ -235,6 +241,12 @@ TIPS:
                         .long("remove")
                         .help("Remove recipients from the reply (comma-separated emails)")
                         .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
                 )
                 .after_help(
                     "\
@@ -278,6 +290,12 @@ TIPS:
                         .long("body")
                         .help("Optional note to include above the forwarded message")
                         .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
                 )
                 .after_help(
                     "\
