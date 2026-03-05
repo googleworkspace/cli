@@ -24,6 +24,9 @@ npm install -g @googleworkspace/cli
 > [!IMPORTANT]
 > This project is under active development. Expect breaking changes as we march toward v1.0.
 
+> [!NOTE]
+> This is **not** an officially supported Google product.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/docs/demo.gif" alt="Demo">
 </p>
@@ -351,4 +354,5 @@ Apache-2.0
 
 ## Disclaimer
 
-This is not an officially supported Google product.
+> [!CAUTION]
+> This is **not** an officially supported Google product.

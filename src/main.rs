@@ -75,6 +75,7 @@ async fn run() -> Result<(), GwsError> {
 
     if is_version_flag(first_arg) {
         println!("gws {}", env!("CARGO_PKG_VERSION"));
+        println!("This is not an officially supported Google product.");
         return Ok(());
     }
 
@@ -397,6 +398,9 @@ fn print_usage() {
     println!("    Star the repo: https://github.com/googleworkspace/cli");
     println!("    Report bugs / request features: https://github.com/googleworkspace/cli/issues");
     println!("    Please search existing issues first; if one already exists, comment there.");
+    println!();
+    println!("DISCLAIMER:");
+    println!("    This is not an officially supported Google product.");
 }
 
 fn is_help_flag(arg: &str) -> bool {
