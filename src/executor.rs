@@ -29,6 +29,38 @@ use tokio::io::AsyncWriteExt;
 use crate::discovery::{RestDescription, RestMethod};
 use crate::error::GwsError;
 
+/// Get the quota_project_id from stored credentials if present.
+/// Used to set the x-goog-user-project header for ADC credentials.
+fn get_quota_project_id() -> Result<String, String> {
+    // Check encrypted credentials first
+    if let Ok(contents) = crate::credential_store::load_encrypted() {
+        if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+            if let Some(quota_project) = creds.get("quota_project_id").and_then(|v| v.as_str()) {
+                return Ok(quota_project.to_string());
+            }
+        }
+    }
+
+    // Check plaintext credentials
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("gws");
+    let plain_path = config_dir.join("credentials.json");
+
+    if plain_path.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&plain_path) {
+            if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if let Some(quota_project) = creds.get("quota_project_id").and_then(|v| v.as_str())
+                {
+                    return Ok(quota_project.to_string());
+                }
+            }
+        }
+    }
+
+    Err("No quota_project_id found".to_string())
+}
+
 /// Tracks what authentication method was used for the request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthMethod {
@@ -162,6 +194,12 @@ async fn build_http_request(
     if let Some(token) = token {
         if *auth_method == AuthMethod::OAuth {
             request = request.bearer_auth(token);
+
+            // Add quota project header if present in credentials
+            // This is required for ADC credentials to work properly
+            if let Ok(quota_project) = get_quota_project_id() {
+                request = request.header("x-goog-user-project", quota_project);
+            }
         }
     }
 

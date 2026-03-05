@@ -97,17 +97,19 @@ fn token_cache_path() -> PathBuf {
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
-        "Usage: gws auth <login|setup|status|export|logout>\n\n",
-        "  login   Authenticate via OAuth2 (opens browser)\n",
-        "          --readonly   Request read-only scopes\n",
-        "          --full       Request all scopes incl. pubsub + cloud-platform\n",
-        "                       (may trigger restricted_client for unverified apps)\n",
-        "          --scopes     Comma-separated custom scopes\n",
-        "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
-        "          --project    Use a specific GCP project\n",
-        "  status  Show current authentication state\n",
-        "  export  Print decrypted credentials to stdout\n",
-        "  logout  Clear saved credentials and token cache",
+        "Usage: gws auth <login|setup|use-adc|status|export|logout>\n\n",
+        "  login    Authenticate via OAuth2 (opens browser)\n",
+        "           --readonly   Request read-only scopes\n",
+        "           --full       Request all scopes incl. pubsub + cloud-platform\n",
+        "                        (may trigger restricted_client for unverified apps)\n",
+        "           --scopes     Comma-separated custom scopes\n",
+        "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
+        "           --project    Use a specific GCP project\n",
+        "  use-adc  Use Application Default Credentials from gcloud\n",
+        "           (requires: gcloud auth application-default login with Workspace scopes)\n",
+        "  status   Show current authentication state\n",
+        "  export   Print decrypted credentials to stdout\n",
+        "  logout   Clear saved credentials and token cache",
     );
 
     // Honour --help / -h before treating the first arg as a subcommand.
@@ -119,6 +121,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     match args[0].as_str() {
         "login" => handle_login(&args[1..]).await,
         "setup" => crate::setup::run_setup(&args[1..]).await,
+        "use-adc" => handle_use_adc().await,
         "status" => handle_status().await,
         "export" => {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
@@ -126,7 +129,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         }
         "logout" => handle_logout(),
         other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
+            "Unknown auth subcommand: '{other}'. Use: login, setup, use-adc, status, export, logout"
         ))),
     }
 }
@@ -893,6 +896,120 @@ async fn handle_status() -> Result<(), GwsError> {
             }
         }
     } // end !cfg!(test)
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Import Application Default Credentials from gcloud and save them for gws.
+///
+/// This allows users to run:
+///   gcloud auth application-default login --scopes=<workspace-scopes>
+///   gws auth use-adc
+///
+/// Instead of creating a custom OAuth client via `gws auth setup`.
+async fn handle_use_adc() -> Result<(), GwsError> {
+    // Try both common locations for ADC credentials
+    let adc_path_config = dirs::home_dir()
+        .ok_or_else(|| GwsError::Validation("Could not determine home directory".to_string()))?
+        .join(".config")
+        .join("gcloud")
+        .join("application_default_credentials.json");
+
+    let adc_path_app_support = dirs::config_dir()
+        .ok_or_else(|| GwsError::Validation("Could not determine config directory".to_string()))?
+        .join("gcloud")
+        .join("application_default_credentials.json");
+
+    let adc_path = if adc_path_config.exists() {
+        adc_path_config
+    } else if adc_path_app_support.exists() {
+        adc_path_app_support
+    } else {
+        adc_path_config // default for error message
+    };
+
+    if !adc_path.exists() {
+        return Err(GwsError::Validation(format!(
+            "Application Default Credentials not found at: {}\n\n\
+             Run this first:\n  \
+             gcloud auth application-default login --project=<project> \\\n    \
+             --scopes=<comma-separated-scopes>\n\n\
+             Example with Workspace scopes:\n  \
+             gcloud auth application-default login --project=my-project \\\n    \
+             --scopes=openid,https://www.googleapis.com/auth/userinfo.email,\\\n    \
+             https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.modify",
+            adc_path.display()
+        )));
+    }
+
+    let adc_contents = tokio::fs::read_to_string(&adc_path).await.map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to read ADC credentials from {}: {}",
+            adc_path.display(),
+            e
+        ))
+    })?;
+
+    let adc: serde_json::Value = serde_json::from_str(&adc_contents)
+        .map_err(|e| GwsError::Validation(format!("Failed to parse ADC credentials: {}", e)))?;
+
+    // Validate required fields exist
+    let client_id = adc
+        .get("client_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| GwsError::Validation("ADC credentials missing 'client_id'".to_string()))?;
+
+    let client_secret = adc
+        .get("client_secret")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            GwsError::Validation("ADC credentials missing 'client_secret'".to_string())
+        })?;
+
+    let refresh_token = adc
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            GwsError::Validation("ADC credentials missing 'refresh_token'".to_string())
+        })?;
+
+    let cred_type = adc.get("type").and_then(|v| v.as_str());
+    if cred_type != Some("authorized_user") {
+        return Err(GwsError::Validation(format!(
+            "ADC credentials must be type 'authorized_user', got: {:?}",
+            cred_type
+        )));
+    }
+
+    // Build gws credentials with the same fields
+    let mut gws_creds = json!({
+        "type": "authorized_user",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    });
+
+    // Include quota_project_id if present in ADC credentials
+    if let Some(quota_project) = adc.get("quota_project_id").and_then(|v| v.as_str()) {
+        gws_creds["quota_project_id"] = json!(quota_project);
+    }
+
+    let creds_str = serde_json::to_string(&gws_creds)
+        .map_err(|e| GwsError::Validation(format!("Failed to serialize credentials: {}", e)))?;
+
+    let enc_path = credential_store::save_encrypted(&creds_str)
+        .map_err(|e| GwsError::Validation(format!("Failed to save credentials: {}", e)))?;
+
+    let output = json!({
+        "status": "success",
+        "message": "ADC credentials imported successfully.",
+        "credentials_file": enc_path.display().to_string(),
+        "quota_project_id": adc.get("quota_project_id"),
+    });
 
     println!(
         "{}",

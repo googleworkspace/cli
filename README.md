@@ -116,6 +116,39 @@ Then run:
 gws auth login
 ```
 
+### Team / Shared Setup (Recommended)
+
+For teams sharing a GCP project, use Application Default Credentials with Workspace scopes. Everyone authenticates with their own Google account - no OAuth client creation needed.
+
+**One-time setup per person:**
+
+```bash
+# 1. Authenticate with ADC - choose your scopes based on what APIs you need
+# Example with common Workspace scopes:
+gcloud auth application-default login --project=my-project \
+  --scopes=openid,https://www.googleapis.com/auth/userinfo.email,\
+https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.modify,\
+https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/calendar
+
+# 2. Import credentials to gws
+gws auth use-adc
+
+# Done! Now use gws commands:
+gws drive files list --params '{"pageSize": 5}'
+```
+
+**Choosing scopes:**
+- **Minimal** (recommended for most teams): `drive`, `gmail.modify`, `spreadsheets`, `calendar`, `documents`
+- **Readonly**: Use `.readonly` variants (`drive.readonly`, `gmail.readonly`, etc.)
+- **Full access**: Add `cloud-platform`, `pubsub` (may require app verification)
+- See the [full scope list](https://developers.google.com/identity/protocols/oauth2/scopes#workspace) for all options
+
+**Why this works:**
+- Uses Google's built-in OAuth client (no custom client needed)
+- Each person uses their own credentials and permissions
+- Project quota is tracked to your specified GCP project
+- Simpler than creating/managing custom OAuth clients
+
 ### Browser-assisted auth (human or agent)
 
 You can complete OAuth either manually or with browser automation.
