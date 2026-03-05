@@ -51,6 +51,7 @@ pub(super) struct OriginalMessage {
     pub message_id_header: String,
     pub references: String,
     pub from: String,
+    pub reply_to: String,
     pub to: String,
     pub cc: String,
     pub subject: String,
@@ -81,7 +82,8 @@ pub(super) async fn fetch_message_metadata(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata\
          &metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc\
          &metadataHeaders=Subject&metadataHeaders=Date\
-         &metadataHeaders=Message-ID&metadataHeaders=References",
+         &metadataHeaders=Message-ID&metadataHeaders=References\
+         &metadataHeaders=Reply-To",
         crate::validate::encode_path_segment(message_id)
     );
 
@@ -123,6 +125,7 @@ pub(super) async fn fetch_message_metadata(
         .and_then(|h| h.as_array());
 
     let mut from = String::new();
+    let mut reply_to = String::new();
     let mut to = String::new();
     let mut cc = String::new();
     let mut subject = String::new();
@@ -136,6 +139,7 @@ pub(super) async fn fetch_message_metadata(
             let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
             match name {
                 "From" => from = value.to_string(),
+                "Reply-To" => reply_to = value.to_string(),
                 "To" => to = value.to_string(),
                 "Cc" => cc = value.to_string(),
                 "Subject" => subject = value.to_string(),
@@ -152,6 +156,7 @@ pub(super) async fn fetch_message_metadata(
         message_id_header,
         references,
         from,
+        reply_to,
         to,
         cc,
         subject,
@@ -163,7 +168,23 @@ pub(super) async fn fetch_message_metadata(
 // --- Header construction ---
 
 fn extract_reply_to_address(original: &OriginalMessage) -> String {
-    original.from.clone()
+    if original.reply_to.is_empty() {
+        original.from.clone()
+    } else {
+        original.reply_to.clone()
+    }
+}
+
+/// Extract the bare email address from a header value like
+/// `"Alice <alice@example.com>"` → `"alice@example.com"` or
+/// `"alice@example.com"` → `"alice@example.com"`.
+fn extract_email(addr: &str) -> &str {
+    if let Some(start) = addr.rfind('<') {
+        if let Some(end) = addr[start..].find('>') {
+            return &addr[start + 1..start + end];
+        }
+    }
+    addr.trim()
 }
 
 fn build_reply_all_recipients(
@@ -171,9 +192,10 @@ fn build_reply_all_recipients(
     extra_cc: Option<&str>,
     remove: Option<&str>,
 ) -> ReplyRecipients {
-    let to = original.from.clone();
+    let to = extract_reply_to_address(original);
+    let to_email = extract_email(&to).to_lowercase();
 
-    // Combine original To and Cc for the CC field (excluding the original sender)
+    // Combine original To and Cc for the CC field (excluding the reply-to recipient)
     let mut cc_addrs: Vec<&str> = Vec::new();
 
     if !original.to.is_empty() {
@@ -203,18 +225,21 @@ fn build_reply_all_recipients(
         }
     }
 
-    // Remove addresses if requested
+    // Remove addresses if requested (exact email match)
     let remove_set: Vec<String> = remove
-        .map(|r| r.split(',').map(|s| s.trim().to_lowercase()).collect())
+        .map(|r| {
+            r.split(',')
+                .map(|s| extract_email(s).to_lowercase())
+                .collect()
+        })
         .unwrap_or_default();
 
     let cc_addrs: Vec<&str> = cc_addrs
         .into_iter()
         .filter(|addr| {
-            let lower = addr.to_lowercase();
-            // Filter out the sender (already in To) and removed addresses
-            !lower.contains(&original.from.to_lowercase())
-                && !remove_set.iter().any(|r| lower.contains(r))
+            let email = extract_email(addr).to_lowercase();
+            // Filter out the reply-to recipient (already in To) and removed addresses
+            email != to_email && !remove_set.iter().any(|r| &email == r)
         })
         .collect();
 
@@ -350,6 +375,7 @@ mod tests {
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
             from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
             to: "bob@example.com".to_string(),
             cc: "".to_string(),
             subject: "Hello".to_string(),
@@ -382,6 +408,7 @@ mod tests {
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
             from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
             to: "bob@example.com".to_string(),
             cc: "".to_string(),
             subject: "Hello".to_string(),
@@ -409,6 +436,7 @@ mod tests {
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
             from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
             to: "bob@example.com, carol@example.com".to_string(),
             cc: "dave@example.com".to_string(),
             subject: "Hello".to_string(),
@@ -433,6 +461,7 @@ mod tests {
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
             from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
             to: "bob@example.com, carol@example.com".to_string(),
             cc: "".to_string(),
             subject: "Hello".to_string(),
@@ -489,12 +518,13 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_reply_to_address() {
+    fn test_extract_reply_to_address_falls_back_to_from() {
         let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "".to_string(),
             references: "".to_string(),
             from: "Alice <alice@example.com>".to_string(),
+            reply_to: "".to_string(),
             to: "".to_string(),
             cc: "".to_string(),
             subject: "".to_string(),
@@ -505,5 +535,78 @@ mod tests {
             extract_reply_to_address(&original),
             "Alice <alice@example.com>"
         );
+    }
+
+    #[test]
+    fn test_extract_reply_to_address_prefers_reply_to() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "Alice <alice@example.com>".to_string(),
+            reply_to: "list@example.com".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        assert_eq!(extract_reply_to_address(&original), "list@example.com");
+    }
+
+    #[test]
+    fn test_extract_email_bare() {
+        assert_eq!(extract_email("alice@example.com"), "alice@example.com");
+    }
+
+    #[test]
+    fn test_extract_email_with_display_name() {
+        assert_eq!(
+            extract_email("Alice Smith <alice@example.com>"),
+            "alice@example.com"
+        );
+    }
+
+    #[test]
+    fn test_remove_does_not_match_substring() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "sender@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "ann@example.com, joann@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, Some("ann@example.com"));
+        let cc = recipients.cc.unwrap();
+        // joann@example.com should remain, ann@example.com should be removed
+        assert_eq!(cc, "joann@example.com");
+    }
+
+    #[test]
+    fn test_reply_all_uses_reply_to_for_to() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "list@example.com".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        assert_eq!(recipients.to, "list@example.com");
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        // list@example.com is in To, should not duplicate in CC
+        assert!(!cc.contains("list@example.com"));
     }
 }
