@@ -1,5 +1,58 @@
 # @googleworkspace/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- 87e4bb1: Add Linux ARM64 build targets (aarch64-unknown-linux-gnu and aarch64-unknown-linux-musl) to cargo-dist, enabling prebuilt binaries for ARM64 Linux users via npm, the shell installer, and GitHub Releases.
+- d1825f9: ### Multi-Account Support
+
+  Add support for managing multiple Google accounts with per-account credential storage.
+
+  **New features:**
+
+  - `--account EMAIL` global flag available on every command
+  - `GOOGLE_WORKSPACE_CLI_ACCOUNT` environment variable as fallback
+  - `gws auth login --account EMAIL` — associates credentials with a specific account
+  - `gws auth list` — lists all registered accounts
+  - `gws auth default EMAIL` — sets the default account
+  - `gws auth logout --account EMAIL` — removes a specific account
+  - `login_hint` in OAuth URL for automatic account pre-selection in browser
+  - Email validation via Google userinfo endpoint after OAuth flow
+
+  **Breaking change:** Existing users must run `gws auth login` again after upgrading. The credential storage format has changed from a single `credentials.enc` to per-account files (`credentials.<b64-email>.enc`) with an `accounts.json` registry.
+
+### Patch Changes
+
+- a6994ad: Filter out `apps.alerts` scopes from user OAuth login flow since they require service account with domain-wide delegation
+- 1ad4f34: fix: replace unwrap() calls with proper error handling in MCP server
+
+  Replaced four `unwrap()` calls in `mcp_server.rs` that could panic the MCP
+  server process with graceful error handling. Also added a warning log when
+  authentication silently falls back to unauthenticated mode.
+
+- a1be14f: fix: drain stdout pipe to prevent project listing timeout during auth setup
+
+  Fixed `gws auth setup` timing out at step 3 (GCP project selection) for users
+  with many projects. The `gcloud projects list` stdout pipe was only read after
+  the child process exited, causing a deadlock when output exceeded the OS pipe
+  buffer (~64 KB). Stdout is now drained in a background thread to prevent the
+  pipe from filling up.
+
+- 364542b: fix: reject DEL character (0x7F) in input validation
+
+  The `reject_control_chars` helper rejected bytes 0x00–0x1F but allowed
+  the DEL character (0x7F), which is also an ASCII control character. This
+  could allow malformed input from LLM agents to bypass validation.
+
+- 75cec1b: Fix URL template expansion so media upload endpoints substitute path parameters and avoid iterative replacement side effects.
+- ed409e3: Harden URL and path construction across helper modules (gmail/watch, modelarmor, discovery)
+- 263a8e5: fix: use gcloud.cmd on Windows and show platform-correct config paths
+
+  On Windows, gcloud is installed as `gcloud.cmd` which Rust's `Command`
+  cannot find without the extension. Also replaced hardcoded `~/.config/gws/`
+  in error messages with the actual platform-resolved path.
+
 ## 0.3.5
 
 ### Patch Changes
