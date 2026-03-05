@@ -273,7 +273,7 @@ async fn run() -> Result<(), GwsError> {
 /// causes issues when restrictive scopes (e.g., `gmail.metadata`) are included,
 /// as the API enforces that scope's restrictions even when broader scopes are
 /// also present.
-fn select_scope(scopes: &[String]) -> Option<&str> {
+pub(crate) fn select_scope(scopes: &[String]) -> Option<&str> {
     scopes.first().map(|s| s.as_str())
 }
 

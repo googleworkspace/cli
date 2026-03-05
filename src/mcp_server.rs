@@ -786,7 +786,7 @@ async fn execute_mcp_method(
         page_delay_ms: 100,
     };
 
-    let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
+    let scopes: Vec<&str> = crate::select_scope(&method.scopes).into_iter().collect();
     let (token, auth_method) = match crate::auth::get_token(&scopes, None).await {
         Ok(t) => (Some(t), crate::executor::AuthMethod::OAuth),
         Err(e) => {
