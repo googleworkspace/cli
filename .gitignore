@@ -42,6 +42,9 @@ coverage/
 download.txt
 files.jsonl
 
+# Plans (local design docs)
+docs/plans/
+
 # Generated
 demo.mp4
 download.html

@@ -257,8 +257,8 @@ async fn build_compact_tools_list(config: &ServerConfig) -> Result<Vec<Value>, G
         let description = if let Ok(doc) =
             crate::discovery::fetch_discovery_document(&api_name, &version).await
         {
-            let mut resource_names: Vec<&str> =
-                doc.resources.keys().map(|s| s.as_str()).collect();
+            let mut resource_names = Vec::new();
+            collect_resource_paths(&doc.resources, "", &mut resource_names);
             resource_names.sort();
             let svc_entry = services::SERVICES
                 .iter()
@@ -267,7 +267,8 @@ async fn build_compact_tools_list(config: &ServerConfig) -> Result<Vec<Value>, G
             if resource_names.is_empty() {
                 desc.to_string()
             } else {
-                format!("{}. Resources: {}", desc, resource_names.join(", "))
+                let names_str: Vec<&str> = resource_names.iter().map(|s| s.as_str()).collect();
+                format!("{}. Resources: {}", desc, names_str.join(", "))
             }
         } else {
             eprintln!(
@@ -473,28 +474,21 @@ async fn handle_discover(arguments: &Value, config: &ServerConfig) -> Result<Val
     let method_name = arguments.get("method").and_then(|v| v.as_str());
 
     let result = match (resource_name, method_name) {
-        // Level 1: list resources
+        // Level 1: list all resources (recursively, with dot-separated paths)
         (None, _) => {
-            let resources: Vec<Value> = doc
-                .resources
-                .iter()
-                .map(|(name, res)| {
-                    let methods: Vec<&str> = res.methods.keys().map(|s| s.as_str()).collect();
-                    json!({
-                        "name": name,
-                        "methods": methods
-                    })
-                })
-                .collect();
-            json!({ "service": service, "resources": resources })
+            let mut resource_entries = Vec::new();
+            collect_resource_entries(&doc.resources, "", &mut resource_entries);
+            json!({ "service": service, "resources": resource_entries })
         }
-        // Level 2: list methods for a resource
+        // Level 2: list methods and sub-resources for a resource
         (Some(res), None) => {
+            let mut all_paths = Vec::new();
+            collect_resource_paths(&doc.resources, "", &mut all_paths);
             let resource = find_resource(&doc.resources, res)
                 .ok_or_else(|| GwsError::Validation(format!(
                     "Resource '{}' not found in {}. Available: {}",
                     res, service,
-                    doc.resources.keys().cloned().collect::<Vec<_>>().join(", ")
+                    all_paths.join(", ")
                 )))?;
             let methods: Vec<Value> = resource
                 .methods
@@ -507,14 +501,28 @@ async fn handle_discover(arguments: &Value, config: &ServerConfig) -> Result<Val
                     })
                 })
                 .collect();
-            json!({ "service": service, "resource": res, "methods": methods })
+            let sub_resources: Vec<&str> = resource
+                .resources
+                .keys()
+                .map(|s| s.as_str())
+                .collect();
+            let mut result = json!({ "service": service, "resource": res, "methods": methods });
+            if !sub_resources.is_empty() {
+                result["subResources"] = json!(sub_resources);
+            }
+            result
         }
         // Level 3: full param schema for a method
         (Some(res), Some(meth)) => {
             let resource = find_resource(&doc.resources, res)
-                .ok_or_else(|| GwsError::Validation(format!(
-                    "Resource '{}' not found in {}", res, service
-                )))?;
+                .ok_or_else(|| {
+                    let mut all_paths = Vec::new();
+                    collect_resource_paths(&doc.resources, "", &mut all_paths);
+                    GwsError::Validation(format!(
+                        "Resource '{}' not found in {}. Available: {}",
+                        res, service, all_paths.join(", ")
+                    ))
+                })?;
             let method = resource.methods.get(meth)
                 .ok_or_else(|| GwsError::Validation(format!(
                     "Method '{}' not found in {}.{}. Available: {}",
@@ -551,6 +559,50 @@ async fn handle_discover(arguments: &Value, config: &ServerConfig) -> Result<Val
         "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }],
         "isError": false
     }))
+}
+
+/// Recursively collect all resource paths (dot-separated) from a resource tree.
+fn collect_resource_paths(
+    resources: &HashMap<String, RestResource>,
+    prefix: &str,
+    out: &mut Vec<String>,
+) {
+    for (name, res) in resources {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", prefix, name)
+        };
+        out.push(path.clone());
+        if !res.resources.is_empty() {
+            collect_resource_paths(&res.resources, &path, out);
+        }
+    }
+}
+
+/// Recursively collect resource entries (name + methods) for discover Level 1.
+fn collect_resource_entries(
+    resources: &HashMap<String, RestResource>,
+    prefix: &str,
+    out: &mut Vec<Value>,
+) {
+    for (name, res) in resources {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", prefix, name)
+        };
+        let methods: Vec<&str> = res.methods.keys().map(|s| s.as_str()).collect();
+        if !methods.is_empty() {
+            out.push(json!({
+                "name": path.clone(),
+                "methods": methods
+            }));
+        }
+        if !res.resources.is_empty() {
+            collect_resource_entries(&res.resources, &path, out);
+        }
+    }
 }
 
 /// Walk into potentially nested resources by dot-separated path (e.g., "projects.locations.templates").
@@ -841,6 +893,75 @@ mod tests {
         }
     }
 
+    /// Mock a nested doc like Gmail: users -> messages, threads
+    fn mock_nested_doc() -> RestDescription {
+        let mut msg_methods = HashMap::new();
+        msg_methods.insert(
+            "list".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "messages".to_string(),
+                description: Some("Lists messages".to_string()),
+                ..Default::default()
+            },
+        );
+        msg_methods.insert(
+            "get".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "messages/{id}".to_string(),
+                description: Some("Gets a message".to_string()),
+                ..Default::default()
+            },
+        );
+        let messages = RestResource {
+            methods: msg_methods,
+            ..Default::default()
+        };
+
+        let mut thread_methods = HashMap::new();
+        thread_methods.insert(
+            "list".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "threads".to_string(),
+                ..Default::default()
+            },
+        );
+        let threads = RestResource {
+            methods: thread_methods,
+            ..Default::default()
+        };
+
+        let mut user_methods = HashMap::new();
+        user_methods.insert(
+            "getProfile".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "users/{userId}/profile".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let mut sub_resources = HashMap::new();
+        sub_resources.insert("messages".to_string(), messages);
+        sub_resources.insert("threads".to_string(), threads);
+
+        let users = RestResource {
+            methods: user_methods,
+            resources: sub_resources,
+        };
+
+        let mut resources = HashMap::new();
+        resources.insert("users".to_string(), users);
+
+        RestDescription {
+            name: "gmail".to_string(),
+            resources,
+            ..Default::default()
+        }
+    }
+
     // -- find_resource tests --
 
     #[test]
@@ -885,6 +1006,39 @@ mod tests {
         let res = find_resource(&top, "files.permissions");
         assert!(res.is_some());
         assert!(res.unwrap().methods.contains_key("create"));
+    }
+
+    // -- collect_resource_paths tests --
+
+    #[test]
+    fn test_collect_resource_paths_flat() {
+        let doc = mock_doc();
+        let mut paths = Vec::new();
+        collect_resource_paths(&doc.resources, "", &mut paths);
+        paths.sort();
+        assert_eq!(paths, vec!["files"]);
+    }
+
+    #[test]
+    fn test_collect_resource_paths_nested() {
+        let doc = mock_nested_doc();
+        let mut paths = Vec::new();
+        collect_resource_paths(&doc.resources, "", &mut paths);
+        paths.sort();
+        assert!(paths.contains(&"users".to_string()));
+        assert!(paths.contains(&"users.messages".to_string()));
+    }
+
+    // -- collect_resource_entries tests --
+
+    #[test]
+    fn test_collect_resource_entries_includes_nested() {
+        let doc = mock_nested_doc();
+        let mut entries = Vec::new();
+        collect_resource_entries(&doc.resources, "", &mut entries);
+        let names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
+        assert!(names.contains(&"users"));
+        assert!(names.contains(&"users.messages"));
     }
 
     // -- handle_discover tests --
