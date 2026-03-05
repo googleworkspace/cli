@@ -115,17 +115,22 @@ fn token_cache_path() -> PathBuf {
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
-        "Usage: gws auth <login|setup|status|export|logout>\n\n",
-        "  login   Authenticate via OAuth2 (opens browser)\n",
-        "          --readonly   Request read-only scopes\n",
-        "          --full       Request all scopes incl. pubsub + cloud-platform\n",
-        "                       (may trigger restricted_client for unverified apps)\n",
-        "          --scopes     Comma-separated custom scopes\n",
-        "  setup   Configure GCP project + OAuth client (requires gcloud)\n",
-        "          --project    Use a specific GCP project\n",
-        "  status  Show current authentication state\n",
-        "  export  Print decrypted credentials to stdout\n",
-        "  logout  Clear saved credentials and token cache",
+        "Usage: gws auth <login|setup|status|export|logout|list|default> [options]\n\n",
+        "  login    Authenticate via OAuth2 (opens browser)\n",
+        "           --account EMAIL  Associate credentials with a specific account\n",
+        "           --readonly       Request read-only scopes\n",
+        "           --full           Request all scopes incl. pubsub + cloud-platform\n",
+        "                            (may trigger restricted_client for unverified apps)\n",
+        "           --scopes         Comma-separated custom scopes\n",
+        "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
+        "           --project        Use a specific GCP project\n",
+        "  status   Show current authentication state\n",
+        "  export   Print decrypted credentials to stdout\n",
+        "  logout   Clear saved credentials and token cache\n",
+        "           --account EMAIL  Logout a specific account (otherwise: all)\n",
+        "  list     List all registered accounts\n",
+        "  default  Set the default account\n",
+        "           --account EMAIL  Account to set as default",
     );
 
     // Honour --help / -h before treating the first arg as a subcommand.
@@ -142,14 +147,19 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
             handle_export(unmasked).await
         }
-        "logout" => handle_logout(),
+        "logout" => handle_logout(&args[1..]),
+        "list" => handle_list(),
+        "default" => handle_default(&args[1..]),
         other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
+            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout, list, default"
         ))),
     }
 }
 /// Custom delegate that prints the OAuth URL on its own line for easy copying.
-struct CliFlowDelegate;
+/// Optionally includes `login_hint` in the URL for account pre-selection.
+struct CliFlowDelegate {
+    login_hint: Option<String>,
+}
 
 impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelegate {
     fn present_user_url<'a>(
@@ -159,14 +169,50 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
     {
         Box::pin(async move {
+            // Inject login_hint into the OAuth URL if we have one
+            let display_url = if let Some(ref hint) = self.login_hint {
+                let encoded: String = percent_encoding::percent_encode(
+                    hint.as_bytes(),
+                    percent_encoding::NON_ALPHANUMERIC,
+                )
+                .to_string();
+                if url.contains('?') {
+                    format!("{url}&login_hint={encoded}")
+                } else {
+                    format!("{url}?login_hint={encoded}")
+                }
+            } else {
+                url.to_string()
+            };
             eprintln!("Open this URL in your browser to authenticate:\n");
-            eprintln!("  {url}\n");
+            eprintln!("  {display_url}\n");
             Ok(String::new())
         })
     }
 }
 
 async fn handle_login(args: &[String]) -> Result<(), GwsError> {
+    // Extract --account from args if provided
+    let mut account_email: Option<String> = None;
+    let mut filtered_args: Vec<String> = Vec::new();
+    let mut skip_next = false;
+    for i in 0..args.len() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if args[i] == "--account" && i + 1 < args.len() {
+            account_email = Some(args[i + 1].clone());
+            skip_next = true;
+            continue;
+        }
+        if let Some(value) = args[i].strip_prefix("--account=") {
+            account_email = Some(value.to_string());
+            continue;
+        }
+        filtered_args.push(args[i].clone());
+    }
+
     // Resolve client_id and client_secret:
     // 1. Env vars (highest priority)
     // 2. Saved client_secret.json from `gws auth setup` or manual download
@@ -183,7 +229,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Determine scopes: explicit flags > interactive TUI > defaults
-    let scopes = resolve_scopes(args, project_id.as_deref()).await;
+    let scopes = resolve_scopes(&filtered_args, project_id.as_deref()).await;
 
     let secret = yup_oauth2::ApplicationSecret {
         client_id: client_id.clone(),
@@ -216,7 +262,9 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         temp_path.clone(),
     )))
     .force_account_selection(true) // Adds prompt=consent so Google always returns a refresh_token
-    .flow_delegate(Box::new(CliFlowDelegate))
+    .flow_delegate(Box::new(CliFlowDelegate {
+        login_hint: account_email.clone(),
+    }))
     .build()
     .await
     .map_err(|e| GwsError::Auth(format!("Failed to build authenticator: {e}")))?;
@@ -255,9 +303,61 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         let creds_str = serde_json::to_string_pretty(&creds_json)
             .map_err(|e| GwsError::Validation(format!("Failed to serialize credentials: {e}")))?;
 
-        // Save encrypted
-        let enc_path = credential_store::save_encrypted(&creds_str)
-            .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+        // Fetch the user's email from Google userinfo to validate and register
+        let access_token = token.token().unwrap_or_default();
+        let actual_email = fetch_userinfo_email(access_token).await;
+
+        // If --account was specified, validate the email matches
+        if let Some(ref requested) = account_email {
+            if let Some(ref actual) = actual_email {
+                let normalized_requested = crate::accounts::normalize_email(requested);
+                let normalized_actual = crate::accounts::normalize_email(actual);
+                if normalized_requested != normalized_actual {
+                    // Clean up temp file
+                    let _ = std::fs::remove_file(&temp_path);
+                    return Err(GwsError::Auth(format!(
+                        "Login account mismatch: requested '{}' but authenticated as '{}'. \
+                         Please try again and select the correct account in the browser.",
+                        requested, actual
+                    )));
+                }
+            }
+        }
+
+        // Determine which email to use for the account
+        let resolved_email = account_email.or(actual_email);
+
+        // Save encrypted credentials
+        let enc_path = if let Some(ref email) = resolved_email {
+            // Per-account save
+            credential_store::save_encrypted_for(&creds_str, email)
+                .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+
+            // Register in accounts.json
+            let mut registry = crate::accounts::load_accounts()
+                .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
+                .unwrap_or_default();
+            crate::accounts::add_account(&mut registry, email);
+            // If this is the first account, set it as default
+            if registry.default.is_none() || registry.accounts.len() == 1 {
+                let _ = crate::accounts::set_default(&mut registry, email);
+            }
+            let _ = crate::accounts::save_accounts(&registry);
+
+            credential_store::encrypted_credentials_path_for(email)
+        } else {
+            // Legacy single-account save (no email available)
+            credential_store::save_encrypted(&creds_str)
+                .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?
+        };
+
+        // Clean up old legacy credentials.enc if we now have an account-keyed one
+        if resolved_email.is_some() {
+            let legacy = credential_store::encrypted_credentials_path();
+            if legacy.exists() && legacy != enc_path {
+                let _ = std::fs::remove_file(&legacy);
+            }
+        }
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
@@ -265,6 +365,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         let output = json!({
             "status": "success",
             "message": "Authentication successful. Encrypted credentials saved.",
+            "account": resolved_email.as_deref().unwrap_or("(unknown)"),
             "credentials_file": enc_path.display().to_string(),
             "encryption": "AES-256-GCM (key secured by OS Keyring or local `.encryption_key`)",
             "scopes": scopes,
@@ -281,6 +382,27 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             "OAuth flow completed but no token was returned.".to_string(),
         ))
     }
+}
+
+/// Fetch the authenticated user's email from Google's userinfo endpoint.
+async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
+    let client = match crate::client::build_client() {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    let resp = client
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    body.get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
@@ -914,34 +1036,182 @@ async fn handle_status() -> Result<(), GwsError> {
     Ok(())
 }
 
-fn handle_logout() -> Result<(), GwsError> {
-    let plain_path = plain_credentials_path();
-    let enc_path = credential_store::encrypted_credentials_path();
-    let token_cache = token_cache_path();
-
-    let mut removed = Vec::new();
-
-    for path in [&enc_path, &plain_path, &token_cache] {
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-            })?;
-            removed.push(path.display().to_string());
+fn handle_logout(args: &[String]) -> Result<(), GwsError> {
+    // Extract --account from args
+    let mut account_email: Option<String> = None;
+    for i in 0..args.len() {
+        if args[i] == "--account" && i + 1 < args.len() {
+            account_email = Some(args[i + 1].clone());
+        } else if let Some(value) = args[i].strip_prefix("--account=") {
+            account_email = Some(value.to_string());
         }
     }
 
-    let output = if removed.is_empty() {
-        json!({
-            "status": "success",
-            "message": "No credentials found to remove.",
-        })
+    if let Some(ref email) = account_email {
+        // Per-account logout: remove only that account's credentials
+        let enc_path = credential_store::encrypted_credentials_path_for(email);
+        let mut removed = Vec::new();
+
+        if enc_path.exists() {
+            std::fs::remove_file(&enc_path).map_err(|e| {
+                GwsError::Validation(format!("Failed to remove {}: {e}", enc_path.display()))
+            })?;
+            removed.push(enc_path.display().to_string());
+        }
+
+        // Remove from accounts.json registry
+        let mut registry = crate::accounts::load_accounts()
+            .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
+            .unwrap_or_default();
+        crate::accounts::remove_account(&mut registry, email);
+        let _ = crate::accounts::save_accounts(&registry);
+
+        let output = if removed.is_empty() {
+            json!({
+                "status": "success",
+                "message": format!("No credentials found for account '{email}'."),
+            })
+        } else {
+            json!({
+                "status": "success",
+                "message": format!("Logged out account '{email}'. Credentials removed."),
+                "removed": removed,
+            })
+        };
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
     } else {
-        json!({
-            "status": "success",
-            "message": "Logged out. Credentials and token cache removed.",
-            "removed": removed,
+        // Full logout: remove all credentials
+        let plain_path = plain_credentials_path();
+        let enc_path = credential_store::encrypted_credentials_path();
+        let token_cache = token_cache_path();
+        let accounts_path = crate::accounts::accounts_path();
+
+        let mut removed = Vec::new();
+
+        // Load accounts BEFORE deleting accounts.json so we can clean up per-account files
+        let registry = crate::accounts::load_accounts()
+            .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
+            .unwrap_or_default();
+
+        for path in [&enc_path, &plain_path, &token_cache, &accounts_path] {
+            if path.exists() {
+                std::fs::remove_file(path).map_err(|e| {
+                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+                })?;
+                removed.push(path.display().to_string());
+            }
+        }
+
+        // Also remove any per-account credential files
+        for email in registry.accounts.keys() {
+            let path = credential_store::encrypted_credentials_path_for(email);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+                removed.push(path.display().to_string());
+            }
+        }
+
+        let output = if removed.is_empty() {
+            json!({
+                "status": "success",
+                "message": "No credentials found to remove.",
+            })
+        } else {
+            json!({
+                "status": "success",
+                "message": "Logged out. All credentials and token caches removed.",
+                "removed": removed,
+            })
+        };
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
+/// List all registered accounts.
+fn handle_list() -> Result<(), GwsError> {
+    let registry = crate::accounts::load_accounts()
+        .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
+        .unwrap_or_default();
+    let account_emails = crate::accounts::list_accounts(&registry);
+    let accounts: Vec<serde_json::Value> = account_emails
+        .iter()
+        .map(|email| {
+            let meta = registry.accounts.get(*email);
+            json!({
+                "email": email,
+                "is_default": registry.default.as_deref() == Some(*email),
+                "added": meta.map(|m| m.added.as_str()).unwrap_or(""),
+            })
         })
-    };
+        .collect();
+
+    let output = json!({
+        "accounts": accounts,
+        "default": registry.default.unwrap_or_default(),
+        "count": accounts.len(),
+    });
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Set the default account.
+fn handle_default(args: &[String]) -> Result<(), GwsError> {
+    // Extract --account from args
+    let mut account_email: Option<String> = None;
+    for i in 0..args.len() {
+        if args[i] == "--account" && i + 1 < args.len() {
+            account_email = Some(args[i + 1].clone());
+        } else if let Some(value) = args[i].strip_prefix("--account=") {
+            account_email = Some(value.to_string());
+        }
+    }
+
+    // If no --account flag, check if the first arg is the email directly
+    let email = account_email
+        .or_else(|| args.first().filter(|a| !a.starts_with('-')).cloned())
+        .ok_or_else(|| {
+            GwsError::Validation(
+                "Usage: gws auth default <email> or gws auth default --account <email>".to_string(),
+            )
+        })?;
+
+    let mut registry = crate::accounts::load_accounts()
+        .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
+        .unwrap_or_default();
+
+    // Verify the account exists
+    if !registry
+        .accounts
+        .keys()
+        .any(|k| crate::accounts::normalize_email(k) == crate::accounts::normalize_email(&email))
+    {
+        return Err(GwsError::Validation(format!(
+            "Account '{}' not found. Run `gws auth list` to see registered accounts.",
+            email
+        )));
+    }
+
+    let _ = crate::accounts::set_default(&mut registry, &email);
+    let _ = crate::accounts::save_accounts(&registry);
+
+    let output = json!({
+        "status": "success",
+        "message": format!("Default account set to '{email}'."),
+        "default": email,
+    });
 
     println!(
         "{}",

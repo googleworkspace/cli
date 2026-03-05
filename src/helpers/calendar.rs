@@ -149,7 +149,7 @@ TIPS:
                 let (params_str, body_str, scopes) = build_insert_request(matches, doc)?;
 
                 let scopes_str: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-                let (token, auth_method) = match auth::get_token(&scopes_str).await {
+                let (token, auth_method) = match auth::get_token(&scopes_str, None).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                     Err(_) => (None, executor::AuthMethod::None),
                 };
@@ -191,7 +191,7 @@ TIPS:
 }
 async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     let cal_scope = "https://www.googleapis.com/auth/calendar.readonly";
-    let token = auth::get_token(&[cal_scope])
+    let token = auth::get_token(&[cal_scope], None)
         .await
         .map_err(|e| GwsError::Auth(format!("Calendar auth failed: {e}")))?;
 

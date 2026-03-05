@@ -33,7 +33,7 @@ pub(super) async fn handle_send(
     let params_str = params.to_string();
 
     let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match auth::get_token(&scopes).await {
+    let (token, auth_method) = match auth::get_token(&scopes, None).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
         Err(_) => (None, executor::AuthMethod::None),
     };
