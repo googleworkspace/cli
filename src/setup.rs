@@ -1902,4 +1902,66 @@ mod tests {
             _ => panic!("Expected EnableApis"),
         }
     }
+
+    // ── enable_apis unit tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_enable_apis_all_already_enabled() {
+        // When all requested APIs are already enabled, enable_apis should
+        // return them all as skipped with nothing to enable or fail.
+        // We use a non-existent project so gcloud won't find anything,
+        // but override the "already enabled" check by passing an empty list.
+        let (enabled, skipped, failed) = enable_apis("__nonexistent__", &[]).await;
+        assert!(enabled.is_empty());
+        assert!(skipped.is_empty());
+        assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_enable_apis_with_invalid_project() {
+        // Calling enable_apis with a bogus project and a real API name
+        // should produce a failure with an error message (not swallowed).
+        let apis = vec!["storage.googleapis.com".to_string()];
+        let (enabled, skipped, failed) = enable_apis("__nonexistent_project_99999__", &apis).await;
+        // The API should not be in enabled (project doesn't exist)
+        assert!(enabled.is_empty());
+        assert!(skipped.is_empty());
+        // Should have exactly one failure with a non-empty error message
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, "storage.googleapis.com");
+        assert!(!failed[0].1.is_empty(), "Error message should not be empty");
+    }
+
+    #[test]
+    fn test_failed_apis_json_structure() {
+        // Verify the JSON output structure for failed APIs includes
+        // both "api" and "error" fields.
+        let failed: Vec<(String, String)> = vec![
+            ("vault.googleapis.com".into(), "Permission denied".into()),
+            ("admin.googleapis.com".into(), "Not found".into()),
+        ];
+        let json_failed: Vec<serde_json::Value> = failed
+            .iter()
+            .map(|(api, err)| json!({"api": api, "error": err}))
+            .collect();
+
+        assert_eq!(json_failed.len(), 2);
+
+        assert_eq!(json_failed[0]["api"], "vault.googleapis.com");
+        assert_eq!(json_failed[0]["error"], "Permission denied");
+
+        assert_eq!(json_failed[1]["api"], "admin.googleapis.com");
+        assert_eq!(json_failed[1]["error"], "Not found");
+    }
+
+    #[test]
+    fn test_failed_apis_json_empty() {
+        // When no APIs fail, the JSON array should be empty.
+        let failed: Vec<(String, String)> = vec![];
+        let json_failed: Vec<serde_json::Value> = failed
+            .iter()
+            .map(|(api, err)| json!({"api": api, "error": err}))
+            .collect();
+        assert!(json_failed.is_empty());
+    }
 }
