@@ -21,6 +21,7 @@
 
 use std::collections::HashMap;
 
+use anyhow::Context;
 use serde::Deserialize;
 
 /// Top-level Discovery REST Description document.
@@ -183,6 +184,8 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
+
+
 /// Fetches and caches a Google Discovery Document.
 pub async fn fetch_discovery_document(
     service: &str,
@@ -198,7 +201,9 @@ pub async fn fetch_discovery_document(
     let cache_dir = crate::auth_commands::config_dir().join("cache");
     std::fs::create_dir_all(&cache_dir)?;
 
-    let cache_file = cache_dir.join(format!("{service}_{version}.json"));
+    // Safe: service and version are validated to only contain alphanumerics, '-', '_', '.'.
+    let cache_filename = format!("{service}_{version}.json");
+    let cache_file = cache_dir.join(&cache_filename);
 
     // Check cache (24hr TTL)
     if cache_file.exists() {
@@ -226,6 +231,8 @@ pub async fn fetch_discovery_document(
         resp.text().await?
     } else {
         // Try the $discovery/rest URL pattern used by newer APIs (Forms, Keep, Meet, etc.)
+        // service is validated to be safe as a hostname label.
+        // version is passed via .query() to avoid any query-string injection.
         let alt_url = format!("https://{service}.googleapis.com/$discovery/rest");
         let alt_resp = client
             .get(&alt_url)
@@ -254,6 +261,10 @@ pub async fn fetch_discovery_document(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+
+    // --- REST Description deserialization ---
 
     #[test]
     fn test_deserialize_rest_description() {

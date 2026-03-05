@@ -401,11 +401,9 @@ async fn fetch_and_output_messages(
     let msg_ids = extract_message_ids_from_history(&body);
 
     for msg_id in msg_ids {
-        // Fetch full message
-        let msg_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
-            crate::validate::encode_path_segment(&msg_id),
-        );
+        // Build the message URL: encode msg_id to prevent path/query injection;
+        // pass msg_format via .query() rather than string interpolation.
+        let msg_url = build_message_url(&msg_id);
         let msg_resp = client
             .get(&msg_url)
             .query(&[("format", msg_format)])
@@ -461,6 +459,18 @@ async fn fetch_and_output_messages(
     }
 
     Ok(())
+}
+
+/// Build the URL for fetching a single Gmail message, with the message ID
+/// safely percent-encoded to prevent path/query injection.
+///
+/// The `format` parameter must be passed separately via `.query()` on the
+/// reqwest builder — it is NOT included in the returned string.
+fn build_message_url(msg_id: &str) -> String {
+    format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+        crate::validate::encode_path_segment(msg_id)
+    )
 }
 
 fn apply_sanitization_result(
@@ -777,5 +787,39 @@ mod tests {
         // If no match found, block mode returns the exact input untouched.
         assert_eq!(output, msg);
         assert!(output.get("_sanitization").is_none());
+    }
+
+    // --- build_message_url ---
+
+    #[test]
+    fn test_build_message_url_plain_id() {
+        let url = build_message_url("abc123");
+        assert_eq!(
+            url,
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/abc123"
+        );
+    }
+
+    #[test]
+    fn test_build_message_url_encodes_special_chars() {
+        // An ID that contains '?' would inject a query string without encoding.
+        let url = build_message_url("id?format=raw&other=evil");
+        assert!(!url.contains('?'), "URL should not contain raw '?': {url}");
+        assert!(!url.contains('='), "URL should not contain raw '=': {url}");
+    }
+
+    #[test]
+    fn test_build_message_url_encodes_slash_traversal() {
+        let url = build_message_url("../../etc/passwd");
+        assert!(!url.contains(".."), "URL should not contain '..': {url}");
+        assert!(!url.contains("/etc/"), "URL should not contain path traversal: {url}");
+    }
+
+    #[test]
+    fn test_build_message_url_does_not_include_format_param() {
+        // The format parameter must be added via .query() by the caller,
+        // not baked into the URL string.
+        let url = build_message_url("abc");
+        assert!(!url.contains("format="), "format param must not be in URL: {url}");
     }
 }
