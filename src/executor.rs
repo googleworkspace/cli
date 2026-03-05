@@ -509,16 +509,17 @@ fn build_url(
             // RFC 6570-like expansion:
             // - {var}: path segment expansion (encode all reserved characters)
             // - {+var}: reserved expansion (preserve '/' path separators only)
-            let encoded = if has_plus_placeholder {
-                crate::validate::encode_path_preserving_slashes(&val_str)
-            } else {
-                crate::validate::encode_path_segment(&val_str)
-            };
-
             if has_plain_placeholder {
+                // TODO: This iterative `replace` can expand placeholder-looking
+                // substrings that appear inside another parameter's value.
+                // A single-pass template renderer would avoid that class of bugs.
+                let encoded = crate::validate::encode_path_segment(&val_str);
                 url_path = url_path.replace(&placeholder, &encoded);
-            }
-            if has_plus_placeholder {
+            } else if has_plus_placeholder {
+                // `{+var}` keeps `/` separators, so validate before encoding to
+                // block traversal and URL-special injection payloads.
+                let validated = crate::validate::validate_resource_name(&val_str)?;
+                let encoded = crate::validate::encode_path_preserving_slashes(validated);
                 url_path = url_path.replace(&plus_placeholder, &encoded);
             }
             continue;
@@ -1262,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_url_plus_expansion_encodes_reserved_chars() {
+    fn test_build_url_plus_expansion_rejects_reserved_chars() {
         let doc = RestDescription {
             base_url: Some("https://api.example.com/".to_string()),
             ..Default::default()
@@ -1284,8 +1285,35 @@ mod tests {
         let mut params = Map::new();
         params.insert("name".to_string(), json!("projects/p1#frag?x=y"));
 
-        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
-        assert_eq!(url, "https://api.example.com/v1/projects/p1%23frag%3Fx%3Dy");
+        let err = build_url(&doc, &method, &params, false).unwrap_err();
+        assert!(err.to_string().contains("must not contain '?' or '#'"));
+    }
+
+    #[test]
+    fn test_build_url_plus_expansion_rejects_path_traversal() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "name".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "v1/{+name}".to_string(),
+            flat_path: Some("v1/{+name}".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("name".to_string(), json!("projects/../../etc/passwd"));
+
+        let err = build_url(&doc, &method, &params, false).unwrap_err();
+        assert!(err.to_string().contains("path traversal"));
     }
 
     #[test]
