@@ -352,13 +352,33 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_load_credentials_no_options() {
+        // Isolate from host ADC: override HOME so adc_well_known_path()
+        // resolves to a non-existent directory, and clear the env var.
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        let old_adc = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
+
         let err = load_credentials_inner(
             None,
             &PathBuf::from("/does/not/exist1"),
             &PathBuf::from("/does/not/exist2"),
         )
         .await;
+
+        // Restore env
+        match old_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_adc {
+            Some(a) => std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", a),
+            None => {} // already removed
+        }
+
         assert!(err.is_err());
         assert!(err
             .unwrap_err()
@@ -586,7 +606,12 @@ mod tests {
     async fn test_get_token_env_var_empty_falls_through() {
         // An empty token should not short-circuit — it should be ignored
         // and fall through to normal credential loading.
-        // We test with non-existent credential paths to ensure fallthrough.
+        // Isolate from host ADC so the well-known path doesn't match.
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        let old_adc = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
         std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "");
 
         let result = load_credentials_inner(
@@ -597,6 +622,14 @@ mod tests {
         .await;
 
         std::env::remove_var("GOOGLE_WORKSPACE_CLI_TOKEN");
+        match old_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        match old_adc {
+            Some(a) => std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", a),
+            None => {} // already removed
+        }
 
         // Should fall through to normal credential loading, which fails
         // because we pointed at non-existent paths
