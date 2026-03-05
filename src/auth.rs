@@ -27,7 +27,10 @@ use crate::credential_store;
 /// Returns the `quota_project_id` from Application Default Credentials, if present.
 /// This is used to set the `x-goog-user-project` header on API requests.
 pub fn get_quota_project() -> Option<String> {
-    let path = adc_well_known_path()?;
+    let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(adc_well_known_path)?;
     let content = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     json.get("quota_project_id")
