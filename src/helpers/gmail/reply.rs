@@ -209,6 +209,36 @@ fn extract_reply_to_address(original: &OriginalMessage) -> String {
     }
 }
 
+/// Split an RFC 5322 mailbox list on commas, respecting quoted strings.
+/// `"Doe, John" <john@example.com>, alice@example.com` →
+/// `["\"Doe, John\" <john@example.com>", "alice@example.com"]`
+fn split_mailbox_list(header: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0;
+
+    for (i, ch) in header.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                let token = header[start..i].trim();
+                if !token.is_empty() {
+                    result.push(token);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    let token = header[start..].trim();
+    if !token.is_empty() {
+        result.push(token);
+    }
+
+    result
+}
+
 /// Extract the bare email address from a header value like
 /// `"Alice <alice@example.com>"` → `"alice@example.com"` or
 /// `"alice@example.com"` → `"alice@example.com"`.
@@ -227,9 +257,9 @@ fn build_reply_all_recipients(
     remove: Option<&str>,
 ) -> ReplyRecipients {
     let to = extract_reply_to_address(original);
-    let to_emails: Vec<String> = to
-        .split(',')
-        .map(|s| extract_email(s.trim()).to_lowercase())
+    let to_emails: Vec<String> = split_mailbox_list(&to)
+        .iter()
+        .map(|s| extract_email(s).to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -237,36 +267,22 @@ fn build_reply_all_recipients(
     let mut cc_addrs: Vec<&str> = Vec::new();
 
     if !original.to.is_empty() {
-        for addr in original.to.split(',') {
-            let addr = addr.trim();
-            if !addr.is_empty() {
-                cc_addrs.push(addr);
-            }
-        }
+        cc_addrs.extend(split_mailbox_list(&original.to));
     }
     if !original.cc.is_empty() {
-        for addr in original.cc.split(',') {
-            let addr = addr.trim();
-            if !addr.is_empty() {
-                cc_addrs.push(addr);
-            }
-        }
+        cc_addrs.extend(split_mailbox_list(&original.cc));
     }
 
     // Add extra CC if provided
     if let Some(extra) = extra_cc {
-        for addr in extra.split(',') {
-            let addr = addr.trim();
-            if !addr.is_empty() {
-                cc_addrs.push(addr);
-            }
-        }
+        cc_addrs.extend(split_mailbox_list(extra));
     }
 
     // Remove addresses if requested (exact email match)
     let remove_set: Vec<String> = remove
         .map(|r| {
-            r.split(',')
+            split_mailbox_list(r)
+                .iter()
                 .map(|s| extract_email(s).to_lowercase())
                 .collect()
         })
@@ -277,8 +293,7 @@ fn build_reply_all_recipients(
         .filter(|addr| {
             let email = extract_email(addr).to_lowercase();
             // Filter out the reply-to recipients (already in To) and removed addresses
-            !to_emails.iter().any(|t| t == &email)
-                && !remove_set.iter().any(|r| r == &email)
+            !to_emails.iter().any(|t| t == &email) && !remove_set.iter().any(|r| r == &email)
         })
         .collect();
 
@@ -624,8 +639,7 @@ mod tests {
             date: "".to_string(),
             snippet: "".to_string(),
         };
-        let recipients =
-            build_reply_all_recipients(&original, None, Some("ann@example.com"));
+        let recipients = build_reply_all_recipients(&original, None, Some("ann@example.com"));
         let cc = recipients.cc.unwrap();
         // joann@example.com should remain, ann@example.com should be removed
         assert_eq!(cc, "joann@example.com");
@@ -655,7 +669,10 @@ mod tests {
 
     #[test]
     fn test_extract_email_malformed_no_closing_bracket() {
-        assert_eq!(extract_email("Alice <alice@example.com"), "Alice <alice@example.com");
+        assert_eq!(
+            extract_email("Alice <alice@example.com"),
+            "Alice <alice@example.com"
+        );
     }
 
     #[test]
@@ -702,11 +719,8 @@ mod tests {
             date: "".to_string(),
             snippet: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(
-            &original,
-            None,
-            Some("Carol <carol@example.com>"),
-        );
+        let recipients =
+            build_reply_all_recipients(&original, None, Some("Carol <carol@example.com>"));
         let cc = recipients.cc.unwrap();
         assert_eq!(cc, "bob@example.com");
     }
@@ -725,8 +739,7 @@ mod tests {
             date: "".to_string(),
             snippet: "".to_string(),
         };
-        let recipients =
-            build_reply_all_recipients(&original, Some("extra@example.com"), None);
+        let recipients = build_reply_all_recipients(&original, Some("extra@example.com"), None);
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
         assert!(cc.contains("extra@example.com"));
@@ -792,5 +805,78 @@ mod tests {
         assert!(cc.contains("dave@example.com"));
         assert!(!cc.contains("list@example.com"));
         assert!(!cc.contains("owner@example.com"));
+    }
+
+    #[test]
+    fn test_split_mailbox_list_simple() {
+        let addrs = split_mailbox_list("alice@example.com, bob@example.com");
+        assert_eq!(addrs, vec!["alice@example.com", "bob@example.com"]);
+    }
+
+    #[test]
+    fn test_split_mailbox_list_quoted_comma() {
+        let addrs =
+            split_mailbox_list(r#""Doe, John" <john@example.com>, alice@example.com"#);
+        assert_eq!(
+            addrs,
+            vec![r#""Doe, John" <john@example.com>"#, "alice@example.com"]
+        );
+    }
+
+    #[test]
+    fn test_split_mailbox_list_single() {
+        let addrs = split_mailbox_list("alice@example.com");
+        assert_eq!(addrs, vec!["alice@example.com"]);
+    }
+
+    #[test]
+    fn test_split_mailbox_list_empty() {
+        let addrs = split_mailbox_list("");
+        assert!(addrs.is_empty());
+    }
+
+    #[test]
+    fn test_reply_all_with_quoted_comma_display_name() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "sender@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: r#""Doe, John" <john@example.com>, alice@example.com"#.to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None);
+        let cc = recipients.cc.unwrap();
+        // Both addresses should be preserved intact
+        assert!(cc.contains("john@example.com"));
+        assert!(cc.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn test_remove_with_quoted_comma_display_name() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "sender@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: r#""Doe, John" <john@example.com>, alice@example.com"#.to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            snippet: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(
+            &original,
+            None,
+            Some("john@example.com"),
+        );
+        let cc = recipients.cc.unwrap();
+        assert!(!cc.contains("john@example.com"));
+        assert!(cc.contains("alice@example.com"));
     }
 }
