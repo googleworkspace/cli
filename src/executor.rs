@@ -211,7 +211,7 @@ async fn handle_json_response(
     body_text: &str,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
-    sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
+    sanitize_mode: &crate::sanitize::SanitizeMode,
     output_format: &crate::formatter::OutputFormat,
     pages_fetched: &mut u32,
     page_token: &mut Option<String>,
@@ -224,15 +224,14 @@ async fn handle_json_response(
         // Run Model Armor sanitization if --sanitize is enabled
         if let Some(template) = sanitize_template {
             let text_to_check = serde_json::to_string(&json_val).unwrap_or_default();
-            match crate::helpers::modelarmor::sanitize_text(template, &text_to_check).await {
+            match crate::sanitize::sanitize_text(template, &text_to_check).await {
                 Ok(result) => {
                     let is_match = result.filter_match_state == "MATCH_FOUND";
                     if is_match {
                         eprintln!("⚠️  Model Armor: prompt injection detected (filterMatchState: MATCH_FOUND)");
                     }
 
-                    if is_match && *sanitize_mode == crate::helpers::modelarmor::SanitizeMode::Block
-                    {
+                    if is_match && *sanitize_mode == crate::sanitize::SanitizeMode::Block {
                         let blocked = serde_json::json!({
                             "error": "Content blocked by Model Armor",
                             "sanitizationResult": serde_json::to_value(&result).unwrap_or_default(),
@@ -370,7 +369,7 @@ pub async fn execute_method(
     dry_run: bool,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
-    sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
+    sanitize_mode: &crate::sanitize::SanitizeMode,
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
@@ -1656,7 +1655,7 @@ async fn test_execute_method_dry_run() {
     let params_json = r#"{"fileId": "123"}"#;
     let body_json = r#"{"name": "test.txt"}"#;
 
-    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let sanitize_mode = crate::sanitize::SanitizeMode::Warn;
     let pagination = PaginationConfig::default();
 
     let result = execute_method(
@@ -1701,7 +1700,7 @@ async fn test_execute_method_missing_path_param() {
         ..Default::default()
     };
 
-    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let sanitize_mode = crate::sanitize::SanitizeMode::Warn;
     let result = execute_method(
         &doc,
         &method,

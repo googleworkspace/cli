@@ -25,6 +25,10 @@ authors = ["Justin Poehnelt"]
 keywords = ["cli", "google-workspace", "google", "drive", "gmail"]
 categories = ["command-line-utilities", "web-programming"]
 
+[lib]
+name = "gws"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gws"
 path = "src/main.rs"
