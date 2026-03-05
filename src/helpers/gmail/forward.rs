@@ -7,7 +7,7 @@ pub(super) async fn handle_forward(
 ) -> Result<(), GwsError> {
     let config = parse_forward_args(matches);
 
-    let token = auth::get_token(&[GMAIL_SCOPE])
+    let token = auth::get_token(&[GMAIL_SCOPE], None)
         .await
         .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
 
@@ -38,7 +38,7 @@ pub(super) async fn handle_forward(
     let params_str = params.to_string();
 
     let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match auth::get_token(&scopes).await {
+    let (token, auth_method) = match auth::get_token(&scopes, None).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
         Err(_) => (None, executor::AuthMethod::None),
     };

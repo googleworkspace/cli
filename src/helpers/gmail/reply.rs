@@ -8,7 +8,7 @@ pub(super) async fn handle_reply(
 ) -> Result<(), GwsError> {
     let config = parse_reply_args(matches);
 
-    let token = auth::get_token(&[GMAIL_SCOPE])
+    let token = auth::get_token(&[GMAIL_SCOPE], None)
         .await
         .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
 
@@ -53,7 +53,7 @@ pub(super) async fn handle_reply(
     let params_str = params.to_string();
 
     let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match auth::get_token(&scopes).await {
+    let (token, auth_method) = match auth::get_token(&scopes, None).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
         Err(_) => (None, executor::AuthMethod::None),
     };
@@ -123,7 +123,7 @@ pub(super) async fn fetch_message_metadata(
          &metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc\
          &metadataHeaders=Subject&metadataHeaders=Date\
          &metadataHeaders=Message-ID&metadataHeaders=References",
-        message_id
+        crate::validate::encode_path_segment(message_id)
     );
 
     let resp = crate::client::send_with_retry(|| client.get(&url).bearer_auth(token))
