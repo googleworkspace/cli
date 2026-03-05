@@ -230,18 +230,14 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             account_email = Some(value.to_string());
             continue;
         }
-        if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
-            services_filter = Some(
-                args[i + 1]
-                    .split(',')
-                    .map(|s| s.trim().to_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            );
+        let services_str = if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
             skip_next = true;
-            continue;
-        }
-        if let Some(value) = args[i].strip_prefix("--services=") {
+            Some(args[i + 1].as_str())
+        } else {
+            args[i].strip_prefix("--services=")
+        };
+
+        if let Some(value) = services_str {
             services_filter = Some(
                 value
                     .split(',')
@@ -623,6 +619,38 @@ fn filter_scopes_by_services(
     }
 }
 
+/// Check if a scope is subsumed by a broader scope in the list.
+/// e.g. "drive.metadata" is subsumed by "drive", "calendar.events" by "calendar".
+fn is_subsumed_scope(short: &str, all_shorts: &[&str]) -> bool {
+    all_shorts.iter().any(|&other| {
+        other != short
+            && short.starts_with(other)
+            && short.as_bytes().get(other.len()) == Some(&b'.')
+    })
+}
+
+/// Determine if a discovered scope should be included in the "Recommended" template.
+///
+/// When a services filter is active, recommends all top-level (non-subsumed) scopes.
+/// Otherwise, recommends only the curated `MINIMAL_SCOPES` list to stay under
+/// the 25-scope limit for unverified apps and @gmail.com accounts.
+///
+/// Always excludes admin-only and Workspace-admin scopes.
+fn is_recommended_scope(
+    entry: &crate::setup::DiscoveredScope,
+    all_shorts: &[&str],
+    has_services_filter: bool,
+) -> bool {
+    if entry.short.starts_with("admin.") || is_workspace_admin_scope(&entry.url) {
+        return false;
+    }
+    if has_services_filter {
+        !is_subsumed_scope(&entry.short, all_shorts)
+    } else {
+        MINIMAL_SCOPES.contains(&entry.url.as_str())
+    }
+}
+
 /// Run the rich discovery-based scope picker with templates.
 fn run_discovery_scope_picker(
     relevant_scopes: &[crate::setup::DiscoveredScope],
@@ -639,14 +667,9 @@ fn run_discovery_scope_picker(
     let filtered_scopes: Vec<&crate::setup::DiscoveredScope> = relevant_scopes
         .iter()
         .filter(|e| {
-            if let Some(services) = services_filter {
-                if services.is_empty() {
-                    return true;
-                }
-                scope_matches_service(&e.url, services)
-            } else {
-                true
-            }
+            services_filter.is_none_or(|services| {
+                services.is_empty() || scope_matches_service(&e.url, services)
+            })
         })
         .collect();
 
@@ -663,24 +686,7 @@ fn run_discovery_scope_picker(
             continue;
         }
 
-        let is_recommended = if services_filter.is_some() {
-            // When filtering by specific services, recommend all top-level scopes for those services.
-            let is_subsumed = all_shorts.iter().any(|&other| {
-                other != entry.short
-                    && entry.short.starts_with(other)
-                    && entry.short.as_bytes().get(other.len()) == Some(&b'.')
-            });
-            !is_subsumed
-        } else {
-            // By default, only recommend the curated list of consumer scopes to avoid
-            // the 25-scope limit for unverified apps and @gmail.com accounts.
-            MINIMAL_SCOPES.contains(&entry.url.as_str())
-        };
-
-        if is_recommended
-            && !entry.short.starts_with("admin.")
-            && !is_workspace_admin_scope(&entry.url)
-        {
+        if is_recommended_scope(entry, &all_shorts, services_filter.is_some()) {
             recommended_scopes.push(entry.short.to_string());
         }
         if entry.is_readonly {
@@ -688,12 +694,7 @@ fn run_discovery_scope_picker(
         }
         // For "Full Access": skip if a broader scope exists (hierarchical dedup)
         // e.g. "drive.metadata" is subsumed by "drive", "calendar.events" by "calendar"
-        let is_subsumed = all_shorts.iter().any(|&other| {
-            other != entry.short
-                && entry.short.starts_with(other)
-                && entry.short.as_bytes().get(other.len()) == Some(&b'.')
-        });
-        if !is_subsumed {
+        if !is_subsumed_scope(&entry.short, &all_shorts) {
             all_scopes.push(entry.short.to_string());
         }
     }
@@ -801,25 +802,7 @@ fn run_discovery_scope_picker(
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
-                    if entry.short.starts_with("admin.") {
-                        continue;
-                    }
-                    if is_workspace_admin_scope(&entry.url) {
-                        continue;
-                    }
-
-                    let is_rec = if services_filter.is_some() {
-                        let is_subsumed = all_shorts.iter().any(|&other| {
-                            other != entry.short
-                                && entry.short.starts_with(other)
-                                && entry.short.as_bytes().get(other.len()) == Some(&b'.')
-                        });
-                        !is_subsumed
-                    } else {
-                        MINIMAL_SCOPES.contains(&entry.url.as_str())
-                    };
-
-                    if is_rec {
+                    if is_recommended_scope(entry, &all_shorts, services_filter.is_some()) {
                         selected.push(entry.url.to_string());
                     }
                 }
@@ -900,11 +883,10 @@ fn run_simple_scope_picker(services_filter: Option<&HashSet<String>>) -> Option<
     // Pre-filter SCOPE_ENTRIES by services if a filter is provided
     let entries: Vec<&ScopeEntry> = SCOPE_ENTRIES
         .iter()
-        .filter(|entry| match services_filter {
-            Some(services) if !services.is_empty() => {
-                services.contains(entry.service_id) || scope_matches_service(entry.scope, services)
-            }
-            _ => true,
+        .filter(|entry| {
+            services_filter.is_none_or(|services| {
+                services.is_empty() || scope_matches_service(entry.scope, services)
+            })
         })
         .collect();
 
@@ -1434,54 +1416,44 @@ pub fn extract_refresh_token(token_data: &str) -> Option<String> {
 struct ScopeEntry {
     scope: &'static str,
     label: &'static str,
-    service_id: &'static str,
 }
 
 const SCOPE_ENTRIES: &[ScopeEntry] = &[
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/drive",
         label: "Google Drive",
-        service_id: "drive",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/spreadsheets",
         label: "Google Sheets",
-        service_id: "sheets",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/gmail.modify",
         label: "Gmail",
-        service_id: "gmail",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/calendar",
         label: "Google Calendar",
-        service_id: "calendar",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/documents",
         label: "Google Docs",
-        service_id: "docs",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/presentations",
         label: "Google Slides",
-        service_id: "slides",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/tasks",
         label: "Google Tasks",
-        service_id: "tasks",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/pubsub",
         label: "Cloud Pub/Sub",
-        service_id: "pubsub",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/cloud-platform",
         label: "Cloud Platform",
-        service_id: "cloud-platform",
     },
 ];
 
