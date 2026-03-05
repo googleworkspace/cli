@@ -39,13 +39,6 @@ pub enum AuthMethod {
 }
 
 /// Resolve authentication, skipping OAuth when a custom API endpoint is set.
-///
-/// When `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set, all requests go to a mock
-/// server that doesn't need (or support) Google OAuth. This helper centralises
-/// that check so every call-site doesn't need to know about the env var.
-///
-/// Returns `Err` when OAuth fails so call-sites can log context-appropriate
-/// warnings (e.g. `[gws mcp]` prefix in MCP mode).
 pub async fn resolve_auth(
     scopes: &[&str],
     account: Option<&str>,

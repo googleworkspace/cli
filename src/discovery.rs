@@ -183,8 +183,6 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
-/// Cached custom API base URL, read once from the environment.
-/// Prints a warning on first access so the redirect is never silent.
 static CUSTOM_API_BASE_URL: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
     let url = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE_URL")
         .ok()
@@ -196,23 +194,11 @@ static CUSTOM_API_BASE_URL: std::sync::LazyLock<Option<String>> = std::sync::Laz
     url
 });
 
-/// Returns the custom API base URL override, if set.
-///
-/// When `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set (e.g., `http://localhost:8099`), all API
-/// requests are directed to this endpoint instead of the real Google APIs.
-/// Authentication is skipped automatically. This is useful for testing against
-/// mock API servers.
 pub fn custom_api_base_url() -> Option<&'static str> {
     CUSTOM_API_BASE_URL.as_deref()
 }
 
 /// Fetches and caches a Google Discovery Document.
-///
-/// The Discovery Document is always fetched from the real Google APIs so that
-/// gws knows the full command structure (resources, methods, parameters). When
-/// `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set, the document's `root_url` and `base_url` are
-/// rewritten to point at the custom endpoint — actual API requests then go to
-/// the mock server while the CLI command tree remains fully functional.
 pub async fn fetch_discovery_document(
     service: &str,
     version: &str,
@@ -285,19 +271,12 @@ pub async fn fetch_discovery_document(
     Ok(doc)
 }
 
-/// Rewrite Discovery Document URLs when `GOOGLE_WORKSPACE_CLI_API_BASE_URL` is set.
-/// Uses the same base_url structure as the original document — just
-/// swaps the host so request paths stay correct for the mock server.
 fn apply_base_url_override(doc: &mut RestDescription) {
     if let Some(base) = custom_api_base_url() {
         rewrite_base_url(doc, base);
     }
 }
 
-/// Rewrites `root_url` and `base_url` in a Discovery Document to point at a
-/// custom endpoint while preserving the service path (e.g., `drive/v3/`).
-/// Extracted for testability (the env-var path goes through `LazyLock` which
-/// is hard to toggle in tests).
 fn rewrite_base_url(doc: &mut RestDescription, base: &str) {
     let base_trimmed = base.trim_end_matches('/');
     let new_root_url = format!("{base_trimmed}/");
@@ -380,8 +359,6 @@ mod tests {
 
     #[test]
     fn test_rewrite_base_url_empty_service_path() {
-        // Gmail-style: rootUrl includes the host, servicePath is empty,
-        // method paths include the full path (e.g., "gmail/v1/users/{userId}/profile")
         let mut doc = RestDescription {
             name: "gmail".to_string(),
             version: "v1".to_string(),
@@ -398,8 +375,6 @@ mod tests {
 
     #[test]
     fn test_rewrite_base_url_preserves_service_path() {
-        // Drive-style: rootUrl is the shared host, servicePath is "drive/v3/",
-        // method paths are short (e.g., "files")
         let mut doc = RestDescription {
             name: "drive".to_string(),
             version: "v3".to_string(),
@@ -419,8 +394,6 @@ mod tests {
 
     #[test]
     fn test_rewrite_base_url_none() {
-        // Some Discovery Documents omit base_url; build_url() falls back to
-        // root_url + service_path in that case. Verify we don't panic.
         let mut doc = RestDescription {
             name: "customsearch".to_string(),
             version: "v1".to_string(),
