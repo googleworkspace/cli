@@ -502,15 +502,43 @@ fn build_url(
         let placeholder = format!("{{{key}}}");
         // Also handle {+key} style
         let plus_placeholder = format!("{{+{key}}}");
+        let has_plain_placeholder = url_path.contains(&placeholder);
+        let has_plus_placeholder = url_path.contains(&plus_placeholder);
 
-        if url_path.contains(&placeholder) {
-            url_path = url_path.replace(&placeholder, &val_str);
-        } else if url_path.contains(&plus_placeholder) {
-            url_path = url_path.replace(&plus_placeholder, &val_str);
-        } else {
-            // It's a query parameter
-            query_params.insert(key.clone(), val_str);
+        if has_plain_placeholder || has_plus_placeholder {
+            // RFC 6570-like expansion:
+            // - {var}: path segment expansion (encode all reserved characters)
+            // - {+var}: reserved expansion (preserve '/' path separators only)
+            let encoded = if has_plus_placeholder {
+                crate::validate::encode_path_preserving_slashes(&val_str)
+            } else {
+                crate::validate::encode_path_segment(&val_str)
+            };
+
+            if has_plain_placeholder {
+                url_path = url_path.replace(&placeholder, &encoded);
+            }
+            if has_plus_placeholder {
+                url_path = url_path.replace(&plus_placeholder, &encoded);
+            }
+            continue;
         }
+
+        let is_path_param = method
+            .parameters
+            .get(key)
+            .and_then(|p| p.location.as_deref())
+            == Some("path");
+
+        if is_path_param {
+            return Err(GwsError::Validation(format!(
+                "Path parameter '{}' was provided but is not present in URL template '{}'",
+                key, path_template
+            )));
+        }
+
+        // It's a query parameter
+        query_params.insert(key.clone(), val_str);
     }
 
     let full_url = if is_upload {
@@ -1160,6 +1188,133 @@ mod tests {
         let (url, query) = build_url(&doc, &method, &params, false).unwrap();
         assert_eq!(url, "https://api.example.com/files");
         assert_eq!(query.get("q").unwrap(), "search term");
+    }
+
+    #[test]
+    fn test_build_url_encodes_path_parameter_chars() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "spreadsheetId".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        parameters.insert(
+            "range".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "spreadsheets/{spreadsheetId}/values/{range}".to_string(),
+            flat_path: Some("spreadsheets/{spreadsheetId}/values/{range}".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("spreadsheetId".to_string(), json!("abc123"));
+        params.insert("range".to_string(), json!("hash#1!A1:B2"));
+
+        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(
+            url,
+            "https://api.example.com/spreadsheets/abc123/values/hash%231%21A1%3AB2"
+        );
+    }
+
+    #[test]
+    fn test_build_url_plus_expansion_preserves_slashes() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "name".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "v1/{+name}".to_string(),
+            flat_path: Some("v1/{+name}".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert(
+            "name".to_string(),
+            json!("projects/p1/locations/us/topics/t1"),
+        );
+
+        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(
+            url,
+            "https://api.example.com/v1/projects/p1/locations/us/topics/t1"
+        );
+    }
+
+    #[test]
+    fn test_build_url_plus_expansion_encodes_reserved_chars() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "name".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "v1/{+name}".to_string(),
+            flat_path: Some("v1/{+name}".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("name".to_string(), json!("projects/p1#frag?x=y"));
+
+        let (url, _) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(url, "https://api.example.com/v1/projects/p1%23frag%3Fx%3Dy");
+    }
+
+    #[test]
+    fn test_build_url_errors_for_path_param_not_in_template() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "fileId".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("path".to_string()),
+                ..Default::default()
+            },
+        );
+        let method = RestMethod {
+            path: "files".to_string(),
+            flat_path: Some("files".to_string()),
+            parameters,
+            ..Default::default()
+        };
+        let mut params = Map::new();
+        params.insert("fileId".to_string(), json!("123"));
+
+        let err = build_url(&doc, &method, &params, false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Path parameter 'fileId' was provided but is not present"));
     }
 
     #[test]

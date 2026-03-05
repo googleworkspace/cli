@@ -173,6 +173,19 @@ pub fn encode_path_segment(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }
 
+/// Percent-encode a value for use in URI path templates where `/` should stay
+/// as a path separator (e.g., RFC 6570 `{+name}` expansions).
+///
+/// Each path segment is encoded independently, then joined with `/`, so
+/// dangerous characters like `#`/`?` are still escaped while hierarchical
+/// resource names such as `projects/p/locations/l` remain readable.
+pub fn encode_path_preserving_slashes(s: &str) -> String {
+    s.split('/')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Validate a multi-segment resource name (e.g., `spaces/ABC`, `subscriptions/123`).
 /// Rejects path traversal, control characters, and URL-special characters including `%`
 /// to prevent URL-encoded bypasses. Returns the validated name or an error.
@@ -412,6 +425,25 @@ mod tests {
         // The % itself gets encoded to %25, so %40 becomes %2540
         // This prevents double-encoding issues at the HTTP layer
         assert!(encoded.contains("%2540"));
+    }
+
+    #[test]
+    fn test_encode_path_preserving_slashes_hierarchical_name() {
+        let encoded = encode_path_preserving_slashes("projects/p1/locations/us/topics/t1");
+        assert_eq!(encoded, "projects/p1/locations/us/topics/t1");
+    }
+
+    #[test]
+    fn test_encode_path_preserving_slashes_escapes_reserved_chars() {
+        let encoded = encode_path_preserving_slashes("hash#1/child?x=y");
+        assert_eq!(encoded, "hash%231/child%3Fx%3Dy");
+    }
+
+    #[test]
+    fn test_encode_path_preserving_slashes_spaces_and_unicode() {
+        let encoded = encode_path_preserving_slashes("タイムライン 1/列 A");
+        assert!(!encoded.contains(' '));
+        assert!(encoded.contains('/'));
     }
 
     // -- validate_resource_name -----------------------------------------------
