@@ -36,9 +36,12 @@ enum Credential {
 /// Tries credentials in order:
 /// 0. `GOOGLE_WORKSPACE_CLI_TOKEN` env var (raw access token, highest priority)
 /// 1. `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var (plaintext JSON, can be User or Service Account)
-/// 2. Encrypted credentials at `~/.config/gws/credentials.enc` (User only)
+/// 2. Per-account encrypted credentials via `accounts.json` registry
 /// 3. Plaintext credentials at `~/.config/gws/credentials.json` (User only)
-pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
+///
+/// When `account` is `Some`, a specific registered account is used.
+/// When `account` is `None`, the default account from `accounts.json` is used.
+pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result<String> {
     // 0. Direct token from env var (highest priority, bypasses all credential loading)
     if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
         if !token.is_empty() {
@@ -52,26 +55,112 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("gws");
 
-    let enc_path = credential_store::encrypted_credentials_path();
+    // If env var credentials are specified, skip account resolution entirely
+    if creds_file.is_some() {
+        let enc_path = credential_store::encrypted_credentials_path();
+        let default_path = config_dir.join("credentials.json");
+        let token_cache = config_dir.join("token_cache.json");
+        let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
+        return get_token_inner(scopes, creds, &token_cache, impersonated_user.as_deref()).await;
+    }
+
+    // Resolve account from registry
+    let resolved_account = resolve_account(account)?;
+
+    let enc_path = match &resolved_account {
+        Some(email) => credential_store::encrypted_credentials_path_for(email),
+        None => credential_store::encrypted_credentials_path(),
+    };
+
+    // Per-account token cache: token_cache.<b64-email>.json
+    let token_cache_name = resolved_account
+        .as_ref()
+        .map(|email| {
+            let b64 = crate::accounts::email_to_b64(&crate::accounts::normalize_email(email));
+            format!("token_cache.{b64}.json")
+        })
+        .unwrap_or_else(|| "token_cache.json".to_string());
+    let token_cache_path = config_dir.join(token_cache_name);
+
     let default_path = config_dir.join("credentials.json");
+    let creds = load_credentials_inner(None, &enc_path, &default_path).await?;
+    get_token_inner(
+        scopes,
+        creds,
+        &token_cache_path,
+        impersonated_user.as_deref(),
+    )
+    .await
+}
 
-    let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
+/// Resolve which account to use:
+/// 1. Explicit `account` parameter takes priority.
+/// 2. Fall back to `accounts.json` default.
+/// 3. If no registry exists but legacy `credentials.enc` exists, fail with upgrade message.
+/// 4. If nothing exists, return None (will fall through to standard error).
+fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
+    let registry = crate::accounts::load_accounts()?;
 
-    get_token_inner(scopes, creds, &config_dir, impersonated_user.as_deref()).await
+    match (account, &registry) {
+        // Explicit account requested — validate it exists in registry
+        (Some(email), Some(reg)) => {
+            let normalised = crate::accounts::normalize_email(email);
+            if !reg.accounts.contains_key(&normalised) {
+                anyhow::bail!(
+                    "Account '{}' not found. Run 'gws auth login' to add it.",
+                    normalised
+                );
+            }
+            Ok(Some(normalised))
+        }
+        // Explicit account but no registry
+        (Some(email), None) => {
+            anyhow::bail!(
+                "Account '{}' not found. No accounts registered. Run 'gws auth login'.",
+                crate::accounts::normalize_email(email)
+            );
+        }
+        // No explicit account — use default from registry
+        (None, Some(reg)) => {
+            if let Some(default) = crate::accounts::get_default(reg) {
+                Ok(Some(default.to_string()))
+            } else if reg.accounts.len() == 1 {
+                // Auto-select the only account
+                Ok(reg.accounts.keys().next().cloned())
+            } else {
+                anyhow::bail!(
+                    "No default account set. Use --account or run 'gws auth default <email>'."
+                );
+            }
+        }
+        // No account, no registry — check for legacy credentials
+        (None, None) => {
+            let legacy_path = credential_store::encrypted_credentials_path();
+            if legacy_path.exists() {
+                anyhow::bail!(
+                    "Legacy credentials found at {}. \
+                     gws now supports multiple accounts. \
+                     Please run 'gws auth login' to upgrade your credentials.",
+                    legacy_path.display()
+                );
+            }
+            // No registry, no legacy — fall through to standard credential loading
+            Ok(None)
+        }
+    }
 }
 
 async fn get_token_inner(
     scopes: &[&str],
     creds: Credential,
-    config_dir: &std::path::Path,
+    token_cache_path: &std::path::Path,
     impersonated_user: Option<&str>,
 ) -> anyhow::Result<String> {
     match creds {
         Credential::AuthorizedUser(secret) => {
-            let token_cache = config_dir.join("token_cache.json");
             let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
                 .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
-                    token_cache,
+                    token_cache_path.to_path_buf(),
                 )))
                 .build()
                 .await
@@ -84,11 +173,16 @@ async fn get_token_inner(
                 .to_string())
         }
         Credential::ServiceAccount(key) => {
-            let token_cache = config_dir.join("service_account_token_cache.json");
-            let mut builder =
-                yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(Box::new(
-                    crate::token_storage::EncryptedTokenStorage::new(token_cache),
-                ));
+            let sa_cache = token_cache_path.with_file_name(format!(
+                "sa_{}",
+                token_cache_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ));
+            let mut builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
+                Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
+            );
 
             // Check for impersonation
             if let Some(user) = impersonated_user {
@@ -321,7 +415,7 @@ mod tests {
             std::env::set_var("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
         }
 
-        let result = get_token(&["https://www.googleapis.com/auth/drive"]).await;
+        let result = get_token(&["https://www.googleapis.com/auth/drive"], None).await;
 
         unsafe {
             if let Some(t) = old_token {

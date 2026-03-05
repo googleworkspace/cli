@@ -38,21 +38,25 @@ Use `patch` for fixes/chores, `minor` for new features, `major` for breaking cha
 ## Architecture
 
 The CLI uses a **two-phase argument parsing** strategy:
+
 1. Parse argv to extract the service name (e.g., `drive`)
 2. Fetch the service's Discovery Document, build a dynamic `clap::Command` tree, then re-parse
 
 ### Source Layout
 
-| File | Purpose |
-|---|---|
-| `src/main.rs` | Entrypoint, two-phase CLI parsing, method resolution |
-| `src/discovery.rs` | Serde models for Discovery Document + fetch/cache |
-| `src/services.rs` | Service alias → Discovery API name/version mapping |
-| `src/auth.rs` | Headless OAuth2 via `yup-oauth2` |
-| `src/commands.rs` | Recursive `clap::Command` builder from Discovery resources |
-| `src/executor.rs` | HTTP request construction, response handling, schema validation |
-| `src/schema.rs` | `gws schema` command — introspect API method schemas |
-| `src/error.rs` | Structured JSON error output |
+| File                      | Purpose                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `src/main.rs`             | Entrypoint, two-phase CLI parsing, `--account` global flag extraction, method resolution  |
+| `src/discovery.rs`        | Serde models for Discovery Document + fetch/cache                                         |
+| `src/services.rs`         | Service alias → Discovery API name/version mapping                                        |
+| `src/auth.rs`             | OAuth2 token acquisition with multi-account support via `accounts.json` registry          |
+| `src/accounts.rs`         | Multi-account registry (`accounts.json`), email normalisation, base64 encoding            |
+| `src/credential_store.rs` | AES-256-GCM encryption/decryption, per-account credential file paths                      |
+| `src/auth_commands.rs`    | `gws auth` subcommands: `login`, `logout`, `list`, `default`, `setup`, `status`, `export` |
+| `src/commands.rs`         | Recursive `clap::Command` builder from Discovery resources                                |
+| `src/executor.rs`         | HTTP request construction, response handling, schema validation                           |
+| `src/schema.rs`           | `gws schema` command — introspect API method schemas                                      |
+| `src/error.rs`            | Structured JSON error output                                                              |
 
 ## Demo Videos
 
@@ -84,11 +88,11 @@ ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears th
 
 When adding new helpers or CLI flags that accept file paths, **always validate** using the shared helpers:
 
-| Scenario | Validator | Rejects |
-|---|---|---|
-| File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()` | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
-| File path for reading (`--dir`) | `validate::validate_safe_dir_path()` | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
-| Enum/allowlist values (`--msg-format`) | clap `value_parser` (see `gmail/mod.rs`) | Any value not in the allowlist |
+| Scenario                               | Validator                                | Rejects                                                              |
+| -------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------- |
+| File path for writing (`--output-dir`) | `validate::validate_safe_output_dir()`   | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
+| File path for reading (`--dir`)        | `validate::validate_safe_dir_path()`     | Absolute paths, `../` traversal, symlinks outside CWD, control chars |
+| Enum/allowlist values (`--msg-format`) | clap `value_parser` (see `gmail/mod.rs`) | Any value not in the allowlist                                       |
 
 ```rust
 // In your argument parser:
@@ -150,4 +154,5 @@ When adding a new helper or CLI command:
 
 - `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)
 - `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`)
+- `GOOGLE_WORKSPACE_CLI_ACCOUNT` — Default account email for multi-account usage (overridden by `--account` flag)
 - Supports `.env` files via `dotenvy`

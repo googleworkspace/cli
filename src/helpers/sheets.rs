@@ -106,7 +106,7 @@ TIPS:
                 let (params_str, body_str, scopes) = build_append_request(&config, doc)?;
 
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-                let (token, auth_method) = match auth::get_token(&scope_strs).await {
+                let (token, auth_method) = match auth::get_token(&scope_strs, None).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                     Err(_) => (None, executor::AuthMethod::None),
                 };
@@ -164,7 +164,7 @@ TIPS:
                 })?;
 
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-                let (token, auth_method) = match auth::get_token(&scope_strs).await {
+                let (token, auth_method) = match auth::get_token(&scope_strs, None).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                     Err(_) => (None, executor::AuthMethod::None),
                 };

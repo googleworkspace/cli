@@ -19,6 +19,7 @@
 //! It supports deep schema validation, OAuth / Service Account authentication,
 //! interactive prompts, and integration with Model Armor.
 
+mod accounts;
 mod auth;
 pub(crate) mod auth_commands;
 mod client;
@@ -57,23 +58,53 @@ async fn main() {
 async fn run() -> Result<(), GwsError> {
     let args: Vec<String> = std::env::args().collect();
 
+    // Extract --account flag from anywhere in args (global flag)
+    // Priority: --account flag > GOOGLE_WORKSPACE_CLI_ACCOUNT env var
+    let account = extract_global_account(&args)
+        .or_else(|| std::env::var("GOOGLE_WORKSPACE_CLI_ACCOUNT").ok());
+
     if args.len() < 2 {
         print_usage();
         return Err(GwsError::Validation(
-            "No service specified. Usage: gws <service> <resource> [sub-resource] <method> [flags]"
+            "No service specified. Usage: gws [--account EMAIL] <service> <resource> [sub-resource] <method> [flags]"
                 .to_string(),
         ));
     }
 
-    let first_arg = &args[1];
+    // Find the first non-flag arg (skip --account and its value)
+    let mut first_arg: Option<String> = None;
+    {
+        let mut skip_next = false;
+        for a in args.iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if a == "--account" {
+                skip_next = true;
+                continue;
+            }
+            if a.starts_with("--account=") {
+                continue;
+            }
+            if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
+                first_arg = Some(a.clone());
+                break;
+            }
+        }
+    }
+    let first_arg = first_arg.ok_or_else(|| GwsError::Validation(
+        "No service specified. Usage: gws [--account EMAIL] <service> <resource> [sub-resource] <method> [flags]"
+            .to_string(),
+    ))?;
 
     // Handle --help and --version at top level
-    if is_help_flag(first_arg) {
+    if is_help_flag(&first_arg) {
         print_usage();
         return Ok(());
     }
 
-    if is_version_flag(first_arg) {
+    if is_version_flag(&first_arg) {
         println!("gws {}", env!("CARGO_PKG_VERSION"));
         println!("This is not an officially supported Google product.");
         return Ok(());
@@ -112,7 +143,7 @@ async fn run() -> Result<(), GwsError> {
     }
 
     // Parse service name and optional version override
-    let (api_name, version) = parse_service_and_version(&args, first_arg)?;
+    let (api_name, version) = parse_service_and_version(&args, &first_arg)?;
 
     // For synthetic services (no Discovery doc), use an empty RestDescription
     let doc = if api_name == "workflow" {
@@ -205,7 +236,7 @@ async fn run() -> Result<(), GwsError> {
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
     // Authenticate: try OAuth, otherwise proceed unauthenticated
-    let (token, auth_method) = match auth::get_token(&scopes).await {
+    let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
         Err(_) => (None, executor::AuthMethod::None),
     };
@@ -274,8 +305,11 @@ pub fn filter_args_for_subcommand(args: &[String]) -> Vec<String> {
             skip_next = false;
             continue;
         }
-        if arg == "--api-version" {
+        if arg == "--api-version" || arg == "--account" {
             skip_next = true;
+            continue;
+        }
+        if arg.starts_with("--account=") || arg.starts_with("--api-version=") {
             continue;
         }
         sub_args.push(arg.clone());
@@ -393,6 +427,9 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
     );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_ACCOUNT             Default account email for multi-account"
+    );
     println!();
     println!("COMMUNITY:");
     println!("    Star the repo: https://github.com/googleworkspace/cli");
@@ -401,6 +438,20 @@ fn print_usage() {
     println!();
     println!("DISCLAIMER:");
     println!("    This is not an officially supported Google product.");
+}
+
+/// Extract --account value from raw CLI args (before clap parsing).
+/// Supports both `--account EMAIL` and `--account=EMAIL` syntax.
+fn extract_global_account(args: &[String]) -> Option<String> {
+    for i in 0..args.len() {
+        if args[i] == "--account" && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+        if let Some(value) = args[i].strip_prefix("--account=") {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn is_help_flag(arg: &str) -> bool {
@@ -570,5 +621,155 @@ mod tests {
         let matches = cmd.get_matches_from(vec!["gws", "files", "permissions", "get"]);
         let (method, _) = resolve_method_from_matches(&doc, &matches).unwrap();
         assert_eq!(method.id.as_deref(), Some("drive.files.permissions.get"));
+    }
+
+    #[test]
+    fn test_extract_global_account_present() {
+        let args = vec![
+            "gws".into(),
+            "--account".into(),
+            "user@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        assert_eq!(
+            extract_global_account(&args),
+            Some("user@corp.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_global_account_absent() {
+        let args = vec!["gws".into(), "drive".into(), "files".into(), "list".into()];
+        assert_eq!(extract_global_account(&args), None);
+    }
+
+    #[test]
+    fn test_extract_global_account_at_end_missing_value() {
+        let args = vec!["gws".into(), "drive".into(), "--account".into()];
+        assert_eq!(extract_global_account(&args), None);
+    }
+
+    #[test]
+    fn test_filter_args_strips_account() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "--account".into(),
+            "user@corp.com".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+        assert!(!filtered.contains(&"--account".to_string()));
+        assert!(!filtered.contains(&"user@corp.com".to_string()));
+    }
+
+    #[test]
+    fn test_filter_args_strips_api_version() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "--api-version".into(),
+            "v3".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_filter_args_strips_both_account_and_api_version() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "--account".into(),
+            "a@b.com".into(),
+            "--api-version".into(),
+            "v2".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_filter_args_no_special_flags() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+            "--format".into(),
+            "table".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert_eq!(filtered, vec!["gws", "files", "list", "--format", "table"]);
+    }
+
+    #[test]
+    fn test_extract_global_account_before_service() {
+        // --account appears before the service name — email should be extracted, not treated as service
+        let args = vec![
+            "gws".into(),
+            "--account".into(),
+            "work@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        assert_eq!(
+            extract_global_account(&args),
+            Some("work@corp.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_filter_args_account_after_service() {
+        // --account appears AFTER the service name (the normal position for global flags
+        // that weren't consumed by extract_global_account)
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "--account".into(),
+            "work@corp.com".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert!(!filtered.contains(&"--account".to_string()));
+        assert!(!filtered.contains(&"work@corp.com".to_string()));
+        assert!(filtered.contains(&"files".to_string()));
+    }
+
+    #[test]
+    fn test_extract_global_account_equals_syntax() {
+        let args = vec![
+            "gws".into(),
+            "--account=work@corp.com".into(),
+            "drive".into(),
+        ];
+        assert_eq!(
+            extract_global_account(&args),
+            Some("work@corp.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_filter_args_strips_account_equals() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "drive".into(),
+            "--account=a@b.com".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args);
+        assert!(!filtered.iter().any(|a| a.contains("account")));
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 }

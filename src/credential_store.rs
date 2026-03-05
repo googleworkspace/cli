@@ -260,6 +260,41 @@ pub fn load_encrypted() -> anyhow::Result<String> {
     load_encrypted_from_path(&encrypted_credentials_path())
 }
 
+/// Returns the path for per-account encrypted credentials.
+///
+/// The filename is `credentials.<b64-email>.enc` where `<b64-email>` is the
+/// URL-safe, no-pad base64 encoding of the normalised email address.
+pub fn encrypted_credentials_path_for(account: &str) -> PathBuf {
+    let normalised = crate::accounts::normalize_email(account);
+    let b64 = crate::accounts::email_to_b64(&normalised);
+    crate::auth_commands::config_dir().join(format!("credentials.{b64}.enc"))
+}
+
+/// Saves credentials JSON to a per-account encrypted file.
+pub fn save_encrypted_for(json: &str, account: &str) -> anyhow::Result<PathBuf> {
+    let path = encrypted_credentials_path_for(account);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    let encrypted = encrypt(json.as_bytes())?;
+    crate::fs_util::atomic_write(&path, &encrypted)
+        .map_err(|e| anyhow::anyhow!("Failed to write credentials for {account}: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +401,37 @@ mod tests {
     fn get_or_create_key_produces_256_bits() {
         let key = get_or_create_key().unwrap();
         assert_eq!(key.len(), 32);
+    }
+
+    #[test]
+    fn test_encrypted_credentials_path_for_uses_b64() {
+        let path = encrypted_credentials_path_for("user@gmail.com");
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        // Should start with "credentials." and end with ".enc"
+        assert!(filename.starts_with("credentials."));
+        assert!(filename.ends_with(".enc"));
+        // Should NOT contain the raw email
+        assert!(!filename.contains('@'));
+        assert!(!filename.contains("user@gmail.com"));
+    }
+
+    #[test]
+    fn test_encrypted_credentials_path_for_case_insensitive() {
+        let path1 = encrypted_credentials_path_for("User@Gmail.COM");
+        let path2 = encrypted_credentials_path_for("user@gmail.com");
+        assert_eq!(
+            path1, path2,
+            "Case-different emails should map to same path"
+        );
+    }
+
+    #[test]
+    fn test_encrypted_credentials_path_for_different_emails_differ() {
+        let path1 = encrypted_credentials_path_for("alice@example.com");
+        let path2 = encrypted_credentials_path_for("bob@example.com");
+        assert_ne!(
+            path1, path2,
+            "Different emails should map to different paths"
+        );
     }
 }

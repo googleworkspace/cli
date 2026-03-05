@@ -14,10 +14,10 @@ pub(super) async fn handle_watch(
     let client = crate::client::build_client()?;
 
     // Get tokens
-    let gmail_token = auth::get_token(&[GMAIL_SCOPE])
+    let gmail_token = auth::get_token(&[GMAIL_SCOPE], None)
         .await
         .context("Failed to get Gmail token")?;
-    let pubsub_token = auth::get_token(&[PUBSUB_SCOPE])
+    let pubsub_token = auth::get_token(&[PUBSUB_SCOPE], None)
         .await
         .context("Failed to get Pub/Sub token")?;
 

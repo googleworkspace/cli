@@ -107,6 +107,23 @@ gws auth login       # subsequent logins
 
 > Requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated.
 
+### Multiple accounts
+
+You can authenticate with more than one Google account and switch between them:
+
+```bash
+gws auth login --account work@corp.com    # login and register an account
+gws auth login --account personal@gmail.com
+
+gws auth list                              # list registered accounts
+gws auth default work@corp.com             # set the default
+
+gws --account personal@gmail.com drive files list  # one-off override
+export GOOGLE_WORKSPACE_CLI_ACCOUNT=personal@gmail.com              # env var override
+```
+
+Credentials are stored per-account as `credentials.<b64-email>.enc` in `~/.config/gws/`, with an `accounts.json` registry tracking defaults.
+
 ### Manual OAuth setup (Google Cloud Console)
 
 Use this when `gws auth setup` cannot automate project/client creation, or when you want explicit control.
@@ -176,12 +193,14 @@ export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 
 ### Precedence
 
-| Priority | Source                             | Set via                                 |
-| -------- | ---------------------------------- | --------------------------------------- |
-| 1        | Access token                       | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
-| 2        | Credentials file                   | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
-| 3        | Encrypted credentials (OS keyring) | `gws auth login`                        |
-| 4        | Plaintext credentials              | `~/.config/gws/credentials.json`        |
+| Priority | Source                            | Set via                                 |
+| -------- | --------------------------------- | --------------------------------------- |
+| 1        | Access token                      | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
+| 2        | Credentials file                  | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
+| 3        | Per-account encrypted credentials | `gws auth login --account EMAIL`        |
+| 4        | Plaintext credentials             | `~/.config/gws/credentials.json`        |
+
+Account resolution: `--account` flag > `GOOGLE_WORKSPACE_CLI_ACCOUNT` env var > default in `accounts.json`.
 
 Environment variables can also live in a `.env` file.
 
