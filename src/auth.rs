@@ -94,9 +94,10 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
 /// Resolve which account to use:
 /// 1. Explicit `account` parameter takes priority.
 /// 2. Fall back to `accounts.json` default.
-/// 3. If no registry exists but legacy `credentials.enc` exists, fail with upgrade message.
+/// 3. If no registry exists but legacy `credentials.enc` exists, return None
+///    so the caller falls back to the legacy credential path.
 /// 4. If nothing exists, return None (will fall through to standard error).
-fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
+pub fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
     let registry = crate::accounts::load_accounts()?;
 
     match (account, &registry) {
@@ -131,20 +132,8 @@ fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
                 );
             }
         }
-        // No account, no registry — check for legacy credentials
-        (None, None) => {
-            let legacy_path = credential_store::encrypted_credentials_path();
-            if legacy_path.exists() {
-                anyhow::bail!(
-                    "Legacy credentials found at {}. \
-                     gws now supports multiple accounts. \
-                     Please run 'gws auth login' to upgrade your credentials.",
-                    legacy_path.display()
-                );
-            }
-            // No registry, no legacy — fall through to standard credential loading
-            Ok(None)
-        }
+        // No account, no registry — fall through to legacy credential path
+        (None, None) => Ok(None),
     }
 }
 

@@ -235,10 +235,14 @@ async fn run() -> Result<(), GwsError> {
     // Get scopes from the method
     let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
 
-    // Authenticate: try OAuth, otherwise proceed unauthenticated
+    // Authenticate: try OAuth, otherwise report the error so users can diagnose
     let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
+        Err(e) => {
+            eprintln!("Warning: failed to load credentials: {e}");
+            eprintln!("Proceeding without authentication. Run `gws auth login` to authenticate.");
+            (None, executor::AuthMethod::None)
+        }
     };
 
     // Execute
