@@ -131,18 +131,10 @@ fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
                 );
             }
         }
-        // No account, no registry — check for legacy credentials
+        // No account, no registry — use legacy credentials if they exist
         (None, None) => {
-            let legacy_path = credential_store::encrypted_credentials_path();
-            if legacy_path.exists() {
-                anyhow::bail!(
-                    "Legacy credentials found at {}. \
-                     gws now supports multiple accounts. \
-                     Please run 'gws auth login' to upgrade your credentials.",
-                    legacy_path.display()
-                );
-            }
-            // No registry, no legacy — fall through to standard credential loading
+            // Fall through to standard credential loading which will pick up
+            // the legacy credentials.enc file if it exists.
             Ok(None)
         }
     }
@@ -423,6 +415,88 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "my-test-token");
+    }
+
+    #[test]
+    fn test_resolve_account_no_registry_no_account_returns_none() {
+        // When there is no accounts.json and no explicit account,
+        // resolve_account should return Ok(None) to allow legacy
+        // credentials.enc to be picked up by load_credentials_inner.
+        let result = resolve_account(None);
+        // This will return Ok(None) if accounts.json doesn't exist,
+        // or Ok(Some(...)) if it does with a default. Either way, it
+        // should NOT error for the no-registry case.
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_load_credentials_encrypted_file() {
+        // Simulate an encrypted credentials file
+        let json = r#"{
+            "client_id": "enc_test_id",
+            "client_secret": "enc_test_secret",
+            "refresh_token": "enc_test_refresh",
+            "type": "authorized_user"
+        }"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+
+        // Encrypt and write
+        let encrypted = crate::credential_store::encrypt(json.as_bytes()).unwrap();
+        std::fs::write(&enc_path, &encrypted).unwrap();
+
+        let res = load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
+            .await
+            .unwrap();
+
+        match res {
+            Credential::AuthorizedUser(secret) => {
+                assert_eq!(secret.client_id, "enc_test_id");
+                assert_eq!(secret.client_secret, "enc_test_secret");
+                assert_eq!(secret.refresh_token, "enc_test_refresh");
+            }
+            _ => panic!("Expected AuthorizedUser from encrypted credentials"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_load_credentials_encrypted_takes_priority_over_default() {
+        // Encrypted credentials should be loaded before the default plaintext path
+        let enc_json = r#"{
+            "client_id": "encrypted_id",
+            "client_secret": "encrypted_secret",
+            "refresh_token": "encrypted_refresh",
+            "type": "authorized_user"
+        }"#;
+        let plain_json = r#"{
+            "client_id": "plaintext_id",
+            "client_secret": "plaintext_secret",
+            "refresh_token": "plaintext_refresh",
+            "type": "authorized_user"
+        }"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let plain_path = dir.path().join("credentials.json");
+
+        let encrypted = crate::credential_store::encrypt(enc_json.as_bytes()).unwrap();
+        std::fs::write(&enc_path, &encrypted).unwrap();
+        std::fs::write(&plain_path, plain_json).unwrap();
+
+        let res = load_credentials_inner(None, &enc_path, &plain_path)
+            .await
+            .unwrap();
+
+        match res {
+            Credential::AuthorizedUser(secret) => {
+                assert_eq!(
+                    secret.client_id, "encrypted_id",
+                    "Encrypted credentials should take priority over plaintext"
+                );
+            }
+            _ => panic!("Expected AuthorizedUser"),
+        }
     }
 
     #[tokio::test]

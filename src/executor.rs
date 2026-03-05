@@ -1526,6 +1526,44 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_error_response_401_with_oauth_does_not_mask_error() {
+        // When auth was attempted (OAuth) but the server still returns 401,
+        // the error should be an API error with the actual message, NOT
+        // the generic "Access denied. No credentials provided" message.
+        let json_err = json!({
+            "error": {
+                "code": 401,
+                "message": "Request had invalid authentication credentials.",
+                "errors": [{ "reason": "authError" }]
+            }
+        })
+        .to_string();
+
+        let err = handle_error_response::<()>(
+            reqwest::StatusCode::UNAUTHORIZED,
+            &json_err,
+            &AuthMethod::OAuth,
+        )
+        .unwrap_err();
+        match err {
+            GwsError::Api {
+                code,
+                message,
+                reason,
+                ..
+            } => {
+                assert_eq!(code, 401);
+                assert!(message.contains("invalid authentication credentials"));
+                assert_eq!(reason, "authError");
+            }
+            GwsError::Auth(msg) => {
+                panic!("Should NOT get generic Auth error when OAuth was used, got: {msg}");
+            }
+            other => panic!("Expected Api error, got: {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_handle_error_response_api_error() {
         let json_err = json!({
             "error": {
