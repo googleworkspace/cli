@@ -179,7 +179,7 @@ The repo ships 100+ Agent Skills (`SKILL.md` files) — one for every supported 
 
 ```bash
 # Install all skills at once
-npx skills add github:googleworkspace/cli
+npx skills add github.com:googleworkspace/cli
 
 # Or pick only what you need
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
