@@ -61,7 +61,7 @@ impl EncryptedTokenStorage {
         }
 
         // Write atomically via a sibling .tmp file + rename.
-        let _ = crate::fs_util::atomic_write_async(&self.file_path, encrypted.as_slice()).await;
+        crate::fs_util::atomic_write_async(&self.file_path, encrypted.as_slice()).await?;
 
         Ok(())
     }

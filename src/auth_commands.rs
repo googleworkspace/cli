@@ -19,6 +19,24 @@ use serde_json::json;
 use crate::credential_store;
 use crate::error::GwsError;
 
+/// Mask a secret string by showing only the first 4 and last 4 characters.
+/// Strings with 8 or fewer characters are fully replaced with "***".
+fn mask_secret(s: &str) -> String {
+    const MASK_PREFIX_LEN: usize = 4;
+    const MASK_SUFFIX_LEN: usize = 4;
+    const MIN_LEN_FOR_PARTIAL_MASK: usize = MASK_PREFIX_LEN + MASK_SUFFIX_LEN;
+
+    if s.len() > MIN_LEN_FOR_PARTIAL_MASK {
+        format!(
+            "{}...{}",
+            &s[..MASK_PREFIX_LEN],
+            &s[s.len() - MASK_SUFFIX_LEN..]
+        )
+    } else {
+        "***".to_string()
+    }
+}
+
 /// Minimal scopes for first-run login — only core Workspace APIs that never
 /// trigger Google's `restricted_client` / unverified-app block.
 ///
@@ -279,17 +297,12 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
                 println!("{contents}");
             } else if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
                 if let Some(obj) = creds.as_object_mut() {
-                    if let Some(serde_json::Value::String(s)) = obj.get("client_secret") {
-                        obj.insert(
-                            "client_secret".to_string(),
-                            json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])),
-                        );
-                    }
-                    if let Some(serde_json::Value::String(s)) = obj.get("refresh_token") {
-                        obj.insert(
-                            "refresh_token".to_string(),
-                            json!(format!("{}...{}", &s[..4], &s[s.len().min(4)..])),
-                        );
+                    for key in ["client_secret", "refresh_token"] {
+                        if let Some(val) = obj.get_mut(key) {
+                            if let Some(s) = val.as_str() {
+                                *val = json!(mask_secret(s));
+                            }
+                        }
                     }
                 }
                 println!("{}", serde_json::to_string_pretty(&creds).unwrap());
