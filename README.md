@@ -57,7 +57,7 @@ Pre-built binaries are also available on the [GitHub Releases](https://github.co
 Or build from source:
 
 ```bash
-cargo install --git https://github.com/googleworkspace/cli
+cargo install --git https://github.com/googleworkspace/cli --locked
 ```
 
 A Nix flake is also available at `github:googleworkspace/cli`
