@@ -348,7 +348,11 @@ fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
         cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
-        remove: matches.get_one::<String>("remove").map(|s| s.to_string()),
+        remove: matches
+            .try_get_one::<String>("remove")
+            .ok()
+            .flatten()
+            .map(|s| s.to_string()),
     }
 }
 
