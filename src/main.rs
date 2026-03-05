@@ -235,9 +235,7 @@ async fn run() -> Result<(), GwsError> {
     // Select the best scope for the method. Discovery Documents list scopes as
     // alternatives (any one grants access). We pick the first (broadest) scope
     // to avoid restrictive scopes like gmail.metadata that block query parameters.
-    let scopes: Vec<&str> = select_scope(&method.scopes)
-        .into_iter()
-        .collect();
+    let scopes: Vec<&str> = select_scope(&method.scopes).into_iter().collect();
 
     // Authenticate: try OAuth, otherwise proceed unauthenticated
     let (token, auth_method) = match auth::get_token(&scopes, account.as_deref()).await {

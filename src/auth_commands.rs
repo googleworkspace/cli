@@ -631,15 +631,13 @@ fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
         ],
     )];
 
-    let scope_set: std::collections::HashSet<String> =
-        scopes.iter().cloned().collect();
+    let scope_set: std::collections::HashSet<String> = scopes.iter().cloned().collect();
 
     scopes
         .into_iter()
         .filter(|scope| {
             !RESTRICTIVE_SCOPES.iter().any(|(restrictive, broader)| {
-                scope.as_str() == *restrictive
-                    && broader.iter().any(|b| scope_set.contains(*b))
+                scope.as_str() == *restrictive && broader.iter().any(|b| scope_set.contains(*b))
             })
         })
         .collect()
