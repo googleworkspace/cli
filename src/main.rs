@@ -240,7 +240,7 @@ async fn run() -> Result<(), GwsError> {
         Ok(t) => (Some(t), executor::AuthMethod::OAuth),
         Err(e) => {
             eprintln!("warning: authentication failed: {e:#}");
-            eprintln!("hint: run `gws auth login` to authenticate, or set GOOGLE_WORKSPACE_CLI_TOKEN");
+            eprintln!("hint: run `gws auth login` to authenticate, or set GOOGLE_WORKSPACE_CLI_TOKEN or GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
             (None, executor::AuthMethod::None)
         }
     };
