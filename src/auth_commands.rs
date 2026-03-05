@@ -1050,15 +1050,23 @@ fn handle_logout(args: &[String]) -> Result<(), GwsError> {
     }
 
     if let Some(ref email) = account_email {
-        // Per-account logout: remove only that account's credentials
+        // Per-account logout: remove only that account's credentials and token caches
         let enc_path = credential_store::encrypted_credentials_path_for(email);
+        let normalised = crate::accounts::normalize_email(email);
+        let b64 = crate::accounts::email_to_b64(&normalised);
+        let cfg = config_dir();
+        let token_cache = cfg.join(format!("token_cache.{b64}.json"));
+        let sa_token_cache = cfg.join(format!("sa_token_cache.{b64}.json"));
+
         let mut removed = Vec::new();
 
-        if enc_path.exists() {
-            std::fs::remove_file(&enc_path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", enc_path.display()))
-            })?;
-            removed.push(enc_path.display().to_string());
+        for path in [&enc_path, &token_cache, &sa_token_cache] {
+            if path.exists() {
+                std::fs::remove_file(path).map_err(|e| {
+                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+                })?;
+                removed.push(path.display().to_string());
+            }
         }
 
         // Remove from accounts.json registry
@@ -1109,14 +1117,22 @@ fn handle_logout(args: &[String]) -> Result<(), GwsError> {
             }
         }
 
-        // Also remove any per-account credential files
+        // Also remove any per-account credential and token cache files
+        let cfg = config_dir();
         for email in registry.accounts.keys() {
-            let path = credential_store::encrypted_credentials_path_for(email);
-            if path.exists() {
-                std::fs::remove_file(&path).map_err(|e| {
-                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-                })?;
-                removed.push(path.display().to_string());
+            let normalised = crate::accounts::normalize_email(email);
+            let b64 = crate::accounts::email_to_b64(&normalised);
+            let cred_path = credential_store::encrypted_credentials_path_for(email);
+            let tc_path = cfg.join(format!("token_cache.{b64}.json"));
+            let sa_tc_path = cfg.join(format!("sa_token_cache.{b64}.json"));
+
+            for path in [&cred_path, &tc_path, &sa_tc_path] {
+                if path.exists() {
+                    std::fs::remove_file(path).map_err(|e| {
+                        GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+                    })?;
+                    removed.push(path.display().to_string());
+                }
             }
         }
 
