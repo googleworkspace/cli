@@ -9,7 +9,7 @@ Add support for managing multiple Google accounts with per-account credential st
 **New features:**
 
 - `--account EMAIL` global flag available on every command
-- `GWS_ACCOUNT` environment variable as fallback
+- `GOOGLE_WORKSPACE_CLI_ACCOUNT` environment variable as fallback
 - `gws auth login --account EMAIL` — associates credentials with a specific account
 - `gws auth list` — lists all registered accounts
 - `gws auth default EMAIL` — sets the default account

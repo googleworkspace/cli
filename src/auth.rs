@@ -173,13 +173,11 @@ async fn get_token_inner(
                 .to_string())
         }
         Credential::ServiceAccount(key) => {
-            let sa_cache = token_cache_path.with_file_name(format!(
-                "sa_{}",
-                token_cache_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-            ));
+            let tc_filename = token_cache_path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| "token_cache.json".to_string());
+            let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
             let mut builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
                 Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
             );
