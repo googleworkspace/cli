@@ -95,13 +95,60 @@ pub fn save_client_config(
 }
 
 /// Loads OAuth client configuration from the standard Google Cloud Console format.
+///
+/// Search order:
+/// 1. `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET_FILE` env var (explicit override)
+/// 2. Platform-specific config dir (`~/.config/gws/` on Linux,
+///    `~/Library/Application Support/gws/` on macOS, `AppData\Roaming\gws\` on Windows)
+/// 3. XDG fallback — `~/.config/gws/client_secret.json` — so that macOS / Windows
+///    users who follow the Linux README instructions are not silently broken.
 pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
-    let path = client_config_path();
-    let data = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
-    let file: ClientSecretFile = serde_json::from_str(&data)
-        .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
-    Ok(file.installed)
+    // 1. Explicit env-var override (highest priority, cross-platform)
+    if let Ok(env_path) = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET_FILE") {
+        let path = PathBuf::from(&env_path);
+        let data = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "Cannot read GOOGLE_WORKSPACE_CLI_CLIENT_SECRET_FILE ({env_path}): {e}"
+            )
+        })?;
+        let file: ClientSecretFile = serde_json::from_str(&data)
+            .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
+        return Ok(file.installed);
+    }
+
+    // 2. Platform-specific config dir (primary)
+    let primary = client_config_path();
+
+    // 3. XDG fallback: ~/.config/gws/client_secret.json
+    //    On macOS / Windows the platform dir differs from the Linux convention
+    //    documented in the README, causing silent failures when users follow the docs.
+    let xdg_fallback = dirs::home_dir()
+        .map(|h| h.join(".config").join("gws").join("client_secret.json"))
+        .filter(|p| *p != primary); // avoid trying the same path twice on Linux
+
+    for path in [Some(primary.clone()), xdg_fallback]
+        .into_iter()
+        .flatten()
+    {
+        if !path.exists() {
+            continue;
+        }
+        let data = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
+        let file: ClientSecretFile = serde_json::from_str(&data)
+            .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
+        return Ok(file.installed);
+    }
+
+    anyhow::bail!(
+        "client_secret.json not found.\n\
+         Expected location: {}\n\
+         Alternatives:\n\
+         - Save client_secret.json downloaded from Google Cloud Console to the path above\n\
+         - Set GOOGLE_WORKSPACE_CLI_CLIENT_SECRET_FILE=/path/to/client_secret.json\n\
+         - Run `gws auth setup` to configure interactively",
+        primary.display()
+    )
 }
 
 #[cfg(test)]
@@ -237,10 +284,14 @@ mod tests {
             dir.path().to_str().unwrap(),
         );
 
-        // Initially no config file exists
+        // Initially no config file exists — error should mention expected location
         let result = load_client_config();
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Cannot read"));
+        assert!(
+            err.to_string().contains("not found")
+                || err.to_string().contains("client_secret.json"),
+            "Unexpected error: {err}"
+        );
 
         // Create a valid config file
         save_client_config("test-id", "test-secret", "test-project").unwrap();
@@ -260,5 +311,32 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Invalid client_secret.json format"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_load_client_config_from_env_var() {
+        // Write a valid client_secret.json to a temp file
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let json = r#"{
+            "installed": {
+                "client_id": "env-var-client-id",
+                "project_id": "env-project",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_secret": "env-secret"
+            }
+        }"#;
+        std::fs::write(file.path(), json).unwrap();
+
+        let _guard = EnvGuard::new(
+            "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET_FILE",
+            file.path().to_str().unwrap(),
+        );
+
+        let config = load_client_config().unwrap();
+        assert_eq!(config.client_id, "env-var-client-id");
+        assert_eq!(config.client_secret, "env-secret");
+        assert_eq!(config.project_id, "env-project");
     }
 }

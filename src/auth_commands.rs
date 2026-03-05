@@ -427,7 +427,7 @@ fn run_discovery_scope_picker(
             entry.classification != ScopeClassification::Restricted
         };
 
-        if is_recommended && !entry.short.starts_with("admin.") {
+        if is_recommended && !entry.short.starts_with("admin.") && !is_workspace_admin_scope(&entry.url) {
             recommended_scopes.push(entry.short.to_string());
         }
         if entry.is_readonly {
@@ -547,7 +547,7 @@ fn run_discovery_scope_picker(
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
-                    if entry.short.starts_with("admin.") {
+                    if entry.short.starts_with("admin.") || is_workspace_admin_scope(&entry.url) {
                         continue;
                     }
                     if entry.is_readonly || entry.classification != ScopeClassification::Restricted
@@ -1042,6 +1042,32 @@ fn is_app_only_scope(url: &str) -> bool {
         || url.contains("/auth/keep")
 }
 
+/// Returns `true` if a scope requires Google Workspace admin access or
+/// domain-wide delegation and will **always** fail with `400 invalid_scope`
+/// for personal `@gmail.com` accounts.
+///
+/// These scopes are intentionally excluded from the "Recommended" preset so
+/// that personal-account users don't hit auth errors on first login.
+/// They remain available via `--full` or an explicit `--scopes` flag once
+/// the user knows they have a Workspace domain.
+pub fn is_workspace_admin_scope(url: &str) -> bool {
+    const ADMIN_PREFIXES: &[&str] = &[
+        "/auth/apps.alerts",
+        "/auth/apps.groups.settings",
+        "/auth/apps.licensing",
+        "/auth/apps.order",
+        "/auth/cloud-identity.",
+        "/auth/ediscovery",
+        "/auth/directory.",
+        // Admin SDK Groups (different from personal Google Groups)
+        "/auth/groups",
+        "/auth/chat.admin.",
+        // Google Classroom requires an institution/education domain
+        "/auth/classroom.",
+    ];
+    ADMIN_PREFIXES.iter().any(|&p| url.contains(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1320,5 +1346,53 @@ mod tests {
         // HashMap<String, TokenInfo> format from EncryptedTokenStorage
         let data = r#"{"key":{"access_token":"ya29","refresh_token":"1//tok"}}"#;
         assert_eq!(extract_refresh_token(data), Some("1//tok".to_string()));
+    }
+
+    #[test]
+    fn test_is_workspace_admin_scope_matches_reported_scopes() {
+        // All scopes reported in Issue #119 must be filtered from Recommended.
+        let bad_scopes = [
+            "https://www.googleapis.com/auth/apps.alerts",
+            "https://www.googleapis.com/auth/apps.groups.settings",
+            "https://www.googleapis.com/auth/apps.licensing",
+            "https://www.googleapis.com/auth/apps.order",
+            "https://www.googleapis.com/auth/cloud-identity.devices",
+            "https://www.googleapis.com/auth/cloud-identity.groups",
+            "https://www.googleapis.com/auth/ediscovery",
+            "https://www.googleapis.com/auth/directory.readonly",
+            "https://www.googleapis.com/auth/groups",
+            "https://www.googleapis.com/auth/chat.admin.memberships",
+            "https://www.googleapis.com/auth/chat.admin.spaces",
+            "https://www.googleapis.com/auth/classroom.courses",
+        ];
+        for scope in &bad_scopes {
+            assert!(
+                is_workspace_admin_scope(scope),
+                "Expected {scope} to be flagged as workspace-admin scope"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_workspace_admin_scope_passes_personal_scopes() {
+        // Scopes available to personal @gmail.com accounts must NOT be filtered.
+        let good_scopes = [
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/documents",
+            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/presentations",
+            "https://www.googleapis.com/auth/contacts",
+            "https://www.googleapis.com/auth/pubsub",
+            "https://www.googleapis.com/auth/chat.messages",
+        ];
+        for scope in &good_scopes {
+            assert!(
+                !is_workspace_admin_scope(scope),
+                "Expected {scope} to NOT be flagged as workspace-admin scope"
+            );
+        }
     }
 }
