@@ -237,7 +237,10 @@ async fn run() -> Result<(), GwsError> {
 
     let (token, auth_method) = match executor::resolve_auth(&scopes, account.as_deref()).await {
         Ok(auth) => auth,
-        Err(_) => (None, executor::AuthMethod::None),
+        Err(e) => {
+            eprintln!("[gws] Warning: Authentication failed, proceeding without credentials: {e}");
+            (None, executor::AuthMethod::None)
+        }
     };
 
     // Execute
