@@ -89,10 +89,7 @@ fn format_forwarded_message(original: &super::reply::OriginalMessage) -> String 
 
 fn parse_forward_args(matches: &ArgMatches) -> ForwardConfig {
     ForwardConfig {
-        message_id: matches
-            .get_one::<String>("message-id")
-            .unwrap()
-            .to_string(),
+        message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         to: matches.get_one::<String>("to").unwrap().to_string(),
         cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
         body_text: matches.get_one::<String>("body").map(|s| s.to_string()),
@@ -185,13 +182,8 @@ mod tests {
 
     #[test]
     fn test_parse_forward_args() {
-        let matches = make_forward_matches(&[
-            "test",
-            "--message-id",
-            "abc123",
-            "--to",
-            "dave@example.com",
-        ]);
+        let matches =
+            make_forward_matches(&["test", "--message-id", "abc123", "--to", "dave@example.com"]);
         let config = parse_forward_args(&matches);
         assert_eq!(config.message_id, "abc123");
         assert_eq!(config.to, "dave@example.com");

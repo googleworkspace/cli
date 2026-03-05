@@ -205,11 +205,7 @@ fn build_reply_all_recipients(
 
     // Remove addresses if requested
     let remove_set: Vec<String> = remove
-        .map(|r| {
-            r.split(',')
-                .map(|s| s.trim().to_lowercase())
-                .collect()
-        })
+        .map(|r| r.split(',').map(|s| s.trim().to_lowercase()).collect())
         .unwrap_or_default();
 
     let cc_addrs: Vec<&str> = cc_addrs
@@ -232,10 +228,7 @@ fn build_reply_all_recipients(
 }
 
 fn build_reply_subject(original_subject: &str) -> String {
-    if original_subject
-        .to_lowercase()
-        .starts_with("re:")
-    {
+    if original_subject.to_lowercase().starts_with("re:") {
         original_subject.to_string()
     } else {
         format!("Re: {}", original_subject)
@@ -308,10 +301,7 @@ pub(super) fn resolve_send_method(
 
 fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
     ReplyConfig {
-        message_id: matches
-            .get_one::<String>("message-id")
-            .unwrap()
-            .to_string(),
+        message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
         cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
         remove: matches.get_one::<String>("remove").map(|s| s.to_string()),
@@ -450,8 +440,7 @@ mod tests {
             snippet: "".to_string(),
         };
 
-        let recipients =
-            build_reply_all_recipients(&original, None, Some("carol@example.com"));
+        let recipients = build_reply_all_recipients(&original, None, Some("carol@example.com"));
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
         assert!(!cc.contains("carol@example.com"));
@@ -473,13 +462,7 @@ mod tests {
 
     #[test]
     fn test_parse_reply_args() {
-        let matches = make_reply_matches(&[
-            "test",
-            "--message-id",
-            "abc123",
-            "--body",
-            "My reply",
-        ]);
+        let matches = make_reply_matches(&["test", "--message-id", "abc123", "--body", "My reply"]);
         let config = parse_reply_args(&matches);
         assert_eq!(config.message_id, "abc123");
         assert_eq!(config.body_text, "My reply");
