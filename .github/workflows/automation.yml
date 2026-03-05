@@ -112,9 +112,6 @@ jobs:
       group: gemini-review-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - name: Debounce
-        run: sleep 60
-
       - name: Remove reviewed label
         uses: actions/github-script@v7
         with:
@@ -130,6 +127,9 @@ jobs:
             } catch (e) {
               // Label not present — ignore
             }
+
+      - name: Debounce
+        run: sleep 60
 
       - name: Trigger Gemini Code Assist review
         uses: actions/github-script@v7
@@ -150,11 +150,22 @@ jobs:
       github.event.review.user.login == 'gemini-code-assist[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Add reviewed label
+      - name: Add reviewed label if review matches HEAD
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
           script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+
+            if (context.payload.review.commit_id !== pr.data.head.sha) {
+              console.log(`Review is for ${context.payload.review.commit_id} but HEAD is ${pr.data.head.sha} — skipping label`);
+              return;
+            }
+
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
