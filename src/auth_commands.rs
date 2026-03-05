@@ -1013,7 +1013,7 @@ async fn handle_use_adc() -> Result<(), GwsError> {
 
     println!(
         "{}",
-        serde_json::to_string_pretty(&output).unwrap_or_default()
+        serde_json::to_string_pretty(&output).unwrap()
     );
     Ok(())
 }
