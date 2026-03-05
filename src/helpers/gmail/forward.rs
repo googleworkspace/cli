@@ -20,16 +20,17 @@ pub(super) async fn handle_forward(
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
     let config = parse_forward_args(matches);
+    let dry_run = matches.get_flag("dry-run");
 
-    let token = auth::get_token(&[GMAIL_SCOPE], None)
-        .await
-        .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
-
-    let client = crate::client::build_client()?;
-
-    // Fetch original message metadata
-    let original =
-        super::reply::fetch_message_metadata(&client, &token, &config.message_id).await?;
+    let original = if dry_run {
+        super::reply::OriginalMessage::dry_run_placeholder(&config.message_id)
+    } else {
+        let token = auth::get_token(&[GMAIL_SCOPE], None)
+            .await
+            .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+        let client = crate::client::build_client()?;
+        super::reply::fetch_message_metadata(&client, &token, &config.message_id).await?
+    };
 
     let subject = build_forward_subject(&original.subject);
     let raw = create_forward_raw_message(

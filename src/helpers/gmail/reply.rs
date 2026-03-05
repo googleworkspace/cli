@@ -21,15 +21,17 @@ pub(super) async fn handle_reply(
     reply_all: bool,
 ) -> Result<(), GwsError> {
     let config = parse_reply_args(matches);
+    let dry_run = matches.get_flag("dry-run");
 
-    let token = auth::get_token(&[GMAIL_SCOPE], None)
-        .await
-        .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
-
-    let client = crate::client::build_client()?;
-
-    // Fetch original message metadata
-    let original = fetch_message_metadata(&client, &token, &config.message_id).await?;
+    let original = if dry_run {
+        OriginalMessage::dry_run_placeholder(&config.message_id)
+    } else {
+        let token = auth::get_token(&[GMAIL_SCOPE], None)
+            .await
+            .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+        let client = crate::client::build_client()?;
+        fetch_message_metadata(&client, &token, &config.message_id).await?
+    };
 
     // Build reply headers
     let reply_to = if reply_all {
@@ -71,6 +73,24 @@ pub(super) struct OriginalMessage {
     pub subject: String,
     pub date: String,
     pub snippet: String,
+}
+
+impl OriginalMessage {
+    /// Placeholder used for `--dry-run` to avoid requiring auth/network.
+    pub(super) fn dry_run_placeholder(message_id: &str) -> Self {
+        Self {
+            thread_id: format!("thread-{message_id}"),
+            message_id_header: format!("<{message_id}@example.com>"),
+            references: String::new(),
+            from: "sender@example.com".to_string(),
+            reply_to: String::new(),
+            to: "you@example.com".to_string(),
+            cc: String::new(),
+            subject: "Original subject".to_string(),
+            date: "Thu, 1 Jan 2026 00:00:00 +0000".to_string(),
+            snippet: "Original message body".to_string(),
+        }
+    }
 }
 
 struct ReplyRecipients {
