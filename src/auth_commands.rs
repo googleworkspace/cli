@@ -663,14 +663,18 @@ fn run_discovery_scope_picker(
             continue;
         }
 
-        let is_recommended = if entry.is_readonly {
-            let superset = entry.url.strip_suffix(".readonly").unwrap();
-            let superset_is_recommended = filtered_scopes
-                .iter()
-                .any(|s| s.url == superset && s.classification != ScopeClassification::Restricted);
-            !superset_is_recommended
+        let is_recommended = if services_filter.is_some() {
+            // When filtering by specific services, recommend all top-level scopes for those services.
+            let is_subsumed = all_shorts.iter().any(|&other| {
+                other != entry.short
+                    && entry.short.starts_with(other)
+                    && entry.short.as_bytes().get(other.len()) == Some(&b'.')
+            });
+            !is_subsumed
         } else {
-            entry.classification != ScopeClassification::Restricted
+            // By default, only recommend the curated list of consumer scopes to avoid
+            // the 25-scope limit for unverified apps and @gmail.com accounts.
+            MINIMAL_SCOPES.contains(&entry.url.as_str())
         };
 
         if is_recommended
@@ -696,8 +700,9 @@ fn run_discovery_scope_picker(
 
     let mut items: Vec<SelectItem> = vec![
         SelectItem {
-            label: "✨ Recommended (All Non-Restricted + Readonly)".to_string(),
-            description: "Selects non-restricted write scopes and all readonly scopes".to_string(),
+            label: "✨ Recommended (Core Consumer Scopes)".to_string(),
+            description: "Selects Drive, Gmail, Calendar, Docs, Sheets, Slides, and Tasks"
+                .to_string(),
             selected: true,
             is_fixed: false,
             is_template: true,
@@ -791,8 +796,7 @@ fn run_discovery_scope_picker(
                     selected.push(entry.url.to_string());
                 }
             } else if recommended && !full && !readonly {
-                // Recommended: non-restricted + readonly, but exclude admin.* and
-                // Workspace-admin-only scopes (require domain admin; fail for @gmail.com).
+                // Recommended: consumer scopes only (or top-level scopes if filtered).
                 for entry in &filtered_scopes {
                     if is_app_only_scope(&entry.url) {
                         continue;
@@ -803,8 +807,19 @@ fn run_discovery_scope_picker(
                     if is_workspace_admin_scope(&entry.url) {
                         continue;
                     }
-                    if entry.is_readonly || entry.classification != ScopeClassification::Restricted
-                    {
+
+                    let is_rec = if services_filter.is_some() {
+                        let is_subsumed = all_shorts.iter().any(|&other| {
+                            other != entry.short
+                                && entry.short.starts_with(other)
+                                && entry.short.as_bytes().get(other.len()) == Some(&b'.')
+                        });
+                        !is_subsumed
+                    } else {
+                        MINIMAL_SCOPES.contains(&entry.url.as_str())
+                    };
+
+                    if is_rec {
                         selected.push(entry.url.to_string());
                     }
                 }
