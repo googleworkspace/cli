@@ -285,12 +285,13 @@ pub async fn fetch_scopes_for_apis(enabled_api_ids: &[String]) -> Vec<Discovered
                         if !url.starts_with("https://www.googleapis.com/auth/") {
                             continue;
                         }
-                        // Filter out app-only scopes that can't be used with user OAuth consent
-                        // (they require a Chat app / service account)
+                        // Filter out scopes that can't be used with user OAuth consent
+                        // (they require a Chat app, service account, or domain-wide delegation)
                         if url.contains("/auth/chat.app.")
                             || url.contains("/auth/chat.bot")
                             || url.contains("/auth/chat.import")
                             || url.contains("/auth/keep")
+                            || url.contains("/auth/apps.alerts")
                         {
                             continue;
                         }
