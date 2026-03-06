@@ -13,21 +13,13 @@ Core Google Workspace API skills.
 | [gws-sheets](../skills/gws-sheets/SKILL.md) | Google Sheets: Read and write spreadsheets. |
 | [gws-gmail](../skills/gws-gmail/SKILL.md) | Gmail: Send, read, and manage email. |
 | [gws-calendar](../skills/gws-calendar/SKILL.md) | Google Calendar: Manage calendars and events. |
-| [gws-admin](../skills/gws-admin/SKILL.md) | Google Workspace Admin SDK: Manage users, groups, and devices. |
 | [gws-admin-reports](../skills/gws-admin-reports/SKILL.md) | Google Workspace Admin SDK: Audit logs and usage reports. |
 | [gws-docs](../skills/gws-docs/SKILL.md) | Read and write Google Docs. |
 | [gws-slides](../skills/gws-slides/SKILL.md) | Google Slides: Read and write presentations. |
 | [gws-tasks](../skills/gws-tasks/SKILL.md) | Google Tasks: Manage task lists and tasks. |
 | [gws-people](../skills/gws-people/SKILL.md) | Google People: Manage contacts and profiles. |
 | [gws-chat](../skills/gws-chat/SKILL.md) | Google Chat: Manage Chat spaces and messages. |
-| [gws-vault](../skills/gws-vault/SKILL.md) | Google Vault: Manage eDiscovery holds and exports. |
-| [gws-groupssettings](../skills/gws-groupssettings/SKILL.md) | Manage Google Groups settings. |
-| [gws-reseller](../skills/gws-reseller/SKILL.md) | Google Workspace Reseller: Manage Workspace subscriptions. |
-| [gws-licensing](../skills/gws-licensing/SKILL.md) | Google Workspace Enterprise License Manager: Manage product licenses. |
-| [gws-apps-script](../skills/gws-apps-script/SKILL.md) | Google Apps Script: Manage and execute Apps Script projects. |
 | [gws-classroom](../skills/gws-classroom/SKILL.md) | Google Classroom: Manage classes, rosters, and coursework. |
-| [gws-cloudidentity](../skills/gws-cloudidentity/SKILL.md) | Google Cloud Identity: Manage identity groups and memberships. |
-| [gws-alertcenter](../skills/gws-alertcenter/SKILL.md) | Google Workspace Alert Center: Manage Workspace security alerts. |
 | [gws-forms](../skills/gws-forms/SKILL.md) | Read and write Google Forms. |
 | [gws-keep](../skills/gws-keep/SKILL.md) | Manage Google Keep notes. |
 | [gws-meet](../skills/gws-meet/SKILL.md) | Manage Google Meet conferences. |
@@ -51,7 +43,6 @@ Shortcut commands for common operations.
 | [gws-calendar-agenda](../skills/gws-calendar-agenda/SKILL.md) | Google Calendar: Show upcoming events across all calendars. |
 | [gws-docs-write](../skills/gws-docs-write/SKILL.md) | Google Docs: Append text to a document. |
 | [gws-chat-send](../skills/gws-chat-send/SKILL.md) | Google Chat: Send a message to a space. |
-| [gws-apps-script-push](../skills/gws-apps-script-push/SKILL.md) | Google Apps Script: Upload local files to an Apps Script project. |
 | [gws-events-subscribe](../skills/gws-events-subscribe/SKILL.md) | Google Workspace Events: Subscribe to Workspace events and stream them as NDJSON. |
 | [gws-events-renew](../skills/gws-events-renew/SKILL.md) | Google Workspace Events: Renew/reactivate Workspace Events subscriptions. |
 | [gws-modelarmor-sanitize-prompt](../skills/gws-modelarmor-sanitize-prompt/SKILL.md) | Google Model Armor: Sanitize a user prompt through a Model Armor template. |
@@ -73,7 +64,7 @@ Role-based skill bundles.
 | [persona-project-manager](../skills/persona-project-manager/SKILL.md) | Coordinate projects — track tasks, schedule meetings, and share docs. |
 | [persona-hr-coordinator](../skills/persona-hr-coordinator/SKILL.md) | Handle HR workflows — onboarding, announcements, and employee comms. |
 | [persona-sales-ops](../skills/persona-sales-ops/SKILL.md) | Manage sales workflows — track deals, schedule calls, client comms. |
-| [persona-it-admin](../skills/persona-it-admin/SKILL.md) | Administer IT — manage users, monitor security, configure Workspace. |
+| [persona-it-admin](../skills/persona-it-admin/SKILL.md) | Administer IT — monitor security and configure Workspace. |
 | [persona-content-creator](../skills/persona-content-creator/SKILL.md) | Create, organize, and distribute content across Workspace. |
 | [persona-customer-support](../skills/persona-customer-support/SKILL.md) | Manage customer support — track tickets, respond, escalate issues. |
 | [persona-event-coordinator](../skills/persona-event-coordinator/SKILL.md) | Plan and manage events — scheduling, invitations, and logistics. |
@@ -86,9 +77,7 @@ Multi-step task sequences with real commands.
 
 | Skill | Description |
 |-------|-------------|
-| [recipe-audit-external-sharing](../skills/recipe-audit-external-sharing/SKILL.md) | Find and review Google Drive files shared outside the organization. |
 | [recipe-label-and-archive-emails](../skills/recipe-label-and-archive-emails/SKILL.md) | Apply Gmail labels to matching messages and archive them to keep your inbox clean. |
-| [recipe-send-personalized-emails](../skills/recipe-send-personalized-emails/SKILL.md) | Read recipient data from Google Sheets and send personalized Gmail messages to each row. |
 | [recipe-draft-email-from-doc](../skills/recipe-draft-email-from-doc/SKILL.md) | Read content from a Google Doc and use it as the body of a Gmail message. |
 | [recipe-organize-drive-folder](../skills/recipe-organize-drive-folder/SKILL.md) | Create a Google Drive folder structure and move files into the right locations. |
 | [recipe-share-folder-with-team](../skills/recipe-share-folder-with-team/SKILL.md) | Share a Google Drive folder and all its contents with a list of collaborators. |
@@ -98,27 +87,22 @@ Multi-step task sequences with real commands.
 | [recipe-copy-sheet-for-new-month](../skills/recipe-copy-sheet-for-new-month/SKILL.md) | Duplicate a Google Sheets template tab for a new month of tracking. |
 | [recipe-block-focus-time](../skills/recipe-block-focus-time/SKILL.md) | Create recurring focus time blocks on Google Calendar to protect deep work hours. |
 | [recipe-reschedule-meeting](../skills/recipe-reschedule-meeting/SKILL.md) | Move a Google Calendar event to a new time and automatically notify all attendees. |
-| [recipe-search-and-export-emails](../skills/recipe-search-and-export-emails/SKILL.md) | Find Gmail messages matching a query and export them for review. |
 | [recipe-create-gmail-filter](../skills/recipe-create-gmail-filter/SKILL.md) | Create a Gmail filter to automatically label, star, or categorize incoming messages. |
-| [recipe-cancel-and-notify](../skills/recipe-cancel-and-notify/SKILL.md) | Delete a Google Calendar event and send a cancellation email via Gmail. |
 | [recipe-schedule-recurring-event](../skills/recipe-schedule-recurring-event/SKILL.md) | Create a recurring Google Calendar event with attendees. |
 | [recipe-find-free-time](../skills/recipe-find-free-time/SKILL.md) | Query Google Calendar free/busy status for multiple users to find a meeting slot. |
 | [recipe-bulk-download-folder](../skills/recipe-bulk-download-folder/SKILL.md) | List and download all files from a Google Drive folder. |
 | [recipe-find-large-files](../skills/recipe-find-large-files/SKILL.md) | Identify large Google Drive files consuming storage quota. |
 | [recipe-create-shared-drive](../skills/recipe-create-shared-drive/SKILL.md) | Create a Google Shared Drive and add members with appropriate roles. |
-| [recipe-transfer-file-ownership](../skills/recipe-transfer-file-ownership/SKILL.md) | Transfer ownership of Google Drive files from one user to another. |
 | [recipe-log-deal-update](../skills/recipe-log-deal-update/SKILL.md) | Append a deal status update to a Google Sheets sales tracking spreadsheet. |
 | [recipe-collect-form-responses](../skills/recipe-collect-form-responses/SKILL.md) | Retrieve and review responses from a Google Form. |
 | [recipe-post-mortem-setup](../skills/recipe-post-mortem-setup/SKILL.md) | Create a Google Docs post-mortem, schedule a Google Calendar review, and notify via Chat. |
 | [recipe-create-task-list](../skills/recipe-create-task-list/SKILL.md) | Set up a new Google Tasks list with initial tasks. |
 | [recipe-review-overdue-tasks](../skills/recipe-review-overdue-tasks/SKILL.md) | Find Google Tasks that are past due and need attention. |
-| [recipe-deploy-apps-script](../skills/recipe-deploy-apps-script/SKILL.md) | Push local files to a Google Apps Script project. |
 | [recipe-watch-drive-changes](../skills/recipe-watch-drive-changes/SKILL.md) | Subscribe to change notifications on a Google Drive file or folder. |
 | [recipe-create-classroom-course](../skills/recipe-create-classroom-course/SKILL.md) | Create a Google Classroom course and invite students. |
 | [recipe-create-meet-space](../skills/recipe-create-meet-space/SKILL.md) | Create a Google Meet meeting space and share the join link. |
 | [recipe-review-meet-participants](../skills/recipe-review-meet-participants/SKILL.md) | Review who attended a Google Meet conference and for how long. |
 | [recipe-create-presentation](../skills/recipe-create-presentation/SKILL.md) | Create a new Google Slides presentation and add initial slides. |
-| [recipe-triage-security-alerts](../skills/recipe-triage-security-alerts/SKILL.md) | List and review Google Workspace security alerts from Alert Center. |
 | [recipe-save-email-attachments](../skills/recipe-save-email-attachments/SKILL.md) | Find Gmail messages with attachments and save them to a Google Drive folder. |
 | [recipe-send-team-announcement](../skills/recipe-send-team-announcement/SKILL.md) | Send a team announcement via both Gmail and a Google Chat space. |
 | [recipe-create-feedback-form](../skills/recipe-create-feedback-form/SKILL.md) | Create a Google Form for feedback and share it via Gmail. |
@@ -130,8 +114,6 @@ Multi-step task sequences with real commands.
 | [recipe-share-doc-and-notify](../skills/recipe-share-doc-and-notify/SKILL.md) | Share a Google Docs document with edit access and email collaborators the link. |
 | [recipe-backup-sheet-as-csv](../skills/recipe-backup-sheet-as-csv/SKILL.md) | Export a Google Sheets spreadsheet as a CSV file for local backup or processing. |
 | [recipe-save-email-to-doc](../skills/recipe-save-email-to-doc/SKILL.md) | Save a Gmail message body into a Google Doc for archival or reference. |
-| [recipe-batch-reply-to-emails](../skills/recipe-batch-reply-to-emails/SKILL.md) | Find Gmail messages matching a query and send a standard reply to each one. |
-| [recipe-batch-rename-files](../skills/recipe-batch-rename-files/SKILL.md) | Rename multiple Google Drive files matching a pattern to follow a consistent naming convention. |
 | [recipe-compare-sheet-tabs](../skills/recipe-compare-sheet-tabs/SKILL.md) | Read data from two tabs in a Google Sheet to compare and identify differences. |
 | [recipe-batch-invite-to-event](../skills/recipe-batch-invite-to-event/SKILL.md) | Add a list of attendees to an existing Google Calendar event and send notifications. |
 | [recipe-forward-labeled-emails](../skills/recipe-forward-labeled-emails/SKILL.md) | Find Gmail messages with a specific label and forward them to another address. |

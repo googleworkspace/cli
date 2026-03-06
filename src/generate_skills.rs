@@ -26,6 +26,17 @@ use std::path::Path;
 const PERSONAS_YAML: &str = include_str!("../registry/personas.yaml");
 const RECIPES_YAML: &str = include_str!("../registry/recipes.yaml");
 
+/// Methods blocked from skill generation.
+/// Format: (service_alias, resource, method).
+const BLOCKED_METHODS: &[(&str, &str, &str)] = &[
+    ("drive", "files", "delete"),
+    ("drive", "files", "emptyTrash"),
+    ("drive", "drives", "delete"),
+    ("drive", "teamdrives", "delete"),
+    ("people", "people", "deleteContact"),
+    ("people", "people", "batchDeleteContacts"),
+];
+
 #[derive(serde::Deserialize)]
 struct PersonaRegistry {
     personas: Vec<PersonaEntry>,
@@ -347,6 +358,13 @@ fn write_skills_index(entries: &[SkillIndexEntry]) -> Result<(), GwsError> {
 // Renderers
 // ---------------------------------------------------------------------------
 
+/// Returns true if a (service, resource, method) triple is blocked.
+fn is_blocked_method(alias: &str, resource: &str, method: &str) -> bool {
+    BLOCKED_METHODS
+        .iter()
+        .any(|(s, r, m)| *s == alias && *r == resource && *m == method)
+}
+
 fn render_service_skill(
     alias: &str,
     entry: &services::ServiceEntry,
@@ -413,6 +431,7 @@ metadata:
             let res_name = res.get_name();
             let methods: Vec<String> = res
                 .get_subcommands()
+                .filter(|m| !is_blocked_method(alias, res_name, m.get_name()))
                 .map(|m| {
                     let mname = m.get_name().to_string();
                     // Use full description from discovery doc (with higher limit)

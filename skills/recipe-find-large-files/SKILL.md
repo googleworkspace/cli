@@ -17,12 +17,8 @@ metadata:
 
 Identify large Google Drive files consuming storage quota.
 
-> [!CAUTION]
-> Deleting files is permanent if the trash is emptied. Confirm before deleting.
-
 ## Steps
 
 1. List files sorted by size: `gws drive files list --params '{"orderBy": "quotaBytesUsed desc", "pageSize": 20, "fields": "files(id,name,size,mimeType,owners)"}' --format table`
-2. Review the output and identify files to delete or move
-3. Delete if needed: `gws drive files delete --params '{"fileId": "FILE_ID"}'`
+2. Review the output and identify files to archive or move
 
