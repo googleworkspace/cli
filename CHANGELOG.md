@@ -1,5 +1,15 @@
 # @googleworkspace/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- e1505af: Remove multi-account, domain-wide delegation, and impersonation support. Removes `gws auth list`, `gws auth default`, `--account` flag, `GOOGLE_WORKSPACE_CLI_ACCOUNT` and `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` env vars.
+
+### Patch Changes
+
+- 54b3b31: Move x-goog-user-project header from default client headers to API request builder, fixing Discovery Document fetches failing with 403 when the quota project lacks certain APIs enabled
+
 ## 0.6.3
 
 ### Patch Changes
