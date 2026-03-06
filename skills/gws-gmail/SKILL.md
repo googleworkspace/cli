@@ -24,6 +24,8 @@ gws gmail <resource> <method> [flags]
 |---------|-------------|
 | [`+send`](../gws-gmail-send/SKILL.md) | Send an email |
 | [`+triage`](../gws-gmail-triage/SKILL.md) | Show unread inbox summary (sender, subject, date) |
+| [`+reply`](../gws-gmail-reply/SKILL.md) | Reply to an email (threading handled automatically) |
+| [`+forward`](../gws-gmail-forward/SKILL.md) | Forward an email to new recipients |
 | [`+watch`](../gws-gmail-watch/SKILL.md) | Watch for new emails and stream them as NDJSON |
 
 ## API Resources
