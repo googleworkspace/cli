@@ -152,6 +152,8 @@ pub fn parse_service_and_version(
     for i in 0..args.len() {
         if args[i] == "--api-version" && i + 1 < args.len() {
             version_override = Some(args[i + 1].clone());
+        } else if let Some(val) = args[i].strip_prefix("--api-version=") {
+            version_override = Some(val.to_string());
         }
     }
 

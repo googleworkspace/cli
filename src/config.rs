@@ -20,9 +20,8 @@ use std::path::PathBuf;
 /// Falls back to the OS-specific config directory (e.g. `~/Library/Application Support/gws`
 /// on macOS) for backward compatibility with existing installs.
 ///
-/// In tests, the `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` environment variable overrides the default.
+/// The `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` environment variable overrides the default.
 pub fn config_dir() -> PathBuf {
-    #[cfg(test)]
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
