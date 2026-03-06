@@ -280,7 +280,9 @@ fn rewrite_base_url(doc: &mut RestDescription, base: &str) {
     let original_root_url = std::mem::replace(&mut doc.root_url, new_root_url);
 
     if let Some(base_url) = &mut doc.base_url {
-        *base_url = base_url.replace(&original_root_url, &doc.root_url);
+        if let Some(stripped_path) = base_url.strip_prefix(&original_root_url) {
+            *base_url = format!("{}{}", &doc.root_url, stripped_path);
+        }
     }
 }
 
