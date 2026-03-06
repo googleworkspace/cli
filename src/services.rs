@@ -150,7 +150,7 @@ pub fn parse_service_and_version(
 
     // Check for --api-version flag anywhere in args
     for i in 0..args.len() {
-        if args[i] == "--api-version" && i + 1 < args.len() {
+        if args[i] == "--api-version" && i + 1 < args.len() && !args[i + 1].starts_with('-') {
             version_override = Some(args[i + 1].clone());
         } else if let Some(val) = args[i].strip_prefix("--api-version=") {
             version_override = Some(val.to_string());
