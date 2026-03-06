@@ -36,6 +36,9 @@ pr-run-mode = "plan"
 # Don't overwrite release.yml on `cargo dist init` (preserves custom npm registry config)
 allow-dirty = ["ci"]
 # The archive format to use for windows builds (defaults .zip)
-windows-archive = ".tar.gz"
+# Using .zip routes through PowerShell's Expand-Archive, which correctly
+# handles Windows paths. Using .tar.gz causes failures in Git Bash because
+# MSYS tar interprets "C:" as a remote host (issue #152).
+windows-archive = ".zip"
 # The archive format to use for non-windows builds (defaults .tar.xz)
 unix-archive = ".tar.gz"
