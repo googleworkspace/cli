@@ -29,6 +29,7 @@ npm install -g @googleworkspace/cli
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Why gws?](#why-gws)
+- [Common Operations](#common-operations)
 - [Authentication](#authentication)
 - [AI Agent Skills](#ai-agent-skills)
 - [MCP Server](#mcp-server)
@@ -100,6 +101,71 @@ gws schema drive.files.list
 # Stream paginated results as NDJSON
 gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
+
+## Common Operations
+
+### Understanding `--params` and `--json`
+
+Most `gws` commands accept two flags for passing data:
+
+- **`--params`** — URL/path parameters (e.g., resource IDs, query filters, page size). These map to the method's URL template and query parameters.
+- **`--json`** — The request body (for create/update operations).
+
+To discover which parameters a method accepts, use `gws schema`:
+
+```bash
+# Show the full request/response schema for any method
+gws schema docs.documents.get
+gws schema drive.files.list
+```
+
+### Google Docs
+
+The Docs API (`gws docs`) manages document content. To **find** documents, use the Drive API (see below) — the Docs API only operates on documents by ID.
+
+```bash
+# Get a document by its ID (the long string from the URL)
+# e.g., from https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ/edit
+gws docs documents get --params '{"documentId": "1aBcDeFgHiJkLmNoPqRsTuVwXyZ"}'
+
+# Create a new blank document
+gws docs documents create --json '{"title": "My New Document"}'
+
+# Append text to a document (helper command)
+gws docs +write --document 1aBcDeFgHiJkLmNoPqRsTuVwXyZ --text 'Hello, world!'
+```
+
+### Google Drive (listing, searching, downloading)
+
+The Drive API (`gws drive`) manages files and folders across all of Google Drive, including Docs, Sheets, and Slides.
+
+```bash
+# List your recent files
+gws drive files list --params '{"pageSize": 10}'
+
+# List only Google Docs (filter by MIME type)
+gws drive files list --params '{"q": "mimeType=\"application/vnd.google-apps.document\"", "pageSize": 10}'
+
+# Search for files by name
+gws drive files list --params '{"q": "name contains \"quarterly report\"", "pageSize": 10}'
+
+# Get metadata for a specific file
+gws drive files get --params '{"fileId": "1aBcDeFgHiJkLmNoPqRsTuVwXyZ"}'
+
+# Download a file
+gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' -o ./downloaded-file.pdf
+
+# Export a Google Doc as PDF
+gws drive files export --params '{"fileId": "DOC_ID", "mimeType": "application/pdf"}' -o ./document.pdf
+
+# Upload a file (helper command)
+gws drive +upload ./report.pdf
+gws drive +upload ./report.pdf --parent FOLDER_ID
+```
+
+> [!TIP]
+> Use `--dry-run` on any command to preview the HTTP request without sending it.
+> Use `gws schema <method>` to inspect available parameters for any API method.
 
 ## Authentication
 
