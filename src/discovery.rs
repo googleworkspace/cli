@@ -282,6 +282,10 @@ fn rewrite_base_url(doc: &mut RestDescription, base: &str) {
     if let Some(base_url) = &mut doc.base_url {
         if let Some(stripped_path) = base_url.strip_prefix(&original_root_url) {
             *base_url = format!("{}{}", &doc.root_url, stripped_path);
+        } else {
+            // Fallback: base_url has a different domain than root_url.
+            // Still rewrite to ensure requests go to the custom endpoint.
+            *base_url = doc.root_url.clone();
         }
     }
 }
@@ -389,6 +393,25 @@ mod tests {
             doc.base_url.as_deref(),
             Some("http://localhost:8099/drive/v3/")
         );
+    }
+
+    #[test]
+    fn test_rewrite_base_url_different_domain_fallback() {
+        // Edge case: base_url has a different domain than root_url.
+        // The fallback should still rewrite base_url to the custom endpoint.
+        let mut doc = RestDescription {
+            name: "hypothetical".to_string(),
+            version: "v1".to_string(),
+            root_url: "https://hypothetical.googleapis.com/".to_string(),
+            base_url: Some("https://other-domain.googleapis.com/hypothetical/v1/".to_string()),
+            service_path: "hypothetical/v1/".to_string(),
+            ..Default::default()
+        };
+
+        rewrite_base_url(&mut doc, "http://localhost:8099");
+        assert_eq!(doc.root_url, "http://localhost:8099/");
+        // Service path is lost but requests still go to the custom endpoint
+        assert_eq!(doc.base_url.as_deref(), Some("http://localhost:8099/"));
     }
 
     #[test]
