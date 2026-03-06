@@ -165,7 +165,7 @@ async fn run() -> Result<(), GwsError> {
     // Re-parse args (skip argv[0] which is the binary, and argv[1] which is the service name)
     // Filter out --api-version and its value
     // Prepend "gws" as the program name since try_get_matches_from expects argv[0]
-    let sub_args = filter_args_for_subcommand(&args);
+    let sub_args = filter_args_for_subcommand(&args, &first_arg);
 
     let matches = cli.try_get_matches_from(&sub_args).map_err(|e| {
         // If it's a help or version display, print it and exit cleanly
@@ -321,10 +321,11 @@ pub fn parse_service_and_version(
     Ok((api_name, version))
 }
 
-pub fn filter_args_for_subcommand(args: &[String]) -> Vec<String> {
+pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
     let mut sub_args: Vec<String> = vec!["gws".to_string()];
     let mut skip_next = false;
-    for arg in args.iter().skip(2) {
+    let mut service_skipped = false;
+    for arg in args.iter().skip(1) {
         if skip_next {
             skip_next = false;
             continue;
@@ -334,6 +335,10 @@ pub fn filter_args_for_subcommand(args: &[String]) -> Vec<String> {
             continue;
         }
         if arg.starts_with("--account=") || arg.starts_with("--api-version=") {
+            continue;
+        }
+        if !service_skipped && arg == service_name {
+            service_skipped = true;
             continue;
         }
         sub_args.push(arg.clone());
@@ -698,7 +703,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
         assert!(!filtered.contains(&"--account".to_string()));
         assert!(!filtered.contains(&"user@corp.com".to_string()));
@@ -714,7 +719,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 
@@ -730,7 +735,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 
@@ -744,7 +749,7 @@ mod tests {
             "--format".into(),
             "table".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list", "--format", "table"]);
     }
 
@@ -777,7 +782,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert!(!filtered.contains(&"--account".to_string()));
         assert!(!filtered.contains(&"work@corp.com".to_string()));
         assert!(filtered.contains(&"files".to_string()));
@@ -797,6 +802,34 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_args_account_before_service() {
+        // --account appears BEFORE the service name (issue #181)
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "--account".into(),
+            "work@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_filter_args_account_equals_before_service() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "--account=work@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
     fn test_filter_args_strips_account_equals() {
         let args: Vec<String> = vec![
             "gws".into(),
@@ -805,7 +838,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert!(!filtered.iter().any(|a| a.contains("account")));
         assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
