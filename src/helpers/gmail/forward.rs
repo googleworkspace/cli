@@ -23,9 +23,12 @@ pub(super) async fn handle_forward(
     let dry_run = matches.get_flag("dry-run");
 
     let (original, token) = if dry_run {
-        (super::reply::OriginalMessage::dry_run_placeholder(&config.message_id), None)
+        (
+            super::reply::OriginalMessage::dry_run_placeholder(&config.message_id),
+            None,
+        )
     } else {
-        let t = auth::get_token(&[GMAIL_SCOPE], None)
+        let t = auth::get_token(&[GMAIL_SCOPE])
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
@@ -43,7 +46,7 @@ pub(super) async fn handle_forward(
         &original,
     );
 
-    super::send_raw_email(doc, matches, &raw, &original.thread_id, token.as_deref()).await
+    super::send_raw_email(doc, matches, &raw, None, token.as_deref()).await
 }
 
 pub(super) struct ForwardConfig {
@@ -157,8 +160,14 @@ mod tests {
             body_text: "Original content".to_string(),
         };
 
-        let raw =
-            create_forward_raw_message("dave@example.com", None, None, "Fwd: Hello", None, &original);
+        let raw = create_forward_raw_message(
+            "dave@example.com",
+            None,
+            None,
+            "Fwd: Hello",
+            None,
+            &original,
+        );
 
         assert!(raw.contains("To: dave@example.com"));
         assert!(raw.contains("Subject: Fwd: Hello"));

@@ -41,19 +41,26 @@ pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modi
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
 
 /// Shared helper: base64-encode a raw RFC 2822 message and send it via
-/// `users.messages.send`, keeping it in the given thread.
+/// `users.messages.send`, optionally keeping it in the given thread.
+pub(super) fn build_raw_send_body(raw_message: &str, thread_id: Option<&str>) -> Value {
+    let mut body =
+        serde_json::Map::from_iter([("raw".to_string(), json!(URL_SAFE.encode(raw_message)))]);
+
+    if let Some(thread_id) = thread_id {
+        body.insert("threadId".to_string(), json!(thread_id));
+    }
+
+    Value::Object(body)
+}
+
 pub(super) async fn send_raw_email(
     doc: &crate::discovery::RestDescription,
     matches: &ArgMatches,
     raw_message: &str,
-    thread_id: &str,
+    thread_id: Option<&str>,
     existing_token: Option<&str>,
 ) -> Result<(), GwsError> {
-    let encoded = URL_SAFE.encode(raw_message);
-    let body = json!({
-        "raw": encoded,
-        "threadId": thread_id,
-    });
+    let body = build_raw_send_body(raw_message, thread_id);
     let body_str = body.to_string();
 
     let send_method = reply::resolve_send_method(doc)?;
@@ -64,7 +71,7 @@ pub(super) async fn send_raw_email(
         Some(t) => (Some(t.to_string()), executor::AuthMethod::OAuth),
         None => {
             let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-            match auth::get_token(&scopes, None).await {
+            match auth::get_token(&scopes).await {
                 Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                 Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
                 Err(e) => return Err(GwsError::Auth(format!("Gmail auth failed: {e}"))),
@@ -264,7 +271,7 @@ TIPS:
                 .arg(
                     Arg::new("remove")
                         .long("remove")
-                        .help("Remove recipients from the reply (comma-separated emails)")
+                        .help("Exclude recipients from the outgoing reply (comma-separated emails)")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -282,7 +289,8 @@ EXAMPLES:
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
-  Use --remove to drop recipients from the thread.
+  Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
+  The command fails if exclusions leave no reply target.
   Use --cc to add new recipients.",
                 ),
         );
@@ -337,7 +345,7 @@ EXAMPLES:
 
 TIPS:
   Includes the original message with sender, date, subject, and recipients.
-  Keeps the message in the same thread.",
+  Sends the forward as a new message rather than forcing it into the original thread.",
                 ),
         );
 
@@ -486,5 +494,21 @@ mod tests {
         assert!(subcommands.contains(&"+reply"));
         assert!(subcommands.contains(&"+reply-all"));
         assert!(subcommands.contains(&"+forward"));
+    }
+
+    #[test]
+    fn test_build_raw_send_body_with_thread_id() {
+        let body = build_raw_send_body("raw message", Some("thread-123"));
+
+        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
+        assert_eq!(body["threadId"], "thread-123");
+    }
+
+    #[test]
+    fn test_build_raw_send_body_without_thread_id() {
+        let body = build_raw_send_body("raw message", None);
+
+        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
+        assert!(body.get("threadId").is_none());
     }
 }
