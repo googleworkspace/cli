@@ -140,6 +140,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --scopes         Comma-separated custom scopes\n",
         "           -s, --services   Comma-separated service names to limit scope picker\n",
         "                            (e.g. -s drive,gmail,sheets)\n",
+        "           --no-localhost   Use out-of-band flow instead of starting a local server\n",
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
@@ -210,14 +211,19 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
 }
 
 async fn handle_login(args: &[String]) -> Result<(), GwsError> {
-    // Extract --account and -s/--services from args
+    // Extract --account, -s/--services, and --no-localhost from args
     let mut account_email: Option<String> = None;
     let mut services_filter: Option<HashSet<String>> = None;
+    let mut no_localhost = false;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for i in 0..args.len() {
         if skip_next {
             skip_next = false;
+            continue;
+        }
+        if args[i] == "--no-localhost" {
+            no_localhost = true;
             continue;
         }
         if args[i] == "--account" && i + 1 < args.len() {
@@ -278,12 +284,18 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     // are already included.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
+    let redirect_uris = if no_localhost {
+        vec!["urn:ietf:wg:oauth:2.0:oob".to_string(), "http://localhost".to_string()]
+    } else {
+        vec!["http://localhost".to_string(), "urn:ietf:wg:oauth:2.0:oob".to_string()]
+    };
+
     let secret = yup_oauth2::ApplicationSecret {
         client_id: client_id.clone(),
         client_secret: client_secret.clone(),
         auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
         token_uri: "https://oauth2.googleapis.com/token".to_string(),
-        redirect_uris: vec!["http://localhost".to_string()],
+        redirect_uris,
         ..Default::default()
     };
 
@@ -310,9 +322,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
     }
 
+    let return_method = if no_localhost {
+        yup_oauth2::InstalledFlowReturnMethod::Interactive
+    } else {
+        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect
+    };
+
     let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
         secret,
-        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+        return_method,
     )
     .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
         temp_path.clone(),
