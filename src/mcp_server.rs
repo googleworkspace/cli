@@ -720,12 +720,13 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     let (svc_alias, rest) = config
         .services
         .iter()
-        .find_map(|s| {
+        .filter_map(|s| {
             tool_name
                 .strip_prefix(s.as_str())
                 .and_then(|r| r.strip_prefix('-'))
                 .map(|remainder| (s.as_str(), remainder))
         })
+        .max_by_key(|(s, _)| s.len())
         .ok_or_else(|| {
             GwsError::Validation(format!(
                 "Could not determine service from tool name '{}'. No enabled service is a prefix.",
