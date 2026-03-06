@@ -462,6 +462,33 @@ mod tests {
     }
 
     #[test]
+    fn test_build_sanitize_request_data_rejects_traversal() {
+        let result =
+            build_sanitize_request_data("../../etc/passwd", "text", "sanitizeUserPrompt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_query_injection() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil.com?x=y/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_percent_encoded() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil%2ecom/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_parse_sanitize_response_success() {
         let json_resp = json!({
             "sanitizationResult": {
