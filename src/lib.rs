@@ -38,7 +38,6 @@ pub mod formatter;
 pub mod fs_util;
 pub(crate) mod generate_skills;
 pub(crate) mod helpers;
-pub(crate) mod mcp_server;
 pub mod oauth_config;
 pub mod sanitize;
 pub(crate) mod schema;
