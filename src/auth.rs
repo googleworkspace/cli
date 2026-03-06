@@ -738,6 +738,7 @@ mod tests {
         .unwrap();
 
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
         assert_eq!(get_quota_project(), Some("my-project-123".to_string()));
     }
 }

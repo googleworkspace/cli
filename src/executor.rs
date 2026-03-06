@@ -165,6 +165,11 @@ async fn build_http_request(
         }
     }
 
+    // Set quota project from ADC for billing/quota attribution
+    if let Some(quota_project) = crate::auth::get_quota_project() {
+        request = request.header("x-goog-user-project", quota_project);
+    }
+
     for (key, value) in &input.query_params {
         request = request.query(&[(key, value)]);
     }
