@@ -476,13 +476,19 @@ async fn resolve_scopes(
                 .collect();
         }
     }
-    if args.iter().any(|a| a == "--readonly") {
+    let readonly_only = args.iter().any(|a| a == "--readonly");
+
+    if readonly_only {
         let scopes: Vec<String> = READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
-        return filter_scopes_by_services(scopes, services_filter);
+        let mut result = filter_scopes_by_services(scopes, services_filter);
+        augment_with_dynamic_scopes(&mut result, services_filter, true).await;
+        return result;
     }
     if args.iter().any(|a| a == "--full") {
         let scopes: Vec<String> = FULL_SCOPES.iter().map(|s| s.to_string()).collect();
-        return filter_scopes_by_services(scopes, services_filter);
+        let mut result = filter_scopes_by_services(scopes, services_filter);
+        augment_with_dynamic_scopes(&mut result, services_filter, false).await;
+        return result;
     }
 
     // Interactive scope picker when running in a TTY
@@ -508,7 +514,9 @@ async fn resolve_scopes(
     }
 
     let defaults: Vec<String> = DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect();
-    filter_scopes_by_services(defaults, services_filter)
+    let mut result = filter_scopes_by_services(defaults, services_filter);
+    augment_with_dynamic_scopes(&mut result, services_filter, false).await;
+    result
 }
 
 /// Check if a scope URL belongs to one of the specified services.
@@ -533,15 +541,19 @@ fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
     let prefix = short.split('.').next().unwrap_or(short);
 
     services.iter().any(|svc| {
-        // Map common user-friendly service names to their OAuth scope prefixes
-        let mapped_svc = match svc.as_str() {
-            "sheets" => "spreadsheets",
-            "slides" => "presentations",
-            "docs" => "documents",
-            s => s,
-        };
+        let mapped_svc = map_service_to_scope_prefix(svc);
         prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}."))
     })
+}
+
+/// Map user-friendly service names to their OAuth scope prefixes.
+fn map_service_to_scope_prefix(service: &str) -> &str {
+    match service {
+        "sheets" => "spreadsheets",
+        "slides" => "presentations",
+        "docs" => "documents",
+        s => s,
+    }
 }
 
 /// Remove restrictive scopes that are redundant when broader alternatives
@@ -1305,6 +1317,100 @@ fn is_workspace_admin_scope(url: &str) -> bool {
         || short == "groups"
 }
 
+/// Identify services from the filter that have no matching scopes in the result.
+///
+/// `cloud-platform` is a cross-service scope and does not count as a match
+/// for any specific service.
+fn find_unmatched_services(scopes: &[String], services: &HashSet<String>) -> HashSet<String> {
+    let mut matched_services = HashSet::new();
+
+    for scope in scopes.iter().filter(|s| !s.ends_with("/cloud-platform")) {
+        let short = match scope.strip_prefix("https://www.googleapis.com/auth/") {
+            Some(s) => s,
+            None => continue,
+        };
+        let prefix = short.split('.').next().unwrap_or(short);
+
+        for service in services {
+            if matched_services.contains(service) {
+                continue;
+            }
+            let mapped_svc = map_service_to_scope_prefix(service);
+            if prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}.")) {
+                matched_services.insert(service.clone());
+            }
+        }
+    }
+
+    services.difference(&matched_services).cloned().collect()
+}
+
+/// Extract OAuth scope URLs from a Discovery document.
+///
+/// Filters out app-only scopes (e.g. `chat.bot`, `chat.app.*`) and optionally
+/// restricts to `.readonly` scopes when `readonly_only` is true.
+fn extract_scopes_from_doc(
+    doc: &crate::discovery::RestDescription,
+    readonly_only: bool,
+) -> Vec<String> {
+    let scopes = match doc.auth.as_ref().and_then(|a| a.oauth2.as_ref()).and_then(|o| o.scopes.as_ref()) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    scopes
+        .keys()
+        .filter(|url| !is_app_only_scope(url))
+        .filter(|url| !readonly_only || url.ends_with(".readonly"))
+        .cloned()
+        .collect()
+}
+
+/// Fetch scopes from Discovery docs for services that had no matching scopes
+/// in the static lists. Failures are silently skipped (graceful degradation).
+async fn fetch_scopes_for_unmatched_services(
+    services: &HashSet<String>,
+    readonly_only: bool,
+) -> Vec<String> {
+    let futures: Vec<_> = services
+        .iter()
+        .filter_map(|svc| {
+            let (api_name, version) = crate::services::resolve_service(svc).ok()?;
+            Some(async move {
+                crate::discovery::fetch_discovery_document(&api_name, &version)
+                    .await
+                    .ok()
+                    .map(|doc| extract_scopes_from_doc(&doc, readonly_only))
+            })
+        })
+        .collect();
+
+    let mut result: Vec<String> = futures_util::future::join_all(futures)
+        .await
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect();
+    result.sort();
+    result.dedup();
+    result
+}
+
+/// If a services filter is active and some services have no matching scopes in
+/// the static result, dynamically fetch their scopes from Discovery docs.
+async fn augment_with_dynamic_scopes(
+    result: &mut Vec<String>,
+    services_filter: Option<&HashSet<String>>,
+    readonly_only: bool,
+) {
+    if let Some(services) = services_filter {
+        let missing = find_unmatched_services(result, services);
+        if !missing.is_empty() {
+            let dynamic = fetch_scopes_for_unmatched_services(&missing, readonly_only).await;
+            result.extend(dynamic);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1946,5 +2052,96 @@ mod tests {
     fn mask_secret_boundary() {
         // Exactly 9 chars — first 4 + last 4 with "..." in between
         assert_eq!(mask_secret("123456789"), "1234...6789");
+    }
+
+    #[test]
+    fn find_unmatched_services_identifies_missing() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/drive".to_string(),
+            "https://www.googleapis.com/auth/cloud-platform".to_string(),
+        ];
+        let services: HashSet<String> = ["drive", "chat"].iter().map(|s| s.to_string()).collect();
+        let missing = find_unmatched_services(&scopes, &services);
+        assert!(!missing.contains("drive"));
+        assert!(missing.contains("chat"));
+    }
+
+    #[test]
+    fn find_unmatched_services_all_matched() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/drive".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+        ];
+        let services: HashSet<String> = ["drive", "gmail"].iter().map(|s| s.to_string()).collect();
+        let missing = find_unmatched_services(&scopes, &services);
+        assert!(missing.is_empty());
+    }
+
+    fn make_test_discovery_doc(scope_urls: &[&str]) -> crate::discovery::RestDescription {
+        let mut scopes = std::collections::HashMap::new();
+        for url in scope_urls {
+            scopes.insert(
+                url.to_string(),
+                crate::discovery::ScopeDescription {
+                    description: Some("test".to_string()),
+                },
+            );
+        }
+        crate::discovery::RestDescription {
+            auth: Some(crate::discovery::AuthDescription {
+                oauth2: Some(crate::discovery::OAuth2Description {
+                    scopes: Some(scopes),
+                }),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn extract_scopes_from_doc_filters_app_only() {
+        let doc = make_test_discovery_doc(&[
+            "https://www.googleapis.com/auth/chat.messages",
+            "https://www.googleapis.com/auth/chat.bot",
+            "https://www.googleapis.com/auth/chat.app.spaces",
+            "https://www.googleapis.com/auth/chat.spaces",
+        ]);
+        let mut result = extract_scopes_from_doc(&doc, false);
+        result.sort();
+        assert_eq!(
+            result,
+            vec![
+                "https://www.googleapis.com/auth/chat.messages",
+                "https://www.googleapis.com/auth/chat.spaces",
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_scopes_from_doc_readonly_filter() {
+        let doc = make_test_discovery_doc(&[
+            "https://www.googleapis.com/auth/chat.messages",
+            "https://www.googleapis.com/auth/chat.messages.readonly",
+            "https://www.googleapis.com/auth/chat.spaces",
+            "https://www.googleapis.com/auth/chat.spaces.readonly",
+        ]);
+        let mut result = extract_scopes_from_doc(&doc, true);
+        result.sort();
+        assert_eq!(
+            result,
+            vec![
+                "https://www.googleapis.com/auth/chat.messages.readonly",
+                "https://www.googleapis.com/auth/chat.spaces.readonly",
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_scopes_from_doc_empty_auth() {
+        let doc = crate::discovery::RestDescription {
+            auth: None,
+            ..Default::default()
+        };
+        let result = extract_scopes_from_doc(&doc, false);
+        assert!(result.is_empty());
     }
 }
