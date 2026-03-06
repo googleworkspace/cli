@@ -47,6 +47,7 @@ pub(super) async fn send_raw_email(
     matches: &ArgMatches,
     raw_message: &str,
     thread_id: &str,
+    existing_token: Option<&str>,
 ) -> Result<(), GwsError> {
     let encoded = URL_SAFE.encode(raw_message);
     let body = json!({
@@ -59,10 +60,16 @@ pub(super) async fn send_raw_email(
     let params = json!({ "userId": "me" });
     let params_str = params.to_string();
 
-    let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match auth::get_token(&scopes, None).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-        Err(_) => (None, executor::AuthMethod::None),
+    let (token, auth_method) = match existing_token {
+        Some(t) => (Some(t.to_string()), executor::AuthMethod::OAuth),
+        None => {
+            let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+            match auth::get_token(&scopes, None).await {
+                Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+                Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
+                Err(e) => return Err(GwsError::Auth(format!("Gmail auth failed: {e}"))),
+            }
+        }
     };
 
     let pagination = executor::PaginationConfig {

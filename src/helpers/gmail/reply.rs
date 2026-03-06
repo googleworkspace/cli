@@ -23,19 +23,32 @@ pub(super) async fn handle_reply(
     let config = parse_reply_args(matches);
     let dry_run = matches.get_flag("dry-run");
 
-    let original = if dry_run {
-        OriginalMessage::dry_run_placeholder(&config.message_id)
+    let (original, token) = if dry_run {
+        (OriginalMessage::dry_run_placeholder(&config.message_id), None)
     } else {
-        let token = auth::get_token(&[GMAIL_SCOPE], None)
+        let t = auth::get_token(&[GMAIL_SCOPE], None)
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
-        fetch_message_metadata(&client, &token, &config.message_id).await?
+        let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
+        let self_email = if reply_all {
+            Some(fetch_user_email(&client, &t).await?)
+        } else {
+            None
+        };
+        (orig, Some((t, self_email)))
     };
+
+    let self_email = token.as_ref().and_then(|(_, e)| e.as_deref());
 
     // Build reply headers
     let reply_to = if reply_all {
-        build_reply_all_recipients(&original, config.cc.as_deref(), config.remove.as_deref())
+        build_reply_all_recipients(
+            &original,
+            config.cc.as_deref(),
+            config.remove.as_deref(),
+            self_email,
+        )
     } else {
         ReplyRecipients {
             to: extract_reply_to_address(&original),
@@ -59,7 +72,8 @@ pub(super) async fn handle_reply(
 
     let raw = create_reply_raw_message(&envelope, &original);
 
-    super::send_raw_email(doc, matches, &raw, &original.thread_id).await
+    let auth_token = token.as_ref().map(|(t, _)| t.as_str());
+    super::send_raw_email(doc, matches, &raw, &original.thread_id, auth_token).await
 }
 
 // --- Data structures ---
@@ -74,7 +88,7 @@ pub(super) struct OriginalMessage {
     pub cc: String,
     pub subject: String,
     pub date: String,
-    pub snippet: String,
+    pub body_text: String,
 }
 
 impl OriginalMessage {
@@ -90,7 +104,7 @@ impl OriginalMessage {
             cc: String::new(),
             subject: "Original subject".to_string(),
             date: "Thu, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "Original message body".to_string(),
+            body_text: "Original message body".to_string(),
         }
     }
 }
@@ -134,17 +148,7 @@ pub(super) async fn fetch_message_metadata(
         client
             .get(&url)
             .bearer_auth(token)
-            .query(&[
-                ("format", "metadata"),
-                ("metadataHeaders", "From"),
-                ("metadataHeaders", "To"),
-                ("metadataHeaders", "Cc"),
-                ("metadataHeaders", "Subject"),
-                ("metadataHeaders", "Date"),
-                ("metadataHeaders", "Message-ID"),
-                ("metadataHeaders", "References"),
-                ("metadataHeaders", "Reply-To"),
-            ])
+            .query(&[("format", "full")])
     })
     .await
     .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
@@ -209,6 +213,11 @@ pub(super) async fn fetch_message_metadata(
         }
     }
 
+    let body_text = msg
+        .get("payload")
+        .and_then(extract_plain_text_body)
+        .unwrap_or(snippet);
+
     Ok(OriginalMessage {
         thread_id,
         message_id_header,
@@ -219,8 +228,73 @@ pub(super) async fn fetch_message_metadata(
         cc,
         subject,
         date,
-        snippet,
+        body_text,
     })
+}
+
+fn extract_plain_text_body(payload: &Value) -> Option<String> {
+    let mime_type = payload
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if mime_type == "text/plain" {
+        if let Some(data) = payload
+            .get("body")
+            .and_then(|b| b.get("data"))
+            .and_then(|d| d.as_str())
+        {
+            if let Ok(decoded) = URL_SAFE.decode(data) {
+                return String::from_utf8(decoded).ok();
+            }
+        }
+        return None;
+    }
+
+    if let Some(parts) = payload.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            if let Some(text) = extract_plain_text_body(part) {
+                return Some(text);
+            }
+        }
+    }
+
+    None
+}
+
+async fn fetch_user_email(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<String, GwsError> {
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+            .bearer_auth(token)
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch user profile: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let err = resp.text().await.unwrap_or_default();
+        return Err(GwsError::Api {
+            code: status,
+            message: format!("Failed to fetch user profile: {err}"),
+            reason: "profileFetchFailed".to_string(),
+            enable_url: None,
+        });
+    }
+
+    let profile: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse profile: {e}")))?;
+
+    profile
+        .get("emailAddress")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| GwsError::Other(anyhow::anyhow!("Profile missing emailAddress")))
 }
 
 // --- Header construction ---
@@ -285,6 +359,7 @@ fn build_reply_all_recipients(
     original: &OriginalMessage,
     extra_cc: Option<&str>,
     remove: Option<&str>,
+    self_email: Option<&str>,
 ) -> ReplyRecipients {
     let to = extract_reply_to_address(original);
     let to_emails: Vec<String> = split_mailbox_list(&to)
@@ -318,12 +393,17 @@ fn build_reply_all_recipients(
         })
         .unwrap_or_default();
 
+    let self_email_lower = self_email.map(|s| s.to_lowercase());
+    let mut seen = std::collections::HashSet::new();
     let cc_addrs: Vec<&str> = cc_addrs
         .into_iter()
         .filter(|addr| {
             let email = extract_email(addr).to_lowercase();
-            // Filter out the reply-to recipients (already in To) and removed addresses
-            !to_emails.iter().any(|t| t == &email) && !remove_set.iter().any(|r| r == &email)
+            // Filter out: reply-to recipients, removed addresses, self, and duplicates
+            !to_emails.iter().any(|t| t == &email)
+                && !remove_set.iter().any(|r| r == &email)
+                && (self_email_lower.as_ref() != Some(&email))
+                && seen.insert(email)
         })
         .collect();
 
@@ -374,14 +454,14 @@ fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage
 
 fn format_quoted_original(original: &OriginalMessage) -> String {
     let quoted_body: String = original
-        .snippet
+        .body_text
         .lines()
         .map(|line| format!("> {}", line))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\r\n");
 
     format!(
-        "On {}, {} wrote:\n{}",
+        "On {}, {} wrote:\r\n{}",
         original.date, original.from, quoted_body
     )
 }
@@ -466,7 +546,7 @@ mod tests {
             cc: "".to_string(),
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "Original body".to_string(),
+            body_text: "Original body".to_string(),
         };
 
         let envelope = ReplyEnvelope {
@@ -503,7 +583,7 @@ mod tests {
             cc: "".to_string(),
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "Original body".to_string(),
+            body_text: "Original body".to_string(),
         };
 
         let envelope = ReplyEnvelope {
@@ -532,10 +612,10 @@ mod tests {
             cc: "dave@example.com".to_string(),
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
 
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         assert_eq!(recipients.to, "alice@example.com");
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
@@ -557,10 +637,10 @@ mod tests {
             cc: "".to_string(),
             subject: "Hello".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
 
-        let recipients = build_reply_all_recipients(&original, None, Some("carol@example.com"));
+        let recipients = build_reply_all_recipients(&original, None, Some("carol@example.com"), None);
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
         assert!(!cc.contains("carol@example.com"));
@@ -621,7 +701,7 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
         assert_eq!(
             extract_reply_to_address(&original),
@@ -641,7 +721,7 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
         assert_eq!(extract_reply_to_address(&original), "list@example.com");
     }
@@ -671,9 +751,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, Some("ann@example.com"));
+        let recipients = build_reply_all_recipients(&original, None, Some("ann@example.com"), None);
         let cc = recipients.cc.unwrap();
         // joann@example.com should remain, ann@example.com should be removed
         assert_eq!(cc, "joann@example.com");
@@ -691,9 +771,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         assert_eq!(recipients.to, "list@example.com");
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
@@ -731,9 +811,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         assert_eq!(recipients.to, "Alice <alice@example.com>");
         let cc = recipients.cc.unwrap();
         assert_eq!(cc, "bob@example.com");
@@ -751,10 +831,10 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
         let recipients =
-            build_reply_all_recipients(&original, None, Some("Carol <carol@example.com>"));
+            build_reply_all_recipients(&original, None, Some("Carol <carol@example.com>"), None);
         let cc = recipients.cc.unwrap();
         assert_eq!(cc, "bob@example.com");
     }
@@ -771,9 +851,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, Some("extra@example.com"), None);
+        let recipients = build_reply_all_recipients(&original, Some("extra@example.com"), None, None);
         let cc = recipients.cc.unwrap();
         assert!(cc.contains("bob@example.com"));
         assert!(cc.contains("extra@example.com"));
@@ -791,9 +871,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         assert!(recipients.cc.is_none());
     }
 
@@ -809,9 +889,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         let cc = recipients.cc.unwrap();
         assert_eq!(cc, "bob@example.com");
     }
@@ -828,9 +908,9 @@ mod tests {
             cc: "owner@example.com, dave@example.com".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         // To should be the full Reply-To value
         assert_eq!(recipients.to, "list@example.com, owner@example.com");
         // CC should exclude both Reply-To addresses (already in To)
@@ -905,9 +985,9 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
-        let recipients = build_reply_all_recipients(&original, None, None);
+        let recipients = build_reply_all_recipients(&original, None, None, None);
         let cc = recipients.cc.unwrap();
         // Both addresses should be preserved intact
         assert!(cc.contains("john@example.com"));
@@ -926,15 +1006,162 @@ mod tests {
             cc: "".to_string(),
             subject: "".to_string(),
             date: "".to_string(),
-            snippet: "".to_string(),
+            body_text: "".to_string(),
         };
         let recipients = build_reply_all_recipients(
             &original,
             None,
             Some("john@example.com"),
+            None,
         );
         let cc = recipients.cc.unwrap();
         assert!(!cc.contains("john@example.com"));
         assert!(cc.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn test_reply_all_excludes_self_email() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "me@example.com, bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            body_text: "".to_string(),
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, None, Some("me@example.com"));
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(!cc.contains("me@example.com"));
+    }
+
+    #[test]
+    fn test_reply_all_excludes_self_case_insensitive() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "Me@Example.COM, bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            body_text: "".to_string(),
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, None, Some("me@example.com"));
+        let cc = recipients.cc.unwrap();
+        assert!(cc.contains("bob@example.com"));
+        assert!(!cc.contains("Me@Example.COM"));
+    }
+
+    #[test]
+    fn test_reply_all_deduplicates_cc() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "bob@example.com, carol@example.com".to_string(),
+            subject: "".to_string(),
+            date: "".to_string(),
+            body_text: "".to_string(),
+        };
+        let recipients = build_reply_all_recipients(&original, None, None, None);
+        let cc = recipients.cc.unwrap();
+        assert_eq!(cc.matches("bob@example.com").count(), 1);
+        assert!(cc.contains("carol@example.com"));
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_simple() {
+        let payload = serde_json::json!({
+            "mimeType": "text/plain",
+            "body": {
+                "data": URL_SAFE.encode("Hello, world!")
+            }
+        });
+        assert_eq!(
+            extract_plain_text_body(&payload).unwrap(),
+            "Hello, world!"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_multipart() {
+        let payload = serde_json::json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": {
+                        "data": URL_SAFE.encode("Plain text body")
+                    }
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": {
+                        "data": URL_SAFE.encode("<p>HTML body</p>")
+                    }
+                }
+            ]
+        });
+        assert_eq!(
+            extract_plain_text_body(&payload).unwrap(),
+            "Plain text body"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_nested_multipart() {
+        let payload = serde_json::json!({
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/plain",
+                            "body": {
+                                "data": URL_SAFE.encode("Nested plain text")
+                            }
+                        },
+                        {
+                            "mimeType": "text/html",
+                            "body": {
+                                "data": URL_SAFE.encode("<p>HTML</p>")
+                            }
+                        }
+                    ]
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "body": { "attachmentId": "att123" }
+                }
+            ]
+        });
+        assert_eq!(
+            extract_plain_text_body(&payload).unwrap(),
+            "Nested plain text"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_no_text_part() {
+        let payload = serde_json::json!({
+            "mimeType": "text/html",
+            "body": {
+                "data": URL_SAFE.encode("<p>Only HTML</p>")
+            }
+        });
+        assert!(extract_plain_text_body(&payload).is_none());
     }
 }

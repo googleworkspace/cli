@@ -22,14 +22,15 @@ pub(super) async fn handle_forward(
     let config = parse_forward_args(matches);
     let dry_run = matches.get_flag("dry-run");
 
-    let original = if dry_run {
-        super::reply::OriginalMessage::dry_run_placeholder(&config.message_id)
+    let (original, token) = if dry_run {
+        (super::reply::OriginalMessage::dry_run_placeholder(&config.message_id), None)
     } else {
-        let token = auth::get_token(&[GMAIL_SCOPE], None)
+        let t = auth::get_token(&[GMAIL_SCOPE], None)
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
-        super::reply::fetch_message_metadata(&client, &token, &config.message_id).await?
+        let orig = super::reply::fetch_message_metadata(&client, &t, &config.message_id).await?;
+        (orig, Some(t))
     };
 
     let subject = build_forward_subject(&original.subject);
@@ -42,7 +43,7 @@ pub(super) async fn handle_forward(
         &original,
     );
 
-    super::send_raw_email(doc, matches, &raw, &original.thread_id).await
+    super::send_raw_email(doc, matches, &raw, &original.thread_id, token.as_deref()).await
 }
 
 pub(super) struct ForwardConfig {
@@ -92,12 +93,12 @@ fn create_forward_raw_message(
 
 fn format_forwarded_message(original: &super::reply::OriginalMessage) -> String {
     format!(
-        "---------- Forwarded message ---------\n\
-         From: {}\n\
-         Date: {}\n\
-         Subject: {}\n\
-         To: {}\n\
-         {}{}\n\
+        "---------- Forwarded message ---------\r\n\
+         From: {}\r\n\
+         Date: {}\r\n\
+         Subject: {}\r\n\
+         To: {}\r\n\
+         {}{}\r\n\
          ----------",
         original.from,
         original.date,
@@ -106,9 +107,9 @@ fn format_forwarded_message(original: &super::reply::OriginalMessage) -> String 
         if original.cc.is_empty() {
             String::new()
         } else {
-            format!("Cc: {}\n", original.cc)
+            format!("Cc: {}\r\n", original.cc)
         },
-        original.snippet
+        original.body_text
     )
 }
 
@@ -153,7 +154,7 @@ mod tests {
             cc: "".to_string(),
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "Original content".to_string(),
+            body_text: "Original content".to_string(),
         };
 
         let raw =
@@ -178,7 +179,7 @@ mod tests {
             cc: "carol@example.com".to_string(),
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
-            snippet: "Original content".to_string(),
+            body_text: "Original content".to_string(),
         };
 
         let raw = create_forward_raw_message(
