@@ -615,15 +615,19 @@ fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
     let prefix = short.split('.').next().unwrap_or(short);
 
     services.iter().any(|svc| {
-        // Map common user-friendly service names to their OAuth scope prefixes
-        let mapped_svc = match svc.as_str() {
-            "sheets" => "spreadsheets",
-            "slides" => "presentations",
-            "docs" => "documents",
-            s => s,
-        };
+        let mapped_svc = map_service_to_scope_prefix(svc);
         prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}."))
     })
+}
+
+/// Map user-friendly service names to their OAuth scope prefixes.
+fn map_service_to_scope_prefix(service: &str) -> &str {
+    match service {
+        "sheets" => "spreadsheets",
+        "slides" => "presentations",
+        "docs" => "documents",
+        s => s,
+    }
 }
 
 /// Remove restrictive scopes that are redundant when broader alternatives
@@ -1568,12 +1572,7 @@ fn find_unmatched_services(scopes: &[String], services: &HashSet<String>) -> Has
             if matched_services.contains(service) {
                 continue;
             }
-            let mapped_svc = match service.as_str() {
-                "sheets" => "spreadsheets",
-                "slides" => "presentations",
-                "docs" => "documents",
-                s => s,
-            };
+            let mapped_svc = map_service_to_scope_prefix(service);
             if prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}.")) {
                 matched_services.insert(service.clone());
             }
