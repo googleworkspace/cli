@@ -38,6 +38,19 @@ pub enum AuthMethod {
     None,
 }
 
+/// Resolve authentication, skipping OAuth when a custom API endpoint is set.
+pub async fn resolve_auth(
+    scopes: &[&str],
+) -> anyhow::Result<(Option<String>, AuthMethod)> {
+    if crate::discovery::custom_api_base_url().is_some() {
+        return Ok((None, AuthMethod::None));
+    }
+    match crate::auth::get_token(scopes).await {
+        Ok(t) => Ok((Some(t), AuthMethod::OAuth)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Configuration for auto-pagination.
 #[derive(Debug, Clone)]
 pub struct PaginationConfig {

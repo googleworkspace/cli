@@ -814,8 +814,8 @@ async fn execute_mcp_method(
     };
 
     let scopes: Vec<&str> = crate::select_scope(&method.scopes).into_iter().collect();
-    let (token, auth_method) = match crate::auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), crate::executor::AuthMethod::OAuth),
+    let (token, auth_method) = match crate::executor::resolve_auth(&scopes).await {
+        Ok(auth) => auth,
         Err(e) => {
             eprintln!(
                 "[gws mcp] Warning: Authentication failed, proceeding without credentials: {e}"

@@ -181,6 +181,7 @@ Use these labels to categorize pull requests and issues:
 | Variable | Description |
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override the config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_API_BASE_URL` | Redirects all API requests to a custom endpoint (e.g., `http://localhost:8099`). Authentication is automatically disabled. **Security: never set this in production** — it silently disables OAuth and sends all requests to an arbitrary endpoint. |
 
 ### OAuth Client
 

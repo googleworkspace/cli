@@ -233,9 +233,10 @@ async fn run() -> Result<(), GwsError> {
     // to avoid restrictive scopes like gmail.metadata that block query parameters.
     let scopes: Vec<&str> = select_scope(&method.scopes).into_iter().collect();
 
-    // Authenticate: try OAuth, fail with error if credentials exist but are broken
-    let (token, auth_method) = match auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+    // Authenticate: try OAuth (resolve_auth skips auth when custom endpoint is set),
+    // fail with error if credentials exist but are broken.
+    let (token, auth_method) = match executor::resolve_auth(&scopes).await {
+        Ok(auth) => auth,
         Err(e) => {
             // If credentials were found but failed (e.g. decryption error, invalid token),
             // propagate the error instead of silently falling back to unauthenticated.
@@ -454,6 +455,9 @@ fn print_usage() {
     );
     println!(
         "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_API_BASE_URL        Custom API endpoint (e.g., mock server); disables auth"
     );
     println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
     println!(
