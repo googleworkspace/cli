@@ -546,7 +546,7 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
     };
 
     // Wait with timeout
-    let timeout = std::time::Duration::from_secs(10);
+    let timeout = std::time::Duration::from_secs(30);
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -587,7 +587,7 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
                     let _ = child.kill();
                     return (
                         Vec::new(),
-                        Some("Timed out listing projects (10s)".to_string()),
+                        Some("Timed out listing projects (30s)".to_string()),
                     );
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -989,14 +989,24 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
         }
         let current = get_gcloud_project()?.unwrap_or_default();
 
-        let mut items: Vec<SelectItem> = vec![SelectItem {
-            label: "➕ Create new project".to_string(),
-            description: "Create a new GCP project for gws".to_string(),
-            selected: false,
-            is_fixed: false,
-            is_template: false,
-            template_selects: vec![],
-        }];
+        let mut items: Vec<SelectItem> = vec![
+            SelectItem {
+                label: "➕ Create new project".to_string(),
+                description: "Create a new GCP project for gws".to_string(),
+                selected: false,
+                is_fixed: false,
+                is_template: false,
+                template_selects: vec![],
+            },
+            SelectItem {
+                label: "✏️  Enter existing project ID".to_string(),
+                description: "Manually type a GCP project ID (useful if the list above is missing projects)".to_string(),
+                selected: false,
+                is_fixed: false,
+                is_template: false,
+                template_selects: vec![],
+            },
+        ];
         items.extend(projects.iter().map(|(id, name)| SelectItem {
             label: id.clone(),
             description: name.clone(),
@@ -1022,6 +1032,27 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
             PickerResult::Confirmed(items) => {
                 let chosen = items.iter().find(|i| i.selected);
                 match chosen {
+                    Some(item) if item.label.starts_with("✏️") => {
+                        let project_id = match ctx
+                            .wizard
+                            .as_mut()
+                            .unwrap()
+                            .show_input("Enter GCP project", "Enter an existing project ID", None)
+                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
+                        {
+                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
+                            _ => {
+                                return Err(GwsError::Validation(
+                                    "Project selection cancelled by user".to_string(),
+                                ))
+                            }
+                        };
+
+                        set_gcloud_project(&project_id)?;
+                        ctx.wiz(2, StepStatus::Done(project_id.clone()));
+                        ctx.project_id = project_id;
+                        Ok(SetupStage::EnableApis)
+                    }
                     Some(item) if item.label.starts_with('➕') => {
                         let project_name = match ctx
                             .wizard
