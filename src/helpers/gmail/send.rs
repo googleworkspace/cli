@@ -10,18 +10,7 @@ pub(super) async fn handle_send(
     let body = create_send_body(&message);
     let body_str = body.to_string();
 
-    let users_res = doc
-        .resources
-        .get("users")
-        .ok_or_else(|| GwsError::Discovery("Resource 'users' not found".to_string()))?;
-    let messages_res = users_res
-        .resources
-        .get("messages")
-        .ok_or_else(|| GwsError::Discovery("Resource 'users.messages' not found".to_string()))?;
-    let send_method = messages_res
-        .methods
-        .get("send")
-        .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))?;
+    let send_method = resolve_send_method(doc)?;
 
     let pagination = executor::PaginationConfig {
         page_all: false,

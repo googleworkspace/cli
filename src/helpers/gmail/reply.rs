@@ -82,37 +82,6 @@ pub(super) async fn handle_reply(
 
 // --- Data structures ---
 
-pub(super) struct OriginalMessage {
-    pub thread_id: String,
-    pub message_id_header: String,
-    pub references: String,
-    pub from: String,
-    pub reply_to: String,
-    pub to: String,
-    pub cc: String,
-    pub subject: String,
-    pub date: String,
-    pub body_text: String,
-}
-
-impl OriginalMessage {
-    /// Placeholder used for `--dry-run` to avoid requiring auth/network.
-    pub(super) fn dry_run_placeholder(message_id: &str) -> Self {
-        Self {
-            thread_id: format!("thread-{message_id}"),
-            message_id_header: format!("<{message_id}@example.com>"),
-            references: String::new(),
-            from: "sender@example.com".to_string(),
-            reply_to: String::new(),
-            to: "you@example.com".to_string(),
-            cc: String::new(),
-            subject: "Original subject".to_string(),
-            date: "Thu, 1 Jan 2026 00:00:00 +0000".to_string(),
-            body_text: "Original message body".to_string(),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ReplyRecipients {
     to: String,
@@ -135,136 +104,6 @@ pub(super) struct ReplyConfig {
     pub from: Option<String>,
     pub cc: Option<String>,
     pub remove: Option<String>,
-}
-
-// --- Message fetching ---
-
-pub(super) async fn fetch_message_metadata(
-    client: &reqwest::Client,
-    token: &str,
-    message_id: &str,
-) -> Result<OriginalMessage, GwsError> {
-    let url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
-        crate::validate::encode_path_segment(message_id)
-    );
-
-    let resp = crate::client::send_with_retry(|| {
-        client
-            .get(&url)
-            .bearer_auth(token)
-            .query(&[("format", "full")])
-    })
-    .await
-    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(GwsError::Api {
-            code: status,
-            message: format!("Failed to fetch message {message_id}: {err}"),
-            reason: "fetchFailed".to_string(),
-            enable_url: None,
-        });
-    }
-
-    let msg: Value = resp
-        .json()
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
-
-    let thread_id = msg
-        .get("threadId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let snippet = msg
-        .get("snippet")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let headers = msg
-        .get("payload")
-        .and_then(|p| p.get("headers"))
-        .and_then(|h| h.as_array());
-
-    let mut from = String::new();
-    let mut reply_to = String::new();
-    let mut to = String::new();
-    let mut cc = String::new();
-    let mut subject = String::new();
-    let mut date = String::new();
-    let mut message_id_header = String::new();
-    let mut references = String::new();
-
-    if let Some(headers) = headers {
-        for h in headers {
-            let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let value = h.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            match name {
-                "From" => from = value.to_string(),
-                "Reply-To" => reply_to = value.to_string(),
-                "To" => to = value.to_string(),
-                "Cc" => cc = value.to_string(),
-                "Subject" => subject = value.to_string(),
-                "Date" => date = value.to_string(),
-                "Message-ID" | "Message-Id" => message_id_header = value.to_string(),
-                "References" => references = value.to_string(),
-                _ => {}
-            }
-        }
-    }
-
-    let body_text = msg
-        .get("payload")
-        .and_then(extract_plain_text_body)
-        .unwrap_or(snippet);
-
-    Ok(OriginalMessage {
-        thread_id,
-        message_id_header,
-        references,
-        from,
-        reply_to,
-        to,
-        cc,
-        subject,
-        date,
-        body_text,
-    })
-}
-
-fn extract_plain_text_body(payload: &Value) -> Option<String> {
-    let mime_type = payload
-        .get("mimeType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if mime_type == "text/plain" {
-        if let Some(data) = payload
-            .get("body")
-            .and_then(|b| b.get("data"))
-            .and_then(|d| d.as_str())
-        {
-            if let Ok(decoded) = URL_SAFE.decode(data) {
-                return String::from_utf8(decoded).ok();
-            }
-        }
-        return None;
-    }
-
-    if let Some(parts) = payload.get("parts").and_then(|p| p.as_array()) {
-        for part in parts {
-            if let Some(text) = extract_plain_text_body(part) {
-                return Some(text);
-            }
-        }
-    }
-
-    None
 }
 
 async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<String, GwsError> {
@@ -511,23 +350,6 @@ fn format_quoted_original(original: &OriginalMessage) -> String {
 
 // --- Helpers ---
 
-pub(super) fn resolve_send_method(
-    doc: &crate::discovery::RestDescription,
-) -> Result<&crate::discovery::RestMethod, GwsError> {
-    let users_res = doc
-        .resources
-        .get("users")
-        .ok_or_else(|| GwsError::Discovery("Resource 'users' not found".to_string()))?;
-    let messages_res = users_res
-        .resources
-        .get("messages")
-        .ok_or_else(|| GwsError::Discovery("Resource 'users.messages' not found".to_string()))?;
-    messages_res
-        .methods
-        .get("send")
-        .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
-}
-
 fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
     ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
@@ -544,6 +366,7 @@ fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
 
 #[cfg(test)]
 mod tests {
+    use super::super::extract_plain_text_body;
     use super::*;
 
     #[test]

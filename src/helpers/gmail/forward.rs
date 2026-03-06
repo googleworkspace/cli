@@ -24,7 +24,7 @@ pub(super) async fn handle_forward(
 
     let (original, token) = if dry_run {
         (
-            super::reply::OriginalMessage::dry_run_placeholder(&config.message_id),
+            OriginalMessage::dry_run_placeholder(&config.message_id),
             None,
         )
     } else {
@@ -32,7 +32,7 @@ pub(super) async fn handle_forward(
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
-        let orig = super::reply::fetch_message_metadata(&client, &t, &config.message_id).await?;
+        let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
         (orig, Some(t))
     };
 
@@ -71,7 +71,7 @@ fn create_forward_raw_message(
     from: Option<&str>,
     subject: &str,
     body: Option<&str>,
-    original: &super::reply::OriginalMessage,
+    original: &OriginalMessage,
 ) -> String {
     let mut headers = format!(
         "To: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
@@ -94,7 +94,7 @@ fn create_forward_raw_message(
     }
 }
 
-fn format_forwarded_message(original: &super::reply::OriginalMessage) -> String {
+fn format_forwarded_message(original: &OriginalMessage) -> String {
     format!(
         "---------- Forwarded message ---------\r\n\
          From: {}\r\n\
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_create_forward_raw_message_without_body() {
-        let original = super::super::reply::OriginalMessage {
+        let original = super::super::OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_create_forward_raw_message_with_body_and_cc() {
-        let original = super::super::reply::OriginalMessage {
+        let original = super::super::OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
