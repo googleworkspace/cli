@@ -241,6 +241,26 @@ pub fn validate_api_identifier(s: &str) -> Result<&str, GwsError> {
     Ok(s)
 }
 
+/// Validate a GCP region/location identifier (e.g. `us-central1`, `europe-west4`).
+/// Only ASCII lowercase letters, digits, and hyphens are allowed — dots are
+/// rejected to prevent SSRF when the location is interpolated into a hostname.
+pub fn validate_gcp_location(s: &str) -> Result<&str, GwsError> {
+    if s.is_empty() {
+        return Err(GwsError::Validation(
+            "GCP location must not be empty".to_string(),
+        ));
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(GwsError::Validation(format!(
+            "GCP location contains invalid characters (only lowercase alphanumeric and '-' allowed): {s}"
+        )));
+    }
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,5 +585,38 @@ mod tests {
     #[test]
     fn test_validate_api_identifier_empty() {
         assert!(validate_api_identifier("").is_err());
+    }
+
+    // --- validate_gcp_location ---
+
+    #[test]
+    fn test_validate_gcp_location_valid() {
+        assert_eq!(validate_gcp_location("us-central1").unwrap(), "us-central1");
+        assert_eq!(validate_gcp_location("europe-west4").unwrap(), "europe-west4");
+        assert_eq!(validate_gcp_location("asia-east1").unwrap(), "asia-east1");
+        assert_eq!(validate_gcp_location("global").unwrap(), "global");
+    }
+
+    #[test]
+    fn test_validate_gcp_location_rejects_dots() {
+        assert!(validate_gcp_location("evil.com").is_err());
+        assert!(validate_gcp_location("internal.evil.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_gcp_location_rejects_uppercase() {
+        assert!(validate_gcp_location("US-CENTRAL1").is_err());
+    }
+
+    #[test]
+    fn test_validate_gcp_location_rejects_special_chars() {
+        assert!(validate_gcp_location("us central1").is_err());
+        assert!(validate_gcp_location("us/central1").is_err());
+        assert!(validate_gcp_location("us_central1").is_err());
+    }
+
+    #[test]
+    fn test_validate_gcp_location_empty() {
+        assert!(validate_gcp_location("").is_err());
     }
 }

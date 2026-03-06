@@ -45,7 +45,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
 
-    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
+    let key_file = crate::config::config_dir().join(".encryption_key");
 
     let entry = Entry::new("gws-cli", &username);
 
@@ -218,7 +218,7 @@ pub fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 
 /// Returns the path for encrypted credentials.
 pub fn encrypted_credentials_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("credentials.enc")
+    crate::config::config_dir().join("credentials.enc")
 }
 
 /// Saves credentials JSON to an encrypted file.

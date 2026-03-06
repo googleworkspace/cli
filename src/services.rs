@@ -128,6 +128,48 @@ pub const SERVICES: &[ServiceEntry] = &[
     },
 ];
 
+/// Selects the scope to request for an API method.
+///
+/// Google API methods list their accepted scopes from broadest to narrowest.
+/// We pick only the first (broadest) scope because requesting multiple scopes
+/// causes issues when restrictive scopes (e.g., `gmail.metadata`) are included,
+/// as the API enforces that scope's restrictions even when broader scopes are
+/// also present.
+pub fn select_scope(scopes: &[String]) -> Option<&str> {
+    scopes.first().map(|s| s.as_str())
+}
+
+/// Parses a service name (with optional `:version` suffix) and an `--api-version`
+/// flag from raw CLI args into `(api_name, version)`.
+pub fn parse_service_and_version(
+    args: &[String],
+    first_arg: &str,
+) -> Result<(String, String), GwsError> {
+    let mut service_arg = first_arg;
+    let mut version_override: Option<String> = None;
+
+    // Check for --api-version flag anywhere in args
+    for i in 0..args.len() {
+        if args[i] == "--api-version" && i + 1 < args.len() && !args[i + 1].starts_with('-') {
+            version_override = Some(args[i + 1].clone());
+        } else if let Some(val) = args[i].strip_prefix("--api-version=") {
+            version_override = Some(val.to_string());
+        }
+    }
+
+    // Support "service:version" syntax on the service arg itself
+    if let Some((svc, ver)) = service_arg.split_once(':') {
+        service_arg = svc;
+        if version_override.is_none() {
+            version_override = Some(ver.to_string());
+        }
+    }
+
+    let (api_name, default_version) = resolve_service(service_arg)?;
+    let version = version_override.unwrap_or(default_version);
+    Ok((api_name, version))
+}
+
 /// Resolves a service alias to (api_name, version).
 pub fn resolve_service(name: &str) -> Result<(String, String), GwsError> {
     for entry in SERVICES {
@@ -164,6 +206,32 @@ mod tests {
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
         );
+    }
+
+    #[test]
+    fn test_select_scope_picks_first() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+        ];
+        assert_eq!(select_scope(&scopes), Some("https://mail.google.com/"));
+    }
+
+    #[test]
+    fn test_select_scope_single() {
+        let scopes = vec!["https://www.googleapis.com/auth/drive".to_string()];
+        assert_eq!(
+            select_scope(&scopes),
+            Some("https://www.googleapis.com/auth/drive")
+        );
+    }
+
+    #[test]
+    fn test_select_scope_empty() {
+        let scopes: Vec<String> = vec![];
+        assert_eq!(select_scope(&scopes), None);
     }
 
     #[test]

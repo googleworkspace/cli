@@ -18,65 +18,19 @@ use crate::discovery::RestDescription;
 use crate::error::GwsError;
 use anyhow::Context;
 use clap::{Arg, ArgMatches, Command};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
 
-/// Result of a Model Armor sanitization check.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SanitizationResult {
-    /// The overall state of the match (e.g., "MATCH_FOUND", "NO_MATCH_FOUND").
-    pub filter_match_state: String,
-    /// Detailed results from specific filters (PI, Jailbreak, etc.).
-    #[serde(default)]
-    pub filter_results: serde_json::Value,
-    /// The final decision based on the policy (e.g., "BLOCK", "ALLOW").
-    #[serde(default)]
-    pub invocation_result: String,
-}
+// Re-export sanitization types from the standalone module so existing
+// `helpers::modelarmor::` paths continue to compile.
+pub use crate::sanitize::{
+    sanitize_text, SanitizationResult, SanitizeConfig, SanitizeMode, CLOUD_PLATFORM_SCOPE,
+};
 
-/// Controls behavior when sanitization finds a match.
-#[derive(Debug, Clone, PartialEq)]
-pub enum SanitizeMode {
-    /// Log warning to stderr, annotate output with _sanitization field
-    Warn,
-    /// Suppress response output, exit non-zero
-    Block,
-}
-
-/// Configuration for Model Armor sanitization, threaded through the CLI.
-#[derive(Debug, Clone)]
-pub struct SanitizeConfig {
-    pub template: Option<String>,
-    pub mode: SanitizeMode,
-}
-
-impl Default for SanitizeConfig {
-    /// Provides default values for `SanitizeConfig`.
-    ///
-    /// By default, no template is set (sanitization disabled) and the mode is `Warn`.
-    fn default() -> Self {
-        Self {
-            template: None,
-            mode: SanitizeMode::Warn,
-        }
-    }
-}
-
-impl SanitizeMode {
-    /// Parses a string into a `SanitizeMode`.
-    ///
-    /// * "block" (case-insensitive) -> `Block`
-    /// * Any other value -> `Warn` (safe default)
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "block" => SanitizeMode::Block,
-            _ => SanitizeMode::Warn,
-        }
-    }
-}
+// Re-export for tests in this module
+#[cfg(test)]
+pub(crate) use crate::sanitize::{build_sanitize_request_data, parse_sanitize_response};
 
 pub struct ModelArmorHelper;
 
@@ -241,42 +195,6 @@ TIPS:
             Ok(false)
         })
     }
-}
-
-pub const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
-
-/// Sanitize text through a Model Armor template and return the result.
-/// Template format: projects/PROJECT/locations/LOCATION/templates/TEMPLATE
-pub async fn sanitize_text(template: &str, text: &str) -> Result<SanitizationResult, GwsError> {
-    let (body, url) = build_sanitize_request_data(template, text, "sanitizeUserPrompt")?;
-
-    let token = auth::get_token(&[CLOUD_PLATFORM_SCOPE])
-        .await
-        .context("Failed to get auth token for Model Armor")?;
-
-    let client = crate::client::build_client()?;
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .context("Model Armor request failed")?;
-
-    let status = resp.status();
-    let resp_text = resp
-        .text()
-        .await
-        .context("Failed to read Model Armor response")?;
-
-    if !status.is_success() {
-        return Err(GwsError::Other(anyhow::anyhow!(
-            "Model Armor API returned status {status}: {resp_text}"
-        )));
-    }
-
-    parse_sanitize_response(&resp_text)
 }
 
 /// Make a POST request to Model Armor's regional API endpoint.
@@ -459,23 +377,23 @@ mod tests {
 
     #[test]
     fn test_sanitize_mode_from_str_warn() {
-        assert_eq!(SanitizeMode::from_str("warn"), SanitizeMode::Warn);
-        assert_eq!(SanitizeMode::from_str("WARN"), SanitizeMode::Warn);
-        assert_eq!(SanitizeMode::from_str("Warn"), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from("warn"), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from("WARN"), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from("Warn"), SanitizeMode::Warn);
     }
 
     #[test]
     fn test_sanitize_mode_from_str_block() {
-        assert_eq!(SanitizeMode::from_str("block"), SanitizeMode::Block);
-        assert_eq!(SanitizeMode::from_str("BLOCK"), SanitizeMode::Block);
-        assert_eq!(SanitizeMode::from_str("Block"), SanitizeMode::Block);
+        assert_eq!(SanitizeMode::from("block"), SanitizeMode::Block);
+        assert_eq!(SanitizeMode::from("BLOCK"), SanitizeMode::Block);
+        assert_eq!(SanitizeMode::from("Block"), SanitizeMode::Block);
     }
 
     #[test]
     fn test_sanitize_mode_from_str_unknown_defaults_to_warn() {
-        assert_eq!(SanitizeMode::from_str(""), SanitizeMode::Warn);
-        assert_eq!(SanitizeMode::from_str("invalid"), SanitizeMode::Warn);
-        assert_eq!(SanitizeMode::from_str("stop"), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from(""), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from("invalid"), SanitizeMode::Warn);
+        assert_eq!(SanitizeMode::from("stop"), SanitizeMode::Warn);
     }
 
     #[test]
@@ -544,6 +462,43 @@ mod tests {
     }
 
     #[test]
+    fn test_build_sanitize_request_data_rejects_traversal() {
+        let result =
+            build_sanitize_request_data("../../etc/passwd", "text", "sanitizeUserPrompt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_query_injection() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil.com?x=y/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_percent_encoded() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil%2ecom/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_dotted_location() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil.com/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_parse_sanitize_response_success() {
         let json_resp = json!({
             "sanitizationResult": {
@@ -563,47 +518,6 @@ mod tests {
         let json_resp = json!({}).to_string();
         assert!(parse_sanitize_response(&json_resp).is_err());
     }
-}
-
-pub fn build_sanitize_request_data(
-    template: &str,
-    text: &str,
-    method: &str,
-) -> Result<(String, String), GwsError> {
-    let location = extract_location(template).ok_or_else(|| {
-        GwsError::Validation(
-            "Cannot extract location from --sanitize template. Expected format: projects/PROJECT/locations/LOCATION/templates/TEMPLATE".to_string(),
-        )
-    })?;
-
-    let base = regional_base_url(location);
-    let url = format!("{base}/{template}:{method}");
-
-    // Identify data field based on method
-    let data_field = if method == "sanitizeUserPrompt" {
-        "userPromptData"
-    } else {
-        "modelResponseData"
-    };
-
-    let body = json!({data_field: {"text": text}}).to_string();
-    Ok((body, url))
-}
-
-pub fn parse_sanitize_response(resp_text: &str) -> Result<SanitizationResult, GwsError> {
-    // Parse the response to extract sanitizationResult
-    let parsed: serde_json::Value =
-        serde_json::from_str(resp_text).context("Failed to parse Model Armor response")?;
-
-    let result = parsed.get("sanitizationResult").ok_or_else(|| {
-        GwsError::Other(anyhow::anyhow!(
-            "No sanitizationResult in Model Armor response"
-        ))
-    })?;
-
-    let res =
-        serde_json::from_value(result.clone()).context("Failed to parse sanitization result")?;
-    Ok(res)
 }
 
 fn parse_sanitize_args(matches: &ArgMatches, data_field: &str) -> Result<String, GwsError> {

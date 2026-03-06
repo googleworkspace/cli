@@ -54,7 +54,7 @@ pub struct ClientSecretFile {
 
 /// Returns the path for the client secret config file.
 pub fn client_config_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("client_secret.json")
+    crate::config::config_dir().join("client_secret.json")
 }
 
 /// Saves OAuth client configuration in the standard Google Cloud Console format.
