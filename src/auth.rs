@@ -63,16 +63,13 @@ enum Credential {
 /// Tries credentials in order:
 /// 0. `GOOGLE_WORKSPACE_CLI_TOKEN` env var (raw access token, highest priority)
 /// 1. `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var (plaintext JSON, can be User or Service Account)
-/// 2. Per-account encrypted credentials via `accounts.json` registry
+/// 2. Encrypted credentials at `~/.config/gws/credentials.enc`
 /// 3. Plaintext credentials at `~/.config/gws/credentials.json` (User only)
 /// 4. Application Default Credentials (ADC):
 ///    - `GOOGLE_APPLICATION_CREDENTIALS` env var (path to a JSON credentials file), then
 ///    - Well-known ADC path: `~/.config/gcloud/application_default_credentials.json`
 ///      (populated by `gcloud auth application-default login`)
-///
-/// When `account` is `Some`, a specific registered account is used.
-/// When `account` is `None`, the default account from `accounts.json` is used.
-pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result<String> {
+pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     // 0. Direct token from env var (highest priority, bypasses all credential loading)
     if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
         if !token.is_empty() {
@@ -82,85 +79,12 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
 
     let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
     let config_dir = crate::auth_commands::config_dir();
-
-    // If env var credentials are specified, skip account resolution entirely
-    if creds_file.is_some() {
-        let enc_path = credential_store::encrypted_credentials_path();
-        let default_path = config_dir.join("credentials.json");
-        let token_cache = config_dir.join("token_cache.json");
-        let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
-        return get_token_inner(scopes, creds, &token_cache).await;
-    }
-
-    // Resolve account from registry
-    let resolved_account = resolve_account(account)?;
-
-    let enc_path = match &resolved_account {
-        Some(email) => credential_store::encrypted_credentials_path_for(email),
-        None => credential_store::encrypted_credentials_path(),
-    };
-
-    // Per-account token cache: token_cache.<b64-email>.json
-    let token_cache_name = resolved_account
-        .as_ref()
-        .map(|email| {
-            let b64 = crate::accounts::email_to_b64(&crate::accounts::normalize_email(email));
-            format!("token_cache.{b64}.json")
-        })
-        .unwrap_or_else(|| "token_cache.json".to_string());
-    let token_cache_path = config_dir.join(token_cache_name);
-
+    let enc_path = credential_store::encrypted_credentials_path();
     let default_path = config_dir.join("credentials.json");
-    let creds = load_credentials_inner(None, &enc_path, &default_path).await?;
-    get_token_inner(scopes, creds, &token_cache_path).await
-}
+    let token_cache = config_dir.join("token_cache.json");
 
-/// Resolve which account to use:
-/// 1. Explicit `account` parameter takes priority.
-/// 2. Fall back to `accounts.json` default.
-/// 3. If no registry exists, return None to allow legacy `credentials.enc` fallthrough.
-fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
-    let registry = crate::accounts::load_accounts()?;
-
-    match (account, &registry) {
-        // Explicit account requested — validate it exists in registry
-        (Some(email), Some(reg)) => {
-            let normalised = crate::accounts::normalize_email(email);
-            if !reg.accounts.contains_key(&normalised) {
-                anyhow::bail!(
-                    "Account '{}' not found. Run 'gws auth login' to add it.",
-                    normalised
-                );
-            }
-            Ok(Some(normalised))
-        }
-        // Explicit account but no registry
-        (Some(email), None) => {
-            anyhow::bail!(
-                "Account '{}' not found. No accounts registered. Run 'gws auth login'.",
-                crate::accounts::normalize_email(email)
-            );
-        }
-        // No explicit account — use default from registry
-        (None, Some(reg)) => {
-            if let Some(default) = crate::accounts::get_default(reg) {
-                Ok(Some(default.to_string()))
-            } else if reg.accounts.len() == 1 {
-                // Auto-select the only account
-                Ok(reg.accounts.keys().next().cloned())
-            } else {
-                anyhow::bail!(
-                    "No default account set. Use --account or run 'gws auth default <email>'."
-                );
-            }
-        }
-        // No account, no registry — use legacy credentials if they exist
-        (None, None) => {
-            // Fall through to standard credential loading which will pick up
-            // the legacy credentials.enc file if it exists.
-            Ok(None)
-        }
-    }
+    let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
+    get_token_inner(scopes, creds, &token_cache).await
 }
 
 async fn get_token_inner(
@@ -595,22 +519,10 @@ mod tests {
     async fn test_get_token_from_env_var() {
         let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "my-test-token");
 
-        let result = get_token(&["https://www.googleapis.com/auth/drive"], None).await;
+        let result = get_token(&["https://www.googleapis.com/auth/drive"]).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "my-test-token");
-    }
-
-    #[test]
-    fn test_resolve_account_no_registry_no_account_returns_none() {
-        // When there is no accounts.json and no explicit account,
-        // resolve_account should return Ok(None) to allow legacy
-        // credentials.enc to be picked up by load_credentials_inner.
-        let result = resolve_account(None);
-        // This will return Ok(None) if accounts.json doesn't exist,
-        // or Ok(Some(...)) if it does with a default. Either way, it
-        // should NOT error for the no-registry case.
-        assert!(result.is_ok());
     }
 
     #[tokio::test]

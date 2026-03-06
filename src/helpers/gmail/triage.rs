@@ -33,7 +33,7 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
     // Authenticate
-    let token = auth::get_token(&[GMAIL_SCOPE], None)
+    let token = auth::get_token(&[GMAIL_SCOPE])
         .await
         .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
 

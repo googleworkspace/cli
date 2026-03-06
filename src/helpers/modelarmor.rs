@@ -250,7 +250,7 @@ pub const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-pl
 pub async fn sanitize_text(template: &str, text: &str) -> Result<SanitizationResult, GwsError> {
     let (body, url) = build_sanitize_request_data(template, text, "sanitizeUserPrompt")?;
 
-    let token = auth::get_token(&[CLOUD_PLATFORM_SCOPE], None)
+    let token = auth::get_token(&[CLOUD_PLATFORM_SCOPE])
         .await
         .context("Failed to get auth token for Model Armor")?;
 
@@ -281,7 +281,7 @@ pub async fn sanitize_text(template: &str, text: &str) -> Result<SanitizationRes
 
 /// Make a POST request to Model Armor's regional API endpoint.
 async fn model_armor_post(url: &str, body: &str) -> Result<(), GwsError> {
-    let token = auth::get_token(&[CLOUD_PLATFORM_SCOPE], None)
+    let token = auth::get_token(&[CLOUD_PLATFORM_SCOPE])
         .await
         .context("Failed to get auth token")?;
 
