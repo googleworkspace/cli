@@ -241,10 +241,9 @@ pub async fn fetch_discovery_document(
         alt_resp.text().await?
     };
 
-    // Write to cache
+    // Write to cache (non-fatal — warn if it fails)
     if let Err(e) = std::fs::write(&cache_file, &body) {
-        // Non-fatal: just warn via stderr-safe approach
-        let _ = e;
+        eprintln!("warning: failed to write discovery cache to {}: {}", cache_file.display(), e);
     }
 
     let doc: RestDescription = serde_json::from_str(&body)?;
