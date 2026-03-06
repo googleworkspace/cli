@@ -142,7 +142,7 @@ pub fn build_sanitize_request_data(
             "Cannot extract location from --sanitize template. Expected format: projects/PROJECT/locations/LOCATION/templates/TEMPLATE".to_string(),
         )
     })?;
-    let location = crate::validate::validate_api_identifier(location)?;
+    let location = crate::validate::validate_gcp_location(location)?;
 
     let base = regional_base_url(location);
     let url = format!("{base}/{template}:{method}");

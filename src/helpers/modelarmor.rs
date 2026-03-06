@@ -489,6 +489,16 @@ mod tests {
     }
 
     #[test]
+    fn test_build_sanitize_request_data_rejects_dotted_location() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/evil.com/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_parse_sanitize_response_success() {
         let json_resp = json!({
             "sanitizationResult": {
