@@ -324,12 +324,14 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             )
         })?;
 
-        // Build credentials in the standard authorized_user format
+        // Build credentials in the standard authorized_user format.
+        // Include granted scopes so exported credentials can be scope-checked.
         let creds_json = json!({
             "type": "authorized_user",
             "client_id": client_id,
             "client_secret": client_secret,
             "refresh_token": refresh_token,
+            "granted_scopes": scopes,
         });
 
         let creds_str = serde_json::to_string_pretty(&creds_json)
@@ -399,6 +401,35 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
 
     match credential_store::load_encrypted() {
         Ok(contents) => {
+            if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
+                // Warn if credentials were obtained with readonly scopes.
+                // OAuth2 refresh tokens are NOT scope-limited by Google — the token
+                // can mint access tokens for ANY scope the OAuth app is authorized for.
+                // This is a fundamental OAuth2 design: scopes are enforced at the
+                // access-token request, not embedded in the refresh token.
+                if let Some(scopes) = creds.get("granted_scopes").and_then(|v| v.as_array()) {
+                    let all_readonly = scopes.iter().all(|s| {
+                        s.as_str()
+                            .map(|s| s.ends_with(".readonly"))
+                            .unwrap_or(false)
+                    });
+                    if all_readonly {
+                        eprintln!(
+                            "⚠️  WARNING: These credentials were obtained with read-only scopes, \
+                             but the exported refresh token is NOT scope-limited by Google. \
+                             Anyone with this token can request write access. \
+                             Consider using a separate OAuth client for read-only use cases."
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "⚠️  WARNING: These credentials do not include scope metadata \
+                         (created before scope tracking was added). The exported refresh \
+                         token may grant broader access than originally intended."
+                    );
+                }
+            }
+
             if unmasked {
                 println!("{contents}");
             } else if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
@@ -1622,6 +1653,38 @@ mod tests {
         // HashMap<String, TokenInfo> format from EncryptedTokenStorage
         let data = r#"{"key":{"access_token":"ya29","refresh_token":"1//tok"}}"#;
         assert_eq!(extract_refresh_token(data), Some("1//tok".to_string()));
+    }
+
+    // ── granted_scopes persistence tests ──────────────────────────────────
+
+    #[test]
+    fn credentials_json_includes_granted_scopes() {
+        // Simulate what handle_login now produces
+        let scopes = vec![
+            "https://www.googleapis.com/auth/drive.readonly".to_string(),
+            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+        ];
+        let creds = serde_json::json!({
+            "type": "authorized_user",
+            "client_id": "test-id",
+            "client_secret": "test-secret",
+            "refresh_token": "1//test-token",
+            "granted_scopes": scopes,
+        });
+        let parsed = creds.get("granted_scopes").unwrap().as_array().unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.iter().all(|s| s.as_str().unwrap().ends_with(".readonly")));
+    }
+
+    #[test]
+    fn credentials_without_granted_scopes_is_legacy() {
+        let creds = serde_json::json!({
+            "type": "authorized_user",
+            "client_id": "test-id",
+            "client_secret": "test-secret",
+            "refresh_token": "1//test-token",
+        });
+        assert!(creds.get("granted_scopes").is_none());
     }
 
     // ── is_workspace_admin_scope tests ──────────────────────────────────
