@@ -1507,7 +1507,7 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
 // (parse_scopes removed — replaced by resolve_scopes above)
 
 /// Helper: check if a scope can't be used with user OAuth consent flow
-/// (requires a Chat app, service account, or domain-wide delegation).
+/// (requires a Chat app or service account).
 fn is_app_only_scope(url: &str) -> bool {
     url.contains("/auth/chat.app.")
         || url.contains("/auth/chat.bot")

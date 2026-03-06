@@ -209,12 +209,6 @@ export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
 gws drive files list
 ```
 
-For Domain-Wide Delegation, add:
-
-```bash
-export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
-```
-
 ### Pre-obtained Access Token
 
 Useful when another tool (e.g. `gcloud`) already mints tokens for your environment.
@@ -366,7 +360,6 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
 | `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email (overridden by `--account` flag) |
-| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email for Domain-Wide Delegation (service accounts) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |

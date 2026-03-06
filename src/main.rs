@@ -460,9 +460,6 @@ fn print_usage() {
         "    GOOGLE_WORKSPACE_CLI_ACCOUNT             Default account email for multi-account"
     );
     println!(
-        "    GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER   Email for Domain-Wide Delegation (service accounts)"
-    );
-    println!(
         "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
     );
     println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");

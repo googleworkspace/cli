@@ -81,7 +81,6 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
     }
 
     let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
-    let impersonated_user = std::env::var("GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER").ok();
     let config_dir = crate::auth_commands::config_dir();
 
     // If env var credentials are specified, skip account resolution entirely
@@ -90,7 +89,7 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
         let default_path = config_dir.join("credentials.json");
         let token_cache = config_dir.join("token_cache.json");
         let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
-        return get_token_inner(scopes, creds, &token_cache, impersonated_user.as_deref()).await;
+        return get_token_inner(scopes, creds, &token_cache).await;
     }
 
     // Resolve account from registry
@@ -113,13 +112,7 @@ pub async fn get_token(scopes: &[&str], account: Option<&str>) -> anyhow::Result
 
     let default_path = config_dir.join("credentials.json");
     let creds = load_credentials_inner(None, &enc_path, &default_path).await?;
-    get_token_inner(
-        scopes,
-        creds,
-        &token_cache_path,
-        impersonated_user.as_deref(),
-    )
-    .await
+    get_token_inner(scopes, creds, &token_cache_path).await
 }
 
 /// Resolve which account to use:
@@ -174,7 +167,6 @@ async fn get_token_inner(
     scopes: &[&str],
     creds: Credential,
     token_cache_path: &std::path::Path,
-    impersonated_user: Option<&str>,
 ) -> anyhow::Result<String> {
     match creds {
         Credential::AuthorizedUser(secret) => {
@@ -198,16 +190,9 @@ async fn get_token_inner(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| "token_cache.json".to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
-            let mut builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
+            let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
                 Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
             );
-
-            // Check for impersonation
-            if let Some(user) = impersonated_user {
-                if !user.trim().is_empty() {
-                    builder = builder.subject(user.to_string());
-                }
-            }
 
             let auth = builder
                 .build()

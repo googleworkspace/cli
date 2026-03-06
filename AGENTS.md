@@ -175,7 +175,6 @@ Use these labels to categorize pull requests and issues:
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`) |
 | `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email for multi-account usage (overridden by `--account` flag) |
-| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email of user to impersonate with Domain-Wide Delegation (service accounts only) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard Google ADC path; used as fallback when no gws-specific credentials are configured |
 
 ### Configuration
