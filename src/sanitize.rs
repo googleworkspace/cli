@@ -136,11 +136,13 @@ pub fn build_sanitize_request_data(
     text: &str,
     method: &str,
 ) -> Result<(String, String), GwsError> {
+    let template = crate::validate::validate_resource_name(template)?;
     let location = extract_location(template).ok_or_else(|| {
         GwsError::Validation(
             "Cannot extract location from --sanitize template. Expected format: projects/PROJECT/locations/LOCATION/templates/TEMPLATE".to_string(),
         )
     })?;
+    let location = crate::validate::validate_api_identifier(location)?;
 
     let base = regional_base_url(location);
     let url = format!("{base}/{template}:{method}");
