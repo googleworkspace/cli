@@ -13,10 +13,14 @@
 // limitations under the License.
 
 use super::Helper;
+pub mod forward;
+pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
+use forward::handle_forward;
+use reply::handle_reply;
 use send::handle_send;
 use triage::handle_triage;
 use watch::handle_watch;
@@ -37,7 +41,7 @@ pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modi
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
 
 impl Helper for GmailHelper {
-    /// Injects helper subcommands (`+send`, `+watch`) into the main CLI command.
+    /// Injects helper subcommands into the main CLI command.
     fn inject_commands(
         &self,
         mut cmd: Command,
@@ -112,6 +116,77 @@ EXAMPLES:
 TIPS:
   Read-only — never modifies your mailbox.
   Defaults to table output format.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+reply")
+                .about("[Helper] Reply to an email (threading handled automatically)")
+                .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Message ID to reply to")
+                        .required(true)
+                        .value_name("MSG_ID"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Reply body (plain text)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Reply to all recipients (reply-all)")
+                        .action(ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +reply --to 18e1a2b3c4d5e6f7 --body 'Thanks!'
+  gws gmail +reply --to 18e1a2b3c4d5e6f7 --body 'Sounds good' --all
+
+TIPS:
+  Automatically sets threadId, In-Reply-To, and References headers.
+  Quotes the original message body in the reply.
+  Use --all to reply to all original recipients (reply-all).",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+forward")
+                .about("[Helper] Forward an email to new recipients")
+                .arg(
+                    Arg::new("message")
+                        .long("message")
+                        .help("Message ID to forward")
+                        .required(true)
+                        .value_name("MSG_ID"),
+                )
+                .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Recipient email address")
+                        .required(true)
+                        .value_name("EMAIL"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Optional message to include above the forwarded content")
+                        .value_name("TEXT"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +forward --message 18e1a2b3c4d5e6f7 --to bob@example.com
+  gws gmail +forward --message 18e1a2b3c4d5e6f7 --to bob@example.com --body 'FYI'
+
+TIPS:
+  Includes original message body and attachments.
+  Adds standard forwarded-message attribution header.",
                 ),
         );
 
@@ -217,6 +292,16 @@ TIPS:
                 return Ok(true);
             }
 
+            if let Some(matches) = matches.subcommand_matches("+reply") {
+                handle_reply(matches).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+forward") {
+                handle_forward(matches).await?;
+                return Ok(true);
+            }
+
             if let Some(matches) = matches.subcommand_matches("+watch") {
                 handle_watch(matches, sanitize_config).await?;
                 return Ok(true);
@@ -237,10 +322,11 @@ mod tests {
         let cmd = Command::new("test");
         let doc = crate::discovery::RestDescription::default();
 
-        // No scopes granted -> defaults to showing all
         let cmd = helper.inject_commands(cmd, &doc);
         let subcommands: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         assert!(subcommands.contains(&"+watch"));
         assert!(subcommands.contains(&"+send"));
+        assert!(subcommands.contains(&"+reply"));
+        assert!(subcommands.contains(&"+forward"));
     }
 }
