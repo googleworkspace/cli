@@ -21,7 +21,7 @@
 substitutions:
   _REGION: us-central1
   _SERVICE_NAME: gws-mcp
-  _SERVICES: "drive,gmail,calendar,sheets,docs,slides"
+  _SERVICES: "all"
 
 steps:
   # Build the Docker image

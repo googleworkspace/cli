@@ -36,5 +36,5 @@ ENV PORT=8080
 EXPOSE 8080
 
 # Run the MCP server in SSE mode, binding to 0.0.0.0 so Cloud Run can route traffic
-ENTRYPOINT ["gws", "mcp", "--transport", "sse", "--host", "0.0.0.0", "-s", "drive,gmail,calendar,sheets,docs,slides"]
+ENTRYPOINT ["gws", "mcp", "--transport", "sse", "--host", "0.0.0.0", "-s", "all"]
 CMD ["--port", "8080"]

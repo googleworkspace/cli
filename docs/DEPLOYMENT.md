@@ -20,20 +20,19 @@ The server is **stateless** — sessions live in memory and expire after 30 minu
 | **Deployment target** | Cloud Run, Compute Engine VM, GKE, Docker on any host, bare metal | Cloud Run for auto-scaling; GCE VM for simplicity |
 | **Auth model** | Per-user bearer tokens (each user sends their own Google OAuth token) | Per-user tokens — no shared credentials on the server |
 | **Network access** | Internal only (VPN/IAP), Cloud Run with IAM, fully public | Internal or IAM-gated — do not expose publicly without auth |
-| **Google APIs to expose** | Any combination of: `drive`, `gmail`, `calendar`, `sheets`, `docs`, `slides` (or `all` for every supported API) | Start with the six core services |
+| **Google APIs to expose** | `all` (default) exposes all 17 supported services, or pick specific ones: `drive`, `gmail`, `calendar`, `sheets`, `docs`, `slides`, `tasks`, `people`, `chat`, `classroom`, `forms`, `keep`, `meet`, `admin-reports`, `events`, `modelarmor`, `workflow` | `all` — let users access everything |
 
 ---
 
 ## Requirements
 
 - **Docker** (for containerized deployments) or **Rust 1.83+** (for building from source)
-- A **Google Cloud project** with these APIs enabled:
-  - Gmail API
-  - Google Calendar API
-  - Google Drive API
-  - Google Sheets API
-  - Google Docs API
-  - Google Slides API
+- A **Google Cloud project** with the relevant APIs enabled (enable all that your team will use):
+  - Gmail API, Google Calendar API, Google Drive API
+  - Google Sheets API, Google Docs API, Google Slides API
+  - Google Tasks API, People API, Google Chat API
+  - Google Classroom API, Google Forms API, Google Keep API
+  - Google Meet API, Admin SDK (Reports), Workspace Events API
 - **OAuth credentials** — each user obtains their own access token (e.g. via `gcloud auth print-access-token` or your org's OAuth flow)
 - No persistent storage, no database, no Redis
 
@@ -48,7 +47,7 @@ The server is **stateless** — sessions live in memory and expire after 30 minu
 | `--transport` | `stdio` | Transport mode: `stdio` (local) or `sse` (HTTP server) |
 | `--port` | `8080` | Port to listen on (only with `--transport sse`) |
 | `--host` | `127.0.0.1` | Bind address (use `0.0.0.0` for containerized/remote deployments) |
-| `-s`, `--services` | *(none)* | Comma-separated services to expose: `drive,gmail,calendar,sheets,docs,slides` or `all` |
+| `-s`, `--services` | *(none)* | Services to expose: `all` for everything, or comma-separated list (e.g. `drive,gmail,calendar`) |
 | `--tool-mode` | `full` | `full` = one tool per API method; `compact` = one tool per service + discovery tool |
 | `--workflows` | `false` | Expose cross-service workflow tools (standup report, meeting prep, etc.) |
 
@@ -185,7 +184,7 @@ cargo build --profile dist
 
 # Run
 ./target/dist/gws mcp --transport sse --host 0.0.0.0 --port 8080 \
-  -s drive,gmail,calendar,sheets,docs,slides
+  -s all
 ```
 
 #### 4. Systemd service (for bare binary)
@@ -200,7 +199,7 @@ After=network.target
 [Service]
 Type=simple
 User=gws
-ExecStart=/usr/local/bin/gws mcp --transport sse --host 0.0.0.0 --port 8080 -s drive,gmail,calendar,sheets,docs,slides
+ExecStart=/usr/local/bin/gws mcp --transport sse --host 0.0.0.0 --port 8080 -s all
 Restart=always
 RestartSec=5
 
@@ -285,7 +284,7 @@ sudo cp target/dist/gws /usr/local/bin/gws
 
 # Run
 gws mcp --transport sse --host 0.0.0.0 --port 8080 \
-  -s drive,gmail,calendar,sheets,docs,slides
+  -s all
 ```
 
 Only runtime dependency is `ca-certificates` (for TLS to Google APIs).
