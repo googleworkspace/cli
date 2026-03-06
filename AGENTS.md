@@ -84,6 +84,9 @@ ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears th
 > [!IMPORTANT]
 > This CLI is frequently invoked by AI/LLM agents. Always assume inputs can be adversarial — validate paths against traversal (`../../.ssh`), restrict format strings to allowlists, reject control characters, and encode user values before embedding them in URLs.
 
+> [!NOTE]
+> **Environment variables are trusted inputs.** The validation rules above apply to **CLI arguments** that may be passed by untrusted AI agents. Environment variables (e.g. `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`) are set by the user themselves — in their shell profile, `.env` file, or deployment config — and are not subject to path traversal validation. This is consistent with standard conventions like `XDG_CONFIG_HOME`, `CARGO_HOME`, etc.
+
 ### Path Safety (`src/validate.rs`)
 
 When adding new helpers or CLI flags that accept file paths, **always validate** using the shared helpers:
