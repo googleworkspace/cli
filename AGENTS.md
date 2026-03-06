@@ -46,13 +46,12 @@ The CLI uses a **two-phase argument parsing** strategy:
 
 | File                      | Purpose                                                                                   |
 | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `src/main.rs`             | Entrypoint, two-phase CLI parsing, `--account` global flag extraction, method resolution  |
+| `src/main.rs`             | Entrypoint, two-phase CLI parsing, method resolution                                      |
 | `src/discovery.rs`        | Serde models for Discovery Document + fetch/cache                                         |
 | `src/services.rs`         | Service alias → Discovery API name/version mapping                                        |
-| `src/auth.rs`             | OAuth2 token acquisition with multi-account support via `accounts.json` registry          |
-| `src/accounts.rs`         | Multi-account registry (`accounts.json`), email normalisation, base64 encoding            |
-| `src/credential_store.rs` | AES-256-GCM encryption/decryption, per-account credential file paths                      |
-| `src/auth_commands.rs`    | `gws auth` subcommands: `login`, `logout`, `list`, `default`, `setup`, `status`, `export` |
+| `src/auth.rs`             | OAuth2 token acquisition via env vars, encrypted credentials, or ADC                      |
+| `src/credential_store.rs` | AES-256-GCM encryption/decryption of credential files                                     |
+| `src/auth_commands.rs`    | `gws auth` subcommands: `login`, `logout`, `setup`, `status`, `export`                    |
 | `src/commands.rs`         | Recursive `clap::Command` builder from Discovery resources                                |
 | `src/executor.rs`         | HTTP request construction, response handling, schema validation                           |
 | `src/schema.rs`           | `gws schema` command — introspect API method schemas                                      |
@@ -174,7 +173,7 @@ Use these labels to categorize pull requests and issues:
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`) |
-| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email for multi-account usage (overridden by `--account` flag) |
+
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard Google ADC path; used as fallback when no gws-specific credentials are configured |
 
 ### Configuration
