@@ -1,5 +1,49 @@
 # @googleworkspace/cli
 
+## 0.6.3
+
+### Patch Changes
+
+- 322529d: Document all environment variables and enable GOOGLE_WORKSPACE_CLI_CONFIG_DIR in release builds
+- 2173a92: Send x-goog-user-project header when using ADC with a quota_project_id
+- 1f47420: fix: extract CLA label job into dedicated workflow to prevent feedback loop
+
+  The Automation workflow's `check_run: [completed]` trigger caused a feedback
+  loop — every workflow completion fired a check_run event, re-triggering
+  Automation, which produced another check_run event, and so on. Moving the
+  CLA label job to its own `cla.yml` workflow eliminates the trigger from
+  Automation entirely.
+
+- 132c3b1: fix: warn on credential file permission failures instead of ignoring
+
+  Replaced silent `let _ =` on `set_permissions` calls in `save_encrypted`
+  with `eprintln!` warnings so users are aware if their credential files
+  end up with insecure permissions. Also log keyring access failures
+  instead of silently falling through to file storage.
+
+- a2cc523: Add `x86_64-unknown-linux-musl` build target for Linux musl/static binary support
+- c86b964: Fix multi-account selection: MCP server now respects `GOOGLE_WORKSPACE_CLI_ACCOUNT` env var (#221), and `--account` flag before service name no longer causes parse errors (#181)
+- ff53538: Fix scope selection to use first (broadest) scope instead of all method scopes, preventing gmail.metadata restrictions from blocking query parameters
+- c80eb52: Replace strip_suffix(".readonly").unwrap() with unwrap_or fallback
+
+  Two call sites used `.strip_suffix(".readonly").unwrap()` which would
+  panic if a scope URL marked as `is_readonly` didn't actually end with
+  ".readonly". While the current data makes this unlikely, using
+  `unwrap_or` is a defensive improvement that prevents potential panics
+  from inconsistent discovery data.
+
+- 9a780d7: Log token cache decryption/parse errors instead of silently swallowing
+
+  Previously, `load_from_disk` used four nested `if let Ok` blocks that
+  silently returned an empty map on any failure. When the encryption key
+  changed or the cache was corrupted, tokens silently stopped loading and
+  users were forced to re-authenticate with no explanation.
+
+  Now logs specific warnings to stderr for decryption failures, invalid
+  UTF-8, and JSON parse errors, with a hint to re-authenticate.
+
+- 6daf90d: Fix MCP tool schemas to conditionally include `body`, `upload`, and `page_all` properties only when the underlying Discovery Document method supports them. `body` is included only when a request body is defined, `upload` only when `supportsMediaUpload` is true, and `page_all` only when the method has a `pageToken` parameter. Also drops empty `body: {}` objects that LLMs commonly send on GET methods, preventing 400 errors from Google APIs.
+
 ## 0.6.2
 
 ### Patch Changes
