@@ -373,12 +373,14 @@ pub async fn fetch_scopes_for_apis(enabled_api_ids: &[String]) -> Vec<Discovered
 pub struct SetupOptions {
     pub project: Option<String>,
     pub dry_run: bool,
+    pub login: bool,
 }
 
 /// Parse setup flags from args.
 pub fn parse_setup_args(args: &[String]) -> SetupOptions {
     let mut project = None;
     let mut dry_run = false;
+    let mut login = false;
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--project" && i + 1 < args.len() {
@@ -390,11 +392,18 @@ pub fn parse_setup_args(args: &[String]) -> SetupOptions {
         } else if args[i] == "--dry-run" {
             dry_run = true;
             i += 1;
+        } else if args[i] == "--login" {
+            login = true;
+            i += 1;
         } else {
             i += 1;
         }
     }
-    SetupOptions { project, dry_run }
+    SetupOptions {
+        project,
+        dry_run,
+        login,
+    }
 }
 
 // ── gcloud helpers ──────────────────────────────────────────────
@@ -625,6 +634,90 @@ fn get_access_token() -> Result<String, GwsError> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn is_tos_precondition_error(gcloud_output: &str) -> bool {
+    let lower = gcloud_output.to_ascii_lowercase();
+    lower.contains("callers must accept terms of service")
+        || (lower.contains("terms of service") && lower.contains("type: tos"))
+        || (lower.contains("failed_precondition") && lower.contains("type: tos"))
+}
+
+fn is_invalid_project_id_error(gcloud_output: &str) -> bool {
+    let lower = gcloud_output.to_ascii_lowercase();
+    lower.contains("argument project_id: bad value")
+        || lower.contains("project ids must be between 6 and 30 characters")
+}
+
+fn is_project_id_in_use_error(gcloud_output: &str) -> bool {
+    let lower = gcloud_output.to_ascii_lowercase();
+    lower.contains("already in use")
+        || lower.contains("already exists")
+        || lower.contains("already being used")
+        || lower.contains("project ids are immutable")
+}
+
+fn primary_gcloud_error_line(gcloud_output: &str) -> Option<String> {
+    gcloud_output
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ERROR:"))
+        .map(ToString::to_string)
+}
+
+fn format_project_create_failure(project_id: &str, account: &str, gcloud_output: &str) -> String {
+    if is_tos_precondition_error(gcloud_output) {
+        let mut msg = format!(
+            concat!(
+                "Failed to create project '{project_id}' because the active gcloud account has not accepted Google Cloud Terms of Service.\n\n",
+                "Fix:\n",
+                "1. Verify the active account: `gcloud auth list` and `gcloud config get-value account`\n",
+                "2. Sign in to https://console.cloud.google.com/ with that same account and accept Terms of Service.\n",
+                "3. Retry `gws auth setup` (or `gcloud projects create {project_id}`).\n\n",
+                "If this is a Google Workspace-managed account, an org admin may need to enable Google Cloud for the domain first."
+            ),
+            project_id = project_id
+        );
+        if !account.trim().is_empty() {
+            msg.push_str(&format!("\n\nActive account in this setup run: {account}"));
+        }
+        return msg;
+    }
+
+    if is_invalid_project_id_error(gcloud_output) {
+        return format!(
+            concat!(
+                "Failed to create project '{project_id}' because the project ID format is invalid.\n\n",
+                "Project IDs must:\n",
+                "- be 6 to 30 characters\n",
+                "- start with a lowercase letter\n",
+                "- use only lowercase letters, digits, or hyphens\n\n",
+                "Enter a new project ID and retry."
+            ),
+            project_id = project_id
+        );
+    }
+
+    if is_project_id_in_use_error(gcloud_output) {
+        return format!(
+            "Failed to create project '{project_id}' because the ID is already in use. Enter a different unique project ID and retry."
+        );
+    }
+
+    if let Some(primary) = primary_gcloud_error_line(gcloud_output) {
+        return format!(
+            "Failed to create project '{project_id}'.\n\n{primary}\n\nEnter a different project ID and retry."
+        );
+    }
+
+    let details = gcloud_output.trim();
+    if details.is_empty() {
+        return format!(
+            "Failed to create project '{project_id}'. Enter a different project ID and retry."
+        );
+    }
+
+    format!("Failed to create project '{project_id}'.\n\ngcloud error:\n{details}")
 }
 
 // ── API enabling ────────────────────────────────────────────────
@@ -1047,43 +1140,83 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
                 let chosen = items.iter().find(|i| i.selected);
                 match chosen {
                     Some(item) if item.label.starts_with('➕') => {
-                        let project_name = match ctx
-                            .wizard
-                            .as_mut()
-                            .unwrap()
-                            .show_input("Create new GCP project", "Enter a unique project ID", None)
-                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
-                        {
-                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
-                            _ => {
-                                return Err(GwsError::Validation(
-                                    "Project creation cancelled by user".to_string(),
-                                ))
+                        let mut last_attempt: Option<String> = None;
+                        loop {
+                            let project_name = match ctx
+                                .wizard
+                                .as_mut()
+                                .unwrap()
+                                .show_input(
+                                    "Create new GCP project",
+                                    "Enter a unique project ID",
+                                    last_attempt.as_deref(),
+                                )
+                                .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
+                            {
+                                crate::setup_tui::InputResult::Confirmed(v) => {
+                                    let trimmed = v.trim().to_string();
+                                    if trimmed.is_empty() {
+                                        if let Some(ref mut w) = ctx.wizard {
+                                            w.show_message("Project ID cannot be empty. Enter a valid ID, press ↑ to go back, or Esc to cancel.")
+                                                .ok();
+                                        }
+                                        continue;
+                                    }
+                                    trimmed
+                                }
+                                crate::setup_tui::InputResult::GoBack => {
+                                    return Ok(SetupStage::Project);
+                                }
+                                crate::setup_tui::InputResult::Cancelled => {
+                                    ctx.finish_wizard();
+                                    return Err(GwsError::Validation(
+                                        "Setup cancelled".to_string(),
+                                    ));
+                                }
+                            };
+
+                            ctx.wizard
+                                .as_mut()
+                                .unwrap()
+                                .show_message(&format!("Creating project '{}'...", project_name))
+                                .ok();
+
+                            let output = gcloud_cmd()
+                                .args(["projects", "create", &project_name])
+                                .output()
+                                .map_err(|e| {
+                                    GwsError::Validation(format!("Failed to create project: {e}"))
+                                })?;
+                            if output.status.success() {
+                                set_gcloud_project(&project_name)?;
+                                ctx.wiz(2, StepStatus::Done(project_name.clone()));
+                                ctx.project_id = project_name;
+                                break Ok(SetupStage::EnableApis);
                             }
-                        };
 
-                        ctx.wizard
-                            .as_mut()
-                            .unwrap()
-                            .show_message(&format!("Creating project '{}'...", project_name))
-                            .ok();
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let mut combined = stderr.trim().to_string();
+                            if !stdout.trim().is_empty() {
+                                if !combined.is_empty() {
+                                    combined.push('\n');
+                                }
+                                combined.push_str(stdout.trim());
+                            }
 
-                        let status = gcloud_cmd()
-                            .args(["projects", "create", &project_name])
-                            .status()
-                            .map_err(|e| {
-                                GwsError::Validation(format!("Failed to create project: {e}"))
-                            })?;
-                        if !status.success() {
-                            return Err(GwsError::Validation(format!(
-                                "Failed to create project '{}'. Check the ID is valid and unique.",
-                                project_name
-                            )));
+                            let message = format_project_create_failure(
+                                &project_name,
+                                &ctx.account,
+                                &combined,
+                            );
+                            if let Some(ref mut w) = ctx.wizard {
+                                w.show_message(&format!(
+                                    "{message}\n\nTry another project ID, press ↑ to return to project selection, or Esc to cancel."
+                                ))
+                                .ok();
+                            }
+                            last_attempt = Some(project_name);
                         }
-                        set_gcloud_project(&project_name)?;
-                        ctx.wiz(2, StepStatus::Done(project_name.clone()));
-                        ctx.project_id = project_name;
-                        Ok(SetupStage::EnableApis)
                     }
                     Some(item) if item.label.starts_with('⌨') => {
                         let project_id = match ctx
@@ -1431,6 +1564,38 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
     Ok(SetupStage::Finish)
 }
 
+fn should_offer_login_prompt(
+    interactive: bool,
+    dry_run: bool,
+    login_requested: bool,
+    stdout_is_terminal: bool,
+) -> bool {
+    interactive && !dry_run && !login_requested && stdout_is_terminal
+}
+
+fn prompt_login_after_setup() -> Result<bool, GwsError> {
+    use std::io::Write;
+
+    let mut input = String::new();
+    loop {
+        eprint!("Run `gws auth login` now? [Y/n]: ");
+        std::io::stderr()
+            .flush()
+            .map_err(|e| GwsError::Validation(format!("Failed to flush prompt: {e}")))?;
+
+        input.clear();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| GwsError::Validation(format!("Failed to read prompt input: {e}")))?;
+
+        match input.trim().to_ascii_lowercase().as_str() {
+            "" | "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => eprintln!("Please answer 'y' or 'n'."),
+        }
+    }
+}
+
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
     let opts = parse_setup_args(args);
@@ -1480,9 +1645,28 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
 
     ctx.finish_wizard();
 
+    let run_login = if ctx.opts.login {
+        true
+    } else if should_offer_login_prompt(
+        ctx.interactive,
+        ctx.dry_run,
+        ctx.opts.login,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    ) {
+        prompt_login_after_setup()?
+    } else {
+        false
+    };
+
+    let message = if run_login {
+        "Setup complete! Starting `gws auth login`..."
+    } else {
+        "Setup complete! Run `gws auth login` to authenticate."
+    };
+
     let output = json!({
         "status": "success",
-        "message": "Setup complete! Run `gws auth login` to authenticate.",
+        "message": message,
         "account": ctx.account,
         "project": ctx.project_id,
         "apis_enabled": ctx.enabled.len(),
@@ -1495,7 +1679,11 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
 
-    eprintln!("\n✅ Setup complete! Run `gws auth login` to authenticate.");
+    eprintln!("\n✅ {message}");
+
+    if run_login {
+        crate::auth_commands::run_login(&[]).await?;
+    }
 
     Ok(())
 }
@@ -1640,6 +1828,7 @@ mod tests {
         let opts = parse_setup_args(&[]);
         assert!(opts.project.is_none());
         assert!(!opts.dry_run);
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1647,6 +1836,7 @@ mod tests {
         let args = vec!["--project".into(), "my-project".into()];
         let opts = parse_setup_args(&args);
         assert_eq!(opts.project.as_deref(), Some("my-project"));
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1654,6 +1844,7 @@ mod tests {
         let args = vec!["--project=my-project".into()];
         let opts = parse_setup_args(&args);
         assert_eq!(opts.project.as_deref(), Some("my-project"));
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1661,6 +1852,7 @@ mod tests {
         let args = vec!["--verbose".into(), "--unknown".into()];
         let opts = parse_setup_args(&args);
         assert!(opts.project.is_none());
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1668,6 +1860,7 @@ mod tests {
         let args = vec!["--dry-run".into()];
         let opts = parse_setup_args(&args);
         assert!(opts.dry_run);
+        assert!(!opts.login);
     }
 
     #[test]
@@ -1676,6 +1869,88 @@ mod tests {
         let opts = parse_setup_args(&args);
         assert!(opts.dry_run);
         assert_eq!(opts.project.as_deref(), Some("p"));
+        assert!(!opts.login);
+    }
+
+    #[test]
+    fn test_parse_setup_args_login_flag() {
+        let args: Vec<String> = vec!["--login".into()];
+        let opts = parse_setup_args(&args);
+        assert!(opts.login);
+        assert!(!opts.dry_run);
+        assert!(opts.project.is_none());
+    }
+
+    #[test]
+    fn test_should_offer_login_prompt_default_interactive() {
+        assert!(should_offer_login_prompt(true, false, false, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_when_login_requested() {
+        assert!(!should_offer_login_prompt(true, false, true, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_non_interactive() {
+        assert!(!should_offer_login_prompt(false, false, false, true));
+    }
+
+    #[test]
+    fn test_should_not_offer_login_prompt_dry_run() {
+        assert!(!should_offer_login_prompt(true, true, false, true));
+    }
+
+    #[test]
+    fn test_format_project_create_failure_tos_guidance() {
+        let msg = format_project_create_failure(
+            "example-project-123456",
+            "user@example.com",
+            "Operation failed: 9: Callers must accept Terms of Service\n type: TOS",
+        );
+
+        assert!(msg.contains("has not accepted Google Cloud Terms of Service"));
+        assert!(msg.contains("gcloud auth list"));
+        assert!(msg.contains("gcloud config get-value account"));
+        assert!(msg.contains("https://console.cloud.google.com/"));
+        assert!(msg.contains("user@example.com"));
+    }
+
+    #[test]
+    fn test_format_project_create_failure_invalid_id_guidance() {
+        let msg = format_project_create_failure(
+            "example-project-123456",
+            "",
+            "ERROR: (gcloud.projects.create) argument PROJECT_ID: Bad value [bad]: Project IDs must be between 6 and 30 characters.",
+        );
+
+        assert!(msg.contains("project ID format is invalid"));
+        assert!(msg.contains("be 6 to 30 characters"));
+        assert!(msg.contains("start with a lowercase letter"));
+        assert!(msg.contains("lowercase letters, digits, or hyphens"));
+    }
+
+    #[test]
+    fn test_format_project_create_failure_in_use_guidance() {
+        let msg = format_project_create_failure(
+            "example-project-123456",
+            "",
+            "Project ID already in use",
+        );
+
+        assert!(msg.contains("ID is already in use"));
+        assert!(msg.contains("different unique project ID"));
+    }
+
+    #[test]
+    fn test_format_project_create_failure_immutable_guidance() {
+        let msg = format_project_create_failure(
+            "example-project-123456",
+            "",
+            "Project IDs are immutable and can be set only during project creation.",
+        );
+
+        assert!(msg.contains("ID is already in use"));
     }
 
     // ── Account selection → gcloud action ───────────────────────
