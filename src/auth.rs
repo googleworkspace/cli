@@ -187,32 +187,33 @@ fn resolve_account(account: Option<&str>) -> anyhow::Result<Option<String>> {
 /// On failure (e.g. offline, can't determine email), prints a warning and
 /// leaves the legacy file in place — the user can manually re-run `gws auth login`.
 async fn migrate_legacy_credentials() {
-    use std::sync::Once;
-    static MIGRATED: Once = Once::new();
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::Mutex;
 
-    let mut did_work = false;
-    MIGRATED.call_once(|| {
-        let legacy_path = credential_store::encrypted_credentials_path();
-        let registry = crate::accounts::load_accounts().ok().flatten();
+    static MIGRATION_LOCK: Mutex<()> = Mutex::const_new(());
+    static MIGRATION_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
-        // Only migrate if legacy file exists AND no accounts registry exists
-        if !legacy_path.exists() || registry.is_some() {
-            return;
-        }
-        did_work = true;
-    });
-
-    if !did_work {
+    // Quick, non-locking check to bail out early if migration has already been handled.
+    if MIGRATION_ATTEMPTED.load(Ordering::Relaxed) {
         return;
     }
 
-    // Do the actual async migration work outside call_once
+    // Acquire a lock to ensure only one task performs the detailed check and migration.
+    let _guard = MIGRATION_LOCK.lock().await;
+
+    // Re-check after acquiring the lock, in case another task just finished.
+    if MIGRATION_ATTEMPTED.load(Ordering::SeqCst) {
+        return;
+    }
+
+    // Mark as attempted before the checks, so we only ever try this logic once per process.
+    MIGRATION_ATTEMPTED.store(true, Ordering::SeqCst);
+
     let legacy_path = credential_store::encrypted_credentials_path();
-    if !legacy_path.exists() {
-        return;
-    }
     let registry = crate::accounts::load_accounts().ok().flatten();
-    if registry.is_some() {
+
+    // Only migrate if legacy file exists AND no accounts registry exists
+    if !legacy_path.exists() || registry.is_some() {
         return;
     }
 
@@ -315,7 +316,16 @@ async fn migrate_legacy_credentials() {
     }
 
     // Rename legacy file to .bak
+    // On Windows, `rename` fails if the destination exists. Remove old backup first.
     let backup_path = legacy_path.with_extension("enc.bak");
+    if backup_path.exists() {
+        if let Err(e) = std::fs::remove_file(&backup_path) {
+            eprintln!(
+                "[gws] Warning: Failed to remove existing backup file '{}': {e}",
+                backup_path.display()
+            );
+        }
+    }
     if let Err(e) = std::fs::rename(&legacy_path, &backup_path) {
         eprintln!("[gws] Warning: Failed to rename legacy credentials: {e}");
         // Still succeeded in migration, just couldn't clean up
