@@ -1,6 +1,6 @@
 {
   "name": "@googleworkspace/cli",
-  "version": "0.4.1",
+  "version": "0.6.3",
   "private": true,
   "description": "Google Workspace CLI — dynamic command surface from Discovery Service",
   "license": "Apache-2.0",

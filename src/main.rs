@@ -71,7 +71,7 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg (skip --account and its value)
+    // Find the first non-flag arg (skip --account/--api-version and their values)
     let mut first_arg: Option<String> = None;
     {
         let mut skip_next = false;
@@ -80,11 +80,11 @@ async fn run() -> Result<(), GwsError> {
                 skip_next = false;
                 continue;
             }
-            if a == "--account" {
+            if a == "--account" || a == "--api-version" {
                 skip_next = true;
                 continue;
             }
-            if a.starts_with("--account=") {
+            if a.starts_with("--account=") || a.starts_with("--api-version=") {
                 continue;
             }
             if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
@@ -165,7 +165,7 @@ async fn run() -> Result<(), GwsError> {
     // Re-parse args (skip argv[0] which is the binary, and argv[1] which is the service name)
     // Filter out --api-version and its value
     // Prepend "gws" as the program name since try_get_matches_from expects argv[0]
-    let sub_args = filter_args_for_subcommand(&args);
+    let sub_args = filter_args_for_subcommand(&args, &first_arg);
 
     let matches = cli.try_get_matches_from(&sub_args).map_err(|e| {
         // If it's a help or version display, print it and exit cleanly
@@ -232,14 +232,26 @@ async fn run() -> Result<(), GwsError> {
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
 
-    // Get scopes from the method
-    let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
+    // Select the best scope for the method. Discovery Documents list scopes as
+    // alternatives (any one grants access). We pick the first (broadest) scope
+    // to avoid restrictive scopes like gmail.metadata that block query parameters.
+    let scopes: Vec<&str> = select_scope(&method.scopes).into_iter().collect();
 
+    // Authenticate: try OAuth (resolve_auth skips auth when custom endpoint is set),
+    // fail with error if credentials exist but are broken.
     let (token, auth_method) = match executor::resolve_auth(&scopes, account.as_deref()).await {
         Ok(auth) => auth,
         Err(e) => {
-            eprintln!("[gws] Warning: Authentication failed, proceeding without credentials: {e}");
-            (None, executor::AuthMethod::None)
+            // If credentials were found but failed (e.g. decryption error, invalid token),
+            // propagate the error instead of silently falling back to unauthenticated.
+            // Only fall back to None if no credentials exist at all.
+            let err_msg = format!("{e:#}");
+            // NB: matches the bail!() message in auth::load_credentials_inner
+            if err_msg.starts_with("No credentials found") {
+                (None, executor::AuthMethod::None)
+            } else {
+                return Err(GwsError::Auth(format!("Authentication failed: {err_msg}")));
+            }
         }
     };
 
@@ -262,6 +274,17 @@ async fn run() -> Result<(), GwsError> {
     )
     .await
     .map(|_| ())
+}
+
+/// Select the best scope from a method's scope list.
+///
+/// Discovery Documents list method scopes as alternatives — any single scope
+/// grants access. The first scope is typically the broadest. Using all scopes
+/// causes issues when restrictive scopes (e.g., `gmail.metadata`) are included,
+/// as the API enforces that scope's restrictions even when broader scopes are
+/// also present.
+pub(crate) fn select_scope(scopes: &[String]) -> Option<&str> {
+    scopes.first().map(|s| s.as_str())
 }
 
 fn parse_pagination_config(matches: &clap::ArgMatches) -> executor::PaginationConfig {
@@ -299,10 +322,11 @@ pub fn parse_service_and_version(
     Ok((api_name, version))
 }
 
-pub fn filter_args_for_subcommand(args: &[String]) -> Vec<String> {
+pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
     let mut sub_args: Vec<String> = vec!["gws".to_string()];
     let mut skip_next = false;
-    for arg in args.iter().skip(2) {
+    let mut service_skipped = false;
+    for arg in args.iter().skip(1) {
         if skip_next {
             skip_next = false;
             continue;
@@ -312,6 +336,10 @@ pub fn filter_args_for_subcommand(args: &[String]) -> Vec<String> {
             continue;
         }
         if arg.starts_with("--account=") || arg.starts_with("--api-version=") {
+            continue;
+        }
+        if !service_skipped && arg == service_name {
+            service_skipped = true;
             continue;
         }
         sub_args.push(arg.clone());
@@ -433,7 +461,20 @@ fn print_usage() {
         "    GOOGLE_WORKSPACE_CLI_ACCOUNT             Default account email for multi-account"
     );
     println!(
+        "    GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER   Email for Domain-Wide Delegation (service accounts)"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
+    );
+    println!(
         "    GOOGLE_WORKSPACE_CLI_API_BASE_URL        Custom API endpoint (e.g., mock server); disables auth"
+    );
+    println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_PROJECT_ID              GCP project ID fallback for helper commands"
     );
     println!();
     println!("COMMUNITY:");
@@ -666,7 +707,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
         assert!(!filtered.contains(&"--account".to_string()));
         assert!(!filtered.contains(&"user@corp.com".to_string()));
@@ -682,7 +723,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 
@@ -698,7 +739,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 
@@ -712,7 +753,7 @@ mod tests {
             "--format".into(),
             "table".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list", "--format", "table"]);
     }
 
@@ -745,7 +786,7 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert!(!filtered.contains(&"--account".to_string()));
         assert!(!filtered.contains(&"work@corp.com".to_string()));
         assert!(filtered.contains(&"files".to_string()));
@@ -765,6 +806,34 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_args_account_before_service() {
+        // --account appears BEFORE the service name (issue #181)
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "--account".into(),
+            "work@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_filter_args_account_equals_before_service() {
+        let args: Vec<String> = vec![
+            "gws".into(),
+            "--account=work@corp.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
     fn test_filter_args_strips_account_equals() {
         let args: Vec<String> = vec![
             "gws".into(),
@@ -773,8 +842,34 @@ mod tests {
             "files".into(),
             "list".into(),
         ];
-        let filtered = filter_args_for_subcommand(&args);
+        let filtered = filter_args_for_subcommand(&args, "drive");
         assert!(!filtered.iter().any(|a| a.contains("account")));
         assert_eq!(filtered, vec!["gws", "files", "list"]);
+    }
+
+    #[test]
+    fn test_select_scope_picks_first() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+        ];
+        assert_eq!(select_scope(&scopes), Some("https://mail.google.com/"));
+    }
+
+    #[test]
+    fn test_select_scope_single() {
+        let scopes = vec!["https://www.googleapis.com/auth/drive".to_string()];
+        assert_eq!(
+            select_scope(&scopes),
+            Some("https://www.googleapis.com/auth/drive")
+        );
+    }
+
+    #[test]
+    fn test_select_scope_empty() {
+        let scopes: Vec<String> = vec![];
+        assert_eq!(select_scope(&scopes), None);
     }
 }

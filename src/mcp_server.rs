@@ -23,11 +23,18 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ToolMode {
+    Full,
+    Compact,
+}
+
 #[derive(Debug, Clone)]
 struct ServerConfig {
     services: Vec<String>,
     workflows: bool,
     _helpers: bool,
+    tool_mode: ToolMode,
 }
 
 fn build_mcp_cli() -> Command {
@@ -54,15 +61,27 @@ fn build_mcp_cli() -> Command {
                 .action(clap::ArgAction::SetTrue)
                 .help("Expose service-specific helpers as tools"),
         )
+        .arg(
+            Arg::new("tool-mode")
+                .long("tool-mode")
+                .value_parser(["compact", "full"])
+                .default_value("full")
+                .help("Tool granularity: 'compact' (1 tool/service + discover) or 'full' (1 tool/method)"),
+        )
 }
 
 pub async fn start(args: &[String]) -> Result<(), GwsError> {
     // Parse args
     let matches = build_mcp_cli().get_matches_from(args);
+    let tool_mode = match matches.get_one::<String>("tool-mode").map(|s| s.as_str()) {
+        Some("compact") => ToolMode::Compact,
+        _ => ToolMode::Full,
+    };
     let mut config = ServerConfig {
         services: Vec::new(),
         workflows: matches.get_flag("workflows"),
         _helpers: matches.get_flag("helpers"),
+        tool_mode,
     };
 
     let svc_str = matches.get_one::<String>("services").unwrap();
@@ -86,6 +105,7 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
             "[gws mcp] Starting with services: {}",
             config.services.join(", ")
         );
+        eprintln!("[gws mcp] Tool mode: {:?}", config.tool_mode);
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
@@ -192,7 +212,18 @@ async fn handle_request(
                 "tools": tools_cache.as_ref().unwrap()
             }))
         }
-        "tools/call" => handle_tools_call(params, config).await,
+        "tools/call" => {
+            // MCP spec: tool execution errors should be returned as successful results
+            // with isError: true, NOT as JSON-RPC protocol errors. Returning JSON-RPC
+            // errors causes clients to show generic "Tool execution failed" with no detail.
+            match handle_tools_call(params, config).await {
+                Ok(val) => Ok(val),
+                Err(e) => Ok(json!({
+                    "content": [{ "type": "text", "text": e.to_string() }],
+                    "isError": true
+                })),
+            }
+        }
         _ => Err(GwsError::Validation(format!(
             "Method not supported: {}",
             method
@@ -201,12 +232,16 @@ async fn handle_request(
 }
 
 async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
+    if config.tool_mode == ToolMode::Compact {
+        return build_compact_tools_list(config).await;
+    }
+
     let mut tools = Vec::new();
 
     // 1. Walk core services
     for svc_name in &config.services {
         let (api_name, version) =
-            crate::parse_service_and_version(std::slice::from_ref(svc_name), svc_name)?;
+            crate::parse_service_and_version(&[svc_name.to_string()], svc_name)?;
         if let Ok(doc) = crate::discovery::fetch_discovery_document(&api_name, &version).await {
             walk_resources(&doc.name, &doc.resources, &mut tools);
         } else {
@@ -214,67 +249,170 @@ async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError>
         }
     }
 
-    // 2. Helpers and Workflows (Not fully mapped yet, but structure is here)
+    // 2. Workflows
     if config.workflows {
-        // Expose workflows
-        tools.push(json!({
-            "name": "workflow_standup_report",
-            "description": "Today's meetings + open tasks as a standup summary",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "format": { "type": "string", "description": "Output format: json, table, yaml, csv" }
-                }
+        append_workflow_tools(&mut tools);
+    }
+
+    Ok(tools)
+}
+
+async fn build_compact_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
+    let mut tools = Vec::new();
+
+    for svc_name in &config.services {
+        let (api_name, version) =
+            crate::parse_service_and_version(&[svc_name.to_string()], svc_name)?;
+
+        // Build description with resource names
+        let description = if let Ok(doc) =
+            crate::discovery::fetch_discovery_document(&api_name, &version).await
+        {
+            let mut resource_names = Vec::new();
+            collect_resource_paths(&doc.resources, "", &mut resource_names);
+            resource_names.sort();
+            let svc_entry = services::SERVICES
+                .iter()
+                .find(|e| e.aliases.contains(&svc_name.as_str()));
+            let desc = svc_entry.map(|e| e.description).unwrap_or("Google API");
+            if resource_names.is_empty() {
+                desc.to_string()
+            } else {
+                let names_str: Vec<&str> = resource_names.iter().map(|s| s.as_str()).collect();
+                format!("{}. Resources: {}", desc, names_str.join(", "))
             }
-        }));
+        } else {
+            eprintln!(
+                "[gws mcp] Warning: Failed to load discovery document for '{}'. Tool will have minimal description.",
+                svc_name
+            );
+            format!("Google Workspace API: {}", svc_name)
+        };
+
         tools.push(json!({
-            "name": "workflow_meeting_prep",
-            "description": "Prepare for your next meeting: agenda, attendees, and linked docs",
+            "name": svc_name,
+            "description": description,
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "calendar": { "type": "string", "description": "Calendar ID (default: primary)" }
-                }
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_email_to_task",
-            "description": "Convert a Gmail message into a Google Tasks entry",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "message_id": { "type": "string", "description": "Gmail message ID" },
-                    "tasklist": { "type": "string", "description": "Task list ID" }
+                    "resource": {
+                        "type": "string",
+                        "description": "Resource name (e.g., files, permissions)"
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "Method name (e.g., list, get, create)"
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "Query or path parameters"
+                    },
+                    "body": {
+                        "type": "object",
+                        "description": "Request body"
+                    },
+                    "upload": {
+                        "type": "string",
+                        "description": "Local file path to upload"
+                    },
+                    "page_all": {
+                        "type": "boolean",
+                        "description": "Auto-paginate, returning all pages"
+                    }
                 },
-                "required": ["message_id"]
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_weekly_digest",
-            "description": "Weekly summary: this week's meetings + unread email count",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "format": { "type": "string", "description": "Output format" }
-                }
-            }
-        }));
-        tools.push(json!({
-            "name": "workflow_file_announce",
-            "description": "Announce a Drive file in a Chat space",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "file_id": { "type": "string", "description": "Drive file ID" },
-                    "space": { "type": "string", "description": "Chat space name" },
-                    "message": { "type": "string", "description": "Custom message" }
-                },
-                "required": ["file_id", "space"]
+                "required": ["resource", "method"]
             }
         }));
     }
 
+    // Add gws_discover meta-tool
+    tools.push(json!({
+        "name": "gws_discover",
+        "description": "Query available resources, methods, and parameter schemas for any enabled service. Call with service only to list resources; add resource to list methods; add method to get full parameter schema.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "Service name (e.g., drive, gmail)"
+                },
+                "resource": {
+                    "type": "string",
+                    "description": "Resource name to list methods for"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Method name to get full parameter schema"
+                }
+            },
+            "required": ["service"]
+        }
+    }));
+
+    // Workflows (same as full mode)
+    if config.workflows {
+        append_workflow_tools(&mut tools);
+    }
+
     Ok(tools)
+}
+
+fn append_workflow_tools(tools: &mut Vec<Value>) {
+    tools.push(json!({
+        "name": "workflow_standup_report",
+        "description": "Today's meetings + open tasks as a standup summary",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": { "type": "string", "description": "Output format: json, table, yaml, csv" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_meeting_prep",
+        "description": "Prepare for your next meeting: agenda, attendees, and linked docs",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar": { "type": "string", "description": "Calendar ID (default: primary)" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_email_to_task",
+        "description": "Convert a Gmail message into a Google Tasks entry",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message_id": { "type": "string", "description": "Gmail message ID" },
+                "tasklist": { "type": "string", "description": "Task list ID" }
+            },
+            "required": ["message_id"]
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_weekly_digest",
+        "description": "Weekly summary: this week's meetings + unread email count",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": { "type": "string", "description": "Output format" }
+            }
+        }
+    }));
+    tools.push(json!({
+        "name": "workflow_file_announce",
+        "description": "Announce a Drive file in a Chat space",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_id": { "type": "string", "description": "Drive file ID" },
+                "space": { "type": "string", "description": "Chat space name" },
+                "message": { "type": "string", "description": "Custom message" }
+            },
+            "required": ["file_id", "space"]
+        }
+    }));
 }
 
 fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools: &mut Vec<Value>) {
@@ -288,27 +426,46 @@ fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools
                 description = format!("Execute the {} Google API method", tool_name);
             }
 
-            // Generate JSON Schema for MCP input
-            let input_schema = json!({
-                "type": "object",
-                "properties": {
-                    "params": {
-                        "type": "object",
-                        "description": "Query or path parameters (e.g. fileId, q, pageSize)"
-                    },
-                    "body": {
+            // Generate JSON Schema for MCP input — only include body/upload
+            // when the Discovery Document method actually supports them.
+            let mut properties = serde_json::Map::new();
+            properties.insert(
+                "params".to_string(),
+                json!({
+                    "type": "object",
+                    "description": "Query or path parameters (e.g. fileId, q, pageSize)"
+                }),
+            );
+            if method.request.is_some() {
+                properties.insert(
+                    "body".to_string(),
+                    json!({
                         "type": "object",
                         "description": "Request body API object"
-                    },
-                    "upload": {
+                    }),
+                );
+            }
+            if method.supports_media_upload {
+                properties.insert(
+                    "upload".to_string(),
+                    json!({
                         "type": "string",
                         "description": "Local file path to upload as media content"
-                    },
-                    "page_all": {
+                    }),
+                );
+            }
+            if method.parameters.contains_key("pageToken") {
+                properties.insert(
+                    "page_all".to_string(),
+                    json!({
                         "type": "boolean",
                         "description": "Auto-paginate, returning all pages"
-                    }
-                }
+                    }),
+                );
+            }
+            let input_schema = json!({
+                "type": "object",
+                "properties": properties
             });
 
             tools.push(json!({
@@ -323,6 +480,179 @@ fn walk_resources(prefix: &str, resources: &HashMap<String, RestResource>, tools
             walk_resources(&new_prefix, &res.resources, tools);
         }
     }
+}
+
+async fn handle_discover(arguments: &Value, config: &ServerConfig) -> Result<Value, GwsError> {
+    let service = arguments
+        .get("service")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| GwsError::Validation("Missing 'service' in gws_discover".to_string()))?;
+
+    if !config.services.contains(&service.to_string()) {
+        return Err(GwsError::Validation(format!(
+            "Service '{}' is not enabled. Enabled: {}",
+            service,
+            config.services.join(", ")
+        )));
+    }
+
+    let (api_name, version) = crate::parse_service_and_version(&[service.to_string()], service)?;
+    let doc = crate::discovery::fetch_discovery_document(&api_name, &version).await?;
+
+    let resource_name = arguments.get("resource").and_then(|v| v.as_str());
+    let method_name = arguments.get("method").and_then(|v| v.as_str());
+
+    let result = match (resource_name, method_name) {
+        // Level 1: list all resources (recursively, with dot-separated paths)
+        (None, _) => {
+            let mut resource_entries = Vec::new();
+            collect_resource_entries(&doc.resources, "", &mut resource_entries);
+            json!({ "service": service, "resources": resource_entries })
+        }
+        // Level 2: list methods and sub-resources for a resource
+        (Some(res), None) => {
+            let mut all_paths = Vec::new();
+            collect_resource_paths(&doc.resources, "", &mut all_paths);
+            let resource = find_resource(&doc.resources, res).ok_or_else(|| {
+                GwsError::Validation(format!(
+                    "Resource '{}' not found in {}. Available: {}",
+                    res,
+                    service,
+                    all_paths.join(", ")
+                ))
+            })?;
+            let methods: Vec<Value> = resource
+                .methods
+                .iter()
+                .map(|(name, m)| {
+                    json!({
+                        "name": name,
+                        "httpMethod": m.http_method,
+                        "description": m.description.as_deref().unwrap_or("")
+                    })
+                })
+                .collect();
+            let sub_resources: Vec<&str> = resource.resources.keys().map(|s| s.as_str()).collect();
+            let mut result = json!({ "service": service, "resource": res, "methods": methods });
+            if !sub_resources.is_empty() {
+                result["subResources"] = json!(sub_resources);
+            }
+            result
+        }
+        // Level 3: full param schema for a method
+        (Some(res), Some(meth)) => {
+            let resource = find_resource(&doc.resources, res).ok_or_else(|| {
+                let mut all_paths = Vec::new();
+                collect_resource_paths(&doc.resources, "", &mut all_paths);
+                GwsError::Validation(format!(
+                    "Resource '{}' not found in {}. Available: {}",
+                    res,
+                    service,
+                    all_paths.join(", ")
+                ))
+            })?;
+            let method = resource.methods.get(meth).ok_or_else(|| {
+                GwsError::Validation(format!(
+                    "Method '{}' not found in {}.{}. Available: {}",
+                    meth,
+                    service,
+                    res,
+                    resource
+                        .methods
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            let params: Vec<Value> = method
+                .parameters
+                .iter()
+                .map(|(name, p)| {
+                    json!({
+                        "name": name,
+                        "type": p.param_type.as_deref().unwrap_or("string"),
+                        "required": p.required,
+                        "location": p.location.as_deref().unwrap_or("query"),
+                        "description": p.description.as_deref().unwrap_or("")
+                    })
+                })
+                .collect();
+            json!({
+                "service": service,
+                "resource": res,
+                "method": meth,
+                "httpMethod": method.http_method,
+                "description": method.description.as_deref().unwrap_or(""),
+                "parameters": params,
+                "supportsMediaUpload": method.supports_media_upload,
+                "supportsMediaDownload": method.supports_media_download
+            })
+        }
+    };
+
+    Ok(json!({
+        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&result).unwrap_or_default() }],
+        "isError": false
+    }))
+}
+
+/// Recursively collect all resource paths (dot-separated) from a resource tree.
+fn collect_resource_paths(
+    resources: &HashMap<String, RestResource>,
+    prefix: &str,
+    out: &mut Vec<String>,
+) {
+    for (name, res) in resources {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", prefix, name)
+        };
+        out.push(path.clone());
+        if !res.resources.is_empty() {
+            collect_resource_paths(&res.resources, &path, out);
+        }
+    }
+}
+
+/// Recursively collect resource entries (name + methods) for discover Level 1.
+fn collect_resource_entries(
+    resources: &HashMap<String, RestResource>,
+    prefix: &str,
+    out: &mut Vec<Value>,
+) {
+    for (name, res) in resources {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", prefix, name)
+        };
+        let methods: Vec<&str> = res.methods.keys().map(|s| s.as_str()).collect();
+        if !methods.is_empty() {
+            out.push(json!({
+                "name": path.clone(),
+                "methods": methods
+            }));
+        }
+        if !res.resources.is_empty() {
+            collect_resource_entries(&res.resources, &path, out);
+        }
+    }
+}
+
+/// Walk into potentially nested resources by dot-separated path (e.g., "projects.locations.templates").
+fn find_resource<'a>(
+    resources: &'a HashMap<String, RestResource>,
+    path: &str,
+) -> Option<&'a RestResource> {
+    let mut segments = path.split('.');
+    let first_segment = segments.next()?;
+    let mut current_res = resources.get(first_segment)?;
+    for segment in segments {
+        current_res = current_res.resources.get(segment)?;
+    }
+    Some(current_res)
 }
 
 async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Value, GwsError> {
@@ -340,6 +670,51 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         )));
     }
 
+    if tool_name == "gws_discover" {
+        return handle_discover(arguments, config).await;
+    }
+
+    // Compact mode: tool_name IS the service alias, resource/method are in arguments
+    if config.tool_mode == ToolMode::Compact {
+        let resource_path = arguments
+            .get("resource")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| GwsError::Validation("Missing 'resource' argument".to_string()))?;
+        let method_name = arguments
+            .get("method")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| GwsError::Validation("Missing 'method' argument".to_string()))?;
+
+        let svc_alias = tool_name;
+        if !config.services.contains(&svc_alias.to_string()) {
+            return Err(GwsError::Validation(format!(
+                "Service '{}' is not enabled in this MCP session",
+                svc_alias
+            )));
+        }
+
+        let (api_name, version) =
+            crate::parse_service_and_version(&[svc_alias.to_string()], svc_alias)?;
+        let doc = crate::discovery::fetch_discovery_document(&api_name, &version).await?;
+
+        let resource = find_resource(&doc.resources, resource_path).ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Resource '{}' not found in {}",
+                resource_path, svc_alias
+            ))
+        })?;
+
+        let method = resource.methods.get(method_name).ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Method '{}' not found in {}.{}",
+                method_name, svc_alias, resource_path
+            ))
+        })?;
+
+        return execute_mcp_method(&doc, method, arguments).await;
+    }
+
+    // Full mode: tool_name encodes service_resource_method (e.g., drive_files_list)
     let parts: Vec<&str> = tool_name.split('_').collect();
     if parts.len() < 3 {
         return Err(GwsError::Validation(format!(
@@ -386,23 +761,36 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         return Err(GwsError::Validation("Resource not found".to_string()));
     };
 
+    execute_mcp_method(&doc, method, arguments).await
+}
+
+async fn execute_mcp_method(
+    doc: &crate::discovery::RestDescription,
+    method: &crate::discovery::RestMethod,
+    arguments: &Value,
+) -> Result<Value, GwsError> {
     let params_json_val = arguments.get("params");
     let params_str = params_json_val
         .map(serde_json::to_string)
         .transpose()
         .map_err(|e| GwsError::Validation(format!("Failed to serialize params: {e}")))?;
 
-    let body_json_val = arguments.get("body");
+    // Drop empty body objects — LLMs commonly send "body": {} even on GET
+    // methods, which causes Google APIs to return 400.
+    let body_json_val = arguments
+        .get("body")
+        .filter(|v| !v.as_object().is_some_and(|m| m.is_empty()));
     let body_str = body_json_val
         .map(serde_json::to_string)
         .transpose()
         .map_err(|e| GwsError::Validation(format!("Failed to serialize body: {e}")))?;
 
-    // Security: validate upload path to prevent arbitrary local file reads.
-    // Only allow paths within the current working directory.
-    let upload_path = if let Some(raw) = arguments.get("upload").and_then(|v| v.as_str()) {
+    let upload_path = if let Some(raw) = arguments
+        .get("upload")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
         let p = std::path::Path::new(raw);
-        // Reject absolute paths and any path that escapes cwd via "../"
         if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
             return Err(GwsError::Validation(format!(
                 "Upload path '{}' is not allowed. Paths must be relative and within the current directory.",
@@ -413,6 +801,7 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     } else {
         None
     };
+
     let page_all = arguments
         .get("page_all")
         .and_then(|v| v.as_bool())
@@ -420,12 +809,13 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
 
     let pagination = crate::executor::PaginationConfig {
         page_all,
-        page_limit: 100, // Safe default for MCP
+        page_limit: 100,
         page_delay_ms: 100,
     };
 
-    let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
-    let (token, auth_method) = match crate::executor::resolve_auth(&scopes, None).await {
+    let scopes: Vec<&str> = crate::select_scope(&method.scopes).into_iter().collect();
+    let account = std::env::var("GOOGLE_WORKSPACE_CLI_ACCOUNT").ok();
+    let (token, auth_method) = match crate::executor::resolve_auth(&scopes, account.as_deref()).await {
         Ok(auth) => auth,
         Err(e) => {
             eprintln!(
@@ -436,7 +826,7 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
     };
 
     let result = crate::executor::execute_method(
-        &doc,
+        doc,
         method,
         params_str.as_deref(),
         body_str.as_deref(),
@@ -449,7 +839,7 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         None,
         &crate::helpers::modelarmor::SanitizeMode::Warn,
         &crate::formatter::OutputFormat::default(),
-        true, // capture_output = true!
+        true,
     )
     .await?;
 
@@ -467,4 +857,296 @@ async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Valu
         ],
         "isError": false
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::{MethodParameter, RestDescription, RestMethod, RestResource};
+    use std::collections::HashMap;
+
+    fn mock_config_compact(services: Vec<&str>) -> ServerConfig {
+        ServerConfig {
+            services: services.into_iter().map(String::from).collect(),
+            workflows: false,
+            _helpers: false,
+            tool_mode: ToolMode::Compact,
+        }
+    }
+
+    fn mock_doc() -> RestDescription {
+        let mut params = HashMap::new();
+        params.insert(
+            "fileId".to_string(),
+            MethodParameter {
+                param_type: Some("string".to_string()),
+                required: true,
+                location: Some("path".to_string()),
+                description: Some("The ID of the file".to_string()),
+                ..Default::default()
+            },
+        );
+        params.insert(
+            "fields".to_string(),
+            MethodParameter {
+                param_type: Some("string".to_string()),
+                required: false,
+                location: Some("query".to_string()),
+                description: Some("Selector specifying fields".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let mut methods = HashMap::new();
+        methods.insert(
+            "list".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "files".to_string(),
+                description: Some("Lists files".to_string()),
+                ..Default::default()
+            },
+        );
+        methods.insert(
+            "get".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "files/{fileId}".to_string(),
+                description: Some("Gets a file".to_string()),
+                parameters: params,
+                ..Default::default()
+            },
+        );
+
+        let mut resources = HashMap::new();
+        resources.insert(
+            "files".to_string(),
+            RestResource {
+                methods,
+                ..Default::default()
+            },
+        );
+
+        RestDescription {
+            name: "drive".to_string(),
+            resources,
+            ..Default::default()
+        }
+    }
+
+    /// Mock a nested doc like Gmail: users -> messages, threads
+    fn mock_nested_doc() -> RestDescription {
+        let mut msg_methods = HashMap::new();
+        msg_methods.insert(
+            "list".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "messages".to_string(),
+                description: Some("Lists messages".to_string()),
+                ..Default::default()
+            },
+        );
+        msg_methods.insert(
+            "get".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "messages/{id}".to_string(),
+                description: Some("Gets a message".to_string()),
+                ..Default::default()
+            },
+        );
+        let messages = RestResource {
+            methods: msg_methods,
+            ..Default::default()
+        };
+
+        let mut thread_methods = HashMap::new();
+        thread_methods.insert(
+            "list".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "threads".to_string(),
+                ..Default::default()
+            },
+        );
+        let threads = RestResource {
+            methods: thread_methods,
+            ..Default::default()
+        };
+
+        let mut user_methods = HashMap::new();
+        user_methods.insert(
+            "getProfile".to_string(),
+            RestMethod {
+                http_method: "GET".to_string(),
+                path: "users/{userId}/profile".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let mut sub_resources = HashMap::new();
+        sub_resources.insert("messages".to_string(), messages);
+        sub_resources.insert("threads".to_string(), threads);
+
+        let users = RestResource {
+            methods: user_methods,
+            resources: sub_resources,
+        };
+
+        let mut resources = HashMap::new();
+        resources.insert("users".to_string(), users);
+
+        RestDescription {
+            name: "gmail".to_string(),
+            resources,
+            ..Default::default()
+        }
+    }
+
+    // -- find_resource tests --
+
+    #[test]
+    fn test_find_resource_top_level() {
+        let doc = mock_doc();
+        let res = find_resource(&doc.resources, "files");
+        assert!(res.is_some());
+        assert!(res.unwrap().methods.contains_key("list"));
+    }
+
+    #[test]
+    fn test_find_resource_not_found() {
+        let doc = mock_doc();
+        assert!(find_resource(&doc.resources, "missing").is_none());
+    }
+
+    #[test]
+    fn test_find_resource_nested_dot_path() {
+        let mut inner_methods = HashMap::new();
+        inner_methods.insert(
+            "create".to_string(),
+            RestMethod {
+                http_method: "POST".to_string(),
+                path: "permissions".to_string(),
+                ..Default::default()
+            },
+        );
+        let inner = RestResource {
+            methods: inner_methods,
+            ..Default::default()
+        };
+        let mut sub_resources = HashMap::new();
+        sub_resources.insert("permissions".to_string(), inner);
+
+        let outer = RestResource {
+            resources: sub_resources,
+            ..Default::default()
+        };
+        let mut top = HashMap::new();
+        top.insert("files".to_string(), outer);
+
+        let res = find_resource(&top, "files.permissions");
+        assert!(res.is_some());
+        assert!(res.unwrap().methods.contains_key("create"));
+    }
+
+    // -- collect_resource_paths tests --
+
+    #[test]
+    fn test_collect_resource_paths_flat() {
+        let doc = mock_doc();
+        let mut paths = Vec::new();
+        collect_resource_paths(&doc.resources, "", &mut paths);
+        paths.sort();
+        assert_eq!(paths, vec!["files"]);
+    }
+
+    #[test]
+    fn test_collect_resource_paths_nested() {
+        let doc = mock_nested_doc();
+        let mut paths = Vec::new();
+        collect_resource_paths(&doc.resources, "", &mut paths);
+        paths.sort();
+        assert!(paths.contains(&"users".to_string()));
+        assert!(paths.contains(&"users.messages".to_string()));
+    }
+
+    // -- collect_resource_entries tests --
+
+    #[test]
+    fn test_collect_resource_entries_includes_nested() {
+        let doc = mock_nested_doc();
+        let mut entries = Vec::new();
+        collect_resource_entries(&doc.resources, "", &mut entries);
+        let names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
+        assert!(names.contains(&"users"));
+        assert!(names.contains(&"users.messages"));
+    }
+
+    // -- handle_discover tests --
+
+    #[tokio::test]
+    async fn test_discover_service_not_enabled() {
+        let config = mock_config_compact(vec!["gmail"]);
+        let args = json!({"service": "drive"});
+
+        let result = handle_discover(&args, &config).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not enabled"));
+    }
+
+    #[tokio::test]
+    async fn test_discover_missing_service_arg() {
+        let config = mock_config_compact(vec!["drive"]);
+        let args = json!({});
+
+        let result = handle_discover(&args, &config).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Missing 'service'"));
+    }
+
+    // -- ToolMode tests --
+
+    #[test]
+    fn test_tool_mode_enum_equality() {
+        assert_eq!(ToolMode::Compact, ToolMode::Compact);
+        assert_ne!(ToolMode::Compact, ToolMode::Full);
+    }
+
+    // -- CLI parsing tests --
+
+    #[test]
+    fn test_cli_tool_mode_default_is_full() {
+        let cli = build_mcp_cli();
+        let matches = cli.get_matches_from(vec!["mcp"]);
+        let mode = matches.get_one::<String>("tool-mode").unwrap();
+        assert_eq!(mode, "full");
+    }
+
+    #[test]
+    fn test_cli_tool_mode_compact() {
+        let cli = build_mcp_cli();
+        let matches = cli.get_matches_from(vec!["mcp", "--tool-mode", "compact"]);
+        let mode = matches.get_one::<String>("tool-mode").unwrap();
+        assert_eq!(mode, "compact");
+    }
+
+    #[test]
+    fn test_cli_tool_mode_invalid_rejected() {
+        let cli = build_mcp_cli();
+        let result = cli.try_get_matches_from(vec!["mcp", "--tool-mode", "invalid"]);
+        assert!(result.is_err());
+    }
+
+    // -- append_workflow_tools tests --
+
+    #[test]
+    fn test_append_workflow_tools_adds_five() {
+        let mut tools = Vec::new();
+        append_workflow_tools(&mut tools);
+        assert_eq!(tools.len(), 5);
+        assert_eq!(tools[0]["name"], "workflow_standup_report");
+        assert_eq!(tools[4]["name"], "workflow_file_announce");
+    }
 }

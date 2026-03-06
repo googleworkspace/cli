@@ -184,7 +184,10 @@ impl PickerState {
                     // Only deselect the counterpart when we are SELECTING an item
                     if current_selected {
                         let counterpart_to_deselect = if current_label.ends_with(".readonly") {
-                            current_label.strip_suffix(".readonly").unwrap().to_string()
+                            current_label
+                                .strip_suffix(".readonly")
+                                .unwrap_or(&current_label)
+                                .to_string()
                         } else {
                             format!("{}.readonly", current_label)
                         };
@@ -405,11 +408,7 @@ fn run_picker_loop(
                 .collect();
 
             let list = List::new(items)
-                .highlight_style(
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
                 .highlight_symbol("▸ ");
 
             frame.render_stateful_widget(list, chunks[1], &mut state.list_state);
@@ -450,6 +449,15 @@ fn run_picker_loop(
             }
         }
     }
+}
+
+/// Drains any queued crossterm events to prevent stale keypresses from leaking
+/// between TUI interactions.
+fn drain_pending_events() -> std::io::Result<()> {
+    while crossterm::event::poll(std::time::Duration::ZERO)? {
+        let _ = event::read()?;
+    }
+    Ok(())
 }
 
 // ── Setup Wizard (unified TUI session) ──────────────────────────
@@ -540,6 +548,7 @@ impl SetupWizard {
         multiselect: bool,
     ) -> std::io::Result<PickerResult> {
         let mut picker = PickerState::new(title, help_text, items, multiselect);
+        drain_pending_events()?;
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
@@ -602,6 +611,7 @@ impl SetupWizard {
         initial: Option<&str>,
     ) -> std::io::Result<InputResult> {
         let mut input = InputState::new(title, help_text, initial);
+        drain_pending_events()?;
         loop {
             let steps_snapshot = self.steps.clone();
             let msg = self.message.clone();
@@ -806,11 +816,7 @@ impl SetupWizard {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray)),
             )
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
             .highlight_symbol("▸ ");
 
         frame.render_stateful_widget(list, area, &mut picker.list_state);

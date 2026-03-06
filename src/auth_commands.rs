@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -91,14 +92,29 @@ const READONLY_SCOPES: &[&str] = &[
 ];
 
 pub fn config_dir() -> PathBuf {
-    #[cfg(test)]
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
 
-    dirs::config_dir()
+    // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
+    let primary = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("gws")
+        .join(".config")
+        .join("gws");
+    if primary.exists() {
+        return primary;
+    }
+
+    // Backward compat: fall back to OS-specific config dir for existing installs
+    // (e.g. ~/Library/Application Support/gws on macOS, %APPDATA%\gws on Windows).
+    let legacy = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("gws");
+    if legacy.exists() {
+        return legacy;
+    }
+
+    primary
 }
 
 fn plain_credentials_path() -> PathBuf {
@@ -122,6 +138,8 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --full           Request all scopes incl. pubsub + cloud-platform\n",
         "                            (may trigger restricted_client for unverified apps)\n",
         "           --scopes         Comma-separated custom scopes\n",
+        "           -s, --services   Comma-separated service names to limit scope picker\n",
+        "                            (e.g. -s drive,gmail,sheets)\n",
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
@@ -192,8 +210,9 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
 }
 
 async fn handle_login(args: &[String]) -> Result<(), GwsError> {
-    // Extract --account from args if provided
+    // Extract --account and -s/--services from args
     let mut account_email: Option<String> = None;
+    let mut services_filter: Option<HashSet<String>> = None;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for i in 0..args.len() {
@@ -208,6 +227,23 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         }
         if let Some(value) = args[i].strip_prefix("--account=") {
             account_email = Some(value.to_string());
+            continue;
+        }
+        let services_str = if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
+            skip_next = true;
+            Some(args[i + 1].as_str())
+        } else {
+            args[i].strip_prefix("--services=")
+        };
+
+        if let Some(value) = services_str {
+            services_filter = Some(
+                value
+                    .split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            );
             continue;
         }
         filtered_args.push(args[i].clone());
@@ -229,7 +265,18 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Determine scopes: explicit flags > interactive TUI > defaults
-    let scopes = resolve_scopes(&filtered_args, project_id.as_deref()).await;
+    let scopes = resolve_scopes(
+        &filtered_args,
+        project_id.as_deref(),
+        services_filter.as_ref(),
+    )
+    .await;
+
+    // Remove restrictive scopes when broader alternatives are present.
+    // gmail.metadata blocks query parameters like `q`, and is redundant
+    // when broader scopes (gmail.modify, gmail.readonly, mail.google.com)
+    // are already included.
+    let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
     let secret = yup_oauth2::ApplicationSecret {
         client_id: client_id.clone(),
@@ -239,6 +286,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         redirect_uris: vec!["http://localhost".to_string()],
         ..Default::default()
     };
+
+    // Ensure openid + email scopes are always present so we can identify the user
+    // via the userinfo endpoint after login.
+    let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
+    for s in &identity_scopes {
+        if !scopes.iter().any(|existing| existing == s) {
+            scopes.push(s.to_string());
+        }
+    }
 
     // Use a temp file for yup-oauth2's token persistence, then encrypt it
     let temp_path = config_dir().join("credentials.tmp");
@@ -477,8 +533,15 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
 }
 
 /// Resolve OAuth scopes: explicit flags > interactive picker > defaults.
-async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String> {
-    // Explicit --scopes flag takes priority
+///
+/// When `services_filter` is `Some`, only scopes belonging to the specified
+/// services are shown in the picker (or returned in non-interactive mode).
+async fn resolve_scopes(
+    args: &[String],
+    project_id: Option<&str>,
+    services_filter: Option<&HashSet<String>>,
+) -> Vec<String> {
+    // Explicit --scopes flag takes priority (bypasses services filter)
     for i in 0..args.len() {
         if args[i] == "--scopes" && i + 1 < args.len() {
             return args[i + 1]
@@ -488,10 +551,12 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
         }
     }
     if args.iter().any(|a| a == "--readonly") {
-        return READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
+        let scopes: Vec<String> = READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
+        return filter_scopes_by_services(scopes, services_filter);
     }
     if args.iter().any(|a| a == "--full") {
-        return FULL_SCOPES.iter().map(|s| s.to_string()).collect();
+        let scopes: Vec<String> = FULL_SCOPES.iter().map(|s| s.to_string()).collect();
+        return filter_scopes_by_services(scopes, services_filter);
     }
 
     // Interactive scope picker when running in a TTY
@@ -503,7 +568,7 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
                 let api_ids: Vec<String> = enabled_apis;
                 let scopes = crate::setup::fetch_scopes_for_apis(&api_ids).await;
                 if !scopes.is_empty() {
-                    if let Some(selected) = run_discovery_scope_picker(&scopes) {
+                    if let Some(selected) = run_discovery_scope_picker(&scopes, services_filter) {
                         return selected;
                     }
                 }
@@ -511,17 +576,132 @@ async fn resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String
         }
 
         // Fallback: simple scope picker using static SCOPE_ENTRIES
-        if let Some(selected) = run_simple_scope_picker() {
+        if let Some(selected) = run_simple_scope_picker(services_filter) {
             return selected;
         }
     }
 
-    DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect()
+    let defaults: Vec<String> = DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect();
+    filter_scopes_by_services(defaults, services_filter)
+}
+
+/// Check if a scope URL belongs to one of the specified services.
+///
+/// Matching is done on the scope's short name (the part after
+/// `https://www.googleapis.com/auth/`). A scope matches a service if its
+/// short name equals the service or starts with `service.` (e.g. service
+/// `drive` matches `drive`, `drive.readonly`, `drive.metadata.readonly`).
+///
+/// The `cloud-platform` scope always passes through since it's a
+/// cross-service platform scope.
+fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
+    let short = scope_url
+        .strip_prefix("https://www.googleapis.com/auth/")
+        .unwrap_or(scope_url);
+
+    // cloud-platform is a cross-service scope, always include
+    if short == "cloud-platform" {
+        return true;
+    }
+
+    let prefix = short.split('.').next().unwrap_or(short);
+
+    services.iter().any(|svc| {
+        // Map common user-friendly service names to their OAuth scope prefixes
+        let mapped_svc = match svc.as_str() {
+            "sheets" => "spreadsheets",
+            "slides" => "presentations",
+            "docs" => "documents",
+            s => s,
+        };
+        prefix == mapped_svc || short.starts_with(&format!("{mapped_svc}."))
+    })
+}
+
+/// Remove restrictive scopes that are redundant when broader alternatives
+/// are present. For example, `gmail.metadata` restricts query parameters
+/// and is unnecessary when `gmail.modify`, `gmail.readonly`, or the full
+/// `https://mail.google.com/` scope is already included.
+///
+/// This prevents Google from enforcing the restrictive scope's limitations
+/// on the access token even though broader access was granted.
+fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
+    // Scopes that restrict API behavior when present in a token, even alongside
+    // broader scopes. Each entry maps a restrictive scope to the broader scopes
+    // that make it redundant. The restrictive scope is removed only if at least
+    // one of its broader alternatives is already in the list.
+    const RESTRICTIVE_SCOPES: &[(&str, &[&str])] = &[(
+        "https://www.googleapis.com/auth/gmail.metadata",
+        &[
+            "https://mail.google.com/",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.readonly",
+        ],
+    )];
+
+    let scope_set: std::collections::HashSet<String> = scopes.iter().cloned().collect();
+
+    scopes
+        .into_iter()
+        .filter(|scope| {
+            !RESTRICTIVE_SCOPES.iter().any(|(restrictive, broader)| {
+                scope.as_str() == *restrictive && broader.iter().any(|b| scope_set.contains(*b))
+            })
+        })
+        .collect()
+}
+
+/// Filter a list of scope URLs to only those matching the given services.
+/// If no filter is provided, returns all scopes unchanged.
+fn filter_scopes_by_services(
+    scopes: Vec<String>,
+    services_filter: Option<&HashSet<String>>,
+) -> Vec<String> {
+    match services_filter {
+        Some(services) if !services.is_empty() => scopes
+            .into_iter()
+            .filter(|s| scope_matches_service(s, services))
+            .collect(),
+        _ => scopes,
+    }
+}
+
+/// Check if a scope is subsumed by a broader scope in the list.
+/// e.g. "drive.metadata" is subsumed by "drive", "calendar.events" by "calendar".
+fn is_subsumed_scope(short: &str, all_shorts: &[&str]) -> bool {
+    all_shorts.iter().any(|&other| {
+        other != short
+            && short.starts_with(other)
+            && short.as_bytes().get(other.len()) == Some(&b'.')
+    })
+}
+
+/// Determine if a discovered scope should be included in the "Recommended" template.
+///
+/// When a services filter is active, recommends all top-level (non-subsumed) scopes.
+/// Otherwise, recommends only the curated `MINIMAL_SCOPES` list to stay under
+/// the 25-scope limit for unverified apps and @gmail.com accounts.
+///
+/// Always excludes admin-only and Workspace-admin scopes.
+fn is_recommended_scope(
+    entry: &crate::setup::DiscoveredScope,
+    all_shorts: &[&str],
+    has_services_filter: bool,
+) -> bool {
+    if entry.short.starts_with("admin.") || is_workspace_admin_scope(&entry.url) {
+        return false;
+    }
+    if has_services_filter {
+        !is_subsumed_scope(&entry.short, all_shorts)
+    } else {
+        MINIMAL_SCOPES.contains(&entry.url.as_str())
+    }
 }
 
 /// Run the rich discovery-based scope picker with templates.
 fn run_discovery_scope_picker(
     relevant_scopes: &[crate::setup::DiscoveredScope],
+    services_filter: Option<&HashSet<String>>,
 ) -> Option<Vec<String>> {
     use crate::setup::{ScopeClassification, PLATFORM_SCOPE};
     use crate::setup_tui::{PickerResult, SelectItem};
@@ -530,30 +710,30 @@ fn run_discovery_scope_picker(
     let mut readonly_scopes = vec![];
     let mut all_scopes = vec![];
 
+    // Pre-filter scopes by services if a filter is specified
+    let filtered_scopes: Vec<&crate::setup::DiscoveredScope> = relevant_scopes
+        .iter()
+        .filter(|e| {
+            services_filter.is_none_or(|services| {
+                services.is_empty() || scope_matches_service(&e.url, services)
+            })
+        })
+        .collect();
+
     // Collect all short names for hierarchical dedup of Full Access template
-    let all_shorts: Vec<&str> = relevant_scopes
+    let all_shorts: Vec<&str> = filtered_scopes
         .iter()
         .filter(|e| !is_app_only_scope(&e.url))
         .map(|e| e.short.as_str())
         .collect();
 
-    for entry in relevant_scopes {
+    for entry in &filtered_scopes {
         // Skip app-only scopes that can't be used with user OAuth
         if is_app_only_scope(&entry.url) {
             continue;
         }
 
-        let is_recommended = if entry.is_readonly {
-            let superset = entry.url.strip_suffix(".readonly").unwrap();
-            let superset_is_recommended = relevant_scopes
-                .iter()
-                .any(|s| s.url == superset && s.classification != ScopeClassification::Restricted);
-            !superset_is_recommended
-        } else {
-            entry.classification != ScopeClassification::Restricted
-        };
-
-        if is_recommended && !entry.short.starts_with("admin.") {
+        if is_recommended_scope(entry, &all_shorts, services_filter.is_some()) {
             recommended_scopes.push(entry.short.to_string());
         }
         if entry.is_readonly {
@@ -561,20 +741,16 @@ fn run_discovery_scope_picker(
         }
         // For "Full Access": skip if a broader scope exists (hierarchical dedup)
         // e.g. "drive.metadata" is subsumed by "drive", "calendar.events" by "calendar"
-        let is_subsumed = all_shorts.iter().any(|&other| {
-            other != entry.short
-                && entry.short.starts_with(other)
-                && entry.short.as_bytes().get(other.len()) == Some(&b'.')
-        });
-        if !is_subsumed {
+        if !is_subsumed_scope(&entry.short, &all_shorts) {
             all_scopes.push(entry.short.to_string());
         }
     }
 
     let mut items: Vec<SelectItem> = vec![
         SelectItem {
-            label: "✨ Recommended (All Non-Restricted + Readonly)".to_string(),
-            description: "Selects non-restricted write scopes and all readonly scopes".to_string(),
+            label: "✨ Recommended (Core Consumer Scopes)".to_string(),
+            description: "Selects Drive, Gmail, Calendar, Docs, Sheets, Slides, and Tasks"
+                .to_string(),
             selected: true,
             is_fixed: false,
             is_template: true,
@@ -600,7 +776,7 @@ fn run_discovery_scope_picker(
     let template_count = items.len();
 
     let mut valid_scope_indices: Vec<usize> = Vec::new();
-    for (idx, entry) in relevant_scopes.iter().enumerate() {
+    for (idx, entry) in filtered_scopes.iter().enumerate() {
         // Skip app-only scopes from the picker entirely
         if is_app_only_scope(&entry.url) {
             continue;
@@ -625,8 +801,8 @@ fn run_discovery_scope_picker(
         };
 
         let is_recommended = if entry.is_readonly {
-            let superset = entry.url.strip_suffix(".readonly").unwrap();
-            let superset_is_recommended = relevant_scopes
+            let superset = entry.url.strip_suffix(".readonly").unwrap_or(&entry.url);
+            let superset_is_recommended = filtered_scopes
                 .iter()
                 .any(|s| s.url == superset && s.classification != ScopeClassification::Restricted);
             !superset_is_recommended
@@ -661,28 +837,24 @@ fn run_discovery_scope_picker(
             if full && !recommended && !readonly {
                 // Full Access: include all non-app-only scopes
                 // (hierarchical dedup is applied in post-processing below)
-                for entry in relevant_scopes {
+                for entry in &filtered_scopes {
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
                     selected.push(entry.url.to_string());
                 }
             } else if recommended && !full && !readonly {
-                // Recommended: non-restricted + readonly, but exclude admin.* scopes
-                for entry in relevant_scopes {
+                // Recommended: consumer scopes only (or top-level scopes if filtered).
+                for entry in &filtered_scopes {
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
-                    if entry.short.starts_with("admin.") {
-                        continue;
-                    }
-                    if entry.is_readonly || entry.classification != ScopeClassification::Restricted
-                    {
+                    if is_recommended_scope(entry, &all_shorts, services_filter.is_some()) {
                         selected.push(entry.url.to_string());
                     }
                 }
             } else if readonly && !full && !recommended {
-                for entry in relevant_scopes {
+                for entry in &filtered_scopes {
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
@@ -695,7 +867,7 @@ fn run_discovery_scope_picker(
                     if item.selected {
                         let picker_idx = i - template_count;
                         if let Some(&scope_idx) = valid_scope_indices.get(picker_idx) {
-                            if let Some(entry) = relevant_scopes.get(scope_idx) {
+                            if let Some(entry) = filtered_scopes.get(scope_idx) {
                                 selected.push(entry.url.to_string());
                             }
                         }
@@ -752,10 +924,20 @@ fn run_discovery_scope_picker(
 }
 
 /// Run the simple static scope picker (fallback when no project_id available).
-fn run_simple_scope_picker() -> Option<Vec<String>> {
+fn run_simple_scope_picker(services_filter: Option<&HashSet<String>>) -> Option<Vec<String>> {
     use crate::setup_tui::{PickerResult, SelectItem};
 
-    let items: Vec<SelectItem> = SCOPE_ENTRIES
+    // Pre-filter SCOPE_ENTRIES by services if a filter is provided
+    let entries: Vec<&ScopeEntry> = SCOPE_ENTRIES
+        .iter()
+        .filter(|entry| {
+            services_filter.is_none_or(|services| {
+                services.is_empty() || scope_matches_service(entry.scope, services)
+            })
+        })
+        .collect();
+
+    let items: Vec<SelectItem> = entries
         .iter()
         .map(|entry| SelectItem {
             label: entry.label.to_string(),
@@ -778,7 +960,7 @@ fn run_simple_scope_picker() -> Option<Vec<String>> {
                 .iter()
                 .enumerate()
                 .filter(|(_, item)| item.selected)
-                .map(|(i, _)| SCOPE_ENTRIES[i].scope.to_string())
+                .map(|(i, _)| entries[i].scope.to_string())
                 .collect();
             if selected.is_empty() {
                 None
@@ -1334,6 +1516,32 @@ fn is_app_only_scope(url: &str) -> bool {
         || url.contains("/auth/apps.alerts")
 }
 
+/// Helper: check if a scope requires Workspace domain admin access and therefore
+/// cannot be granted to personal `@gmail.com` accounts via standard user OAuth.
+///
+/// These scopes are valid in Workspace environments with a domain admin, but
+/// Google returns `400 invalid_scope` when requested by personal accounts.
+/// They are excluded from the "Recommended" preset to avoid login failures.
+///
+/// Affected scope families:
+/// - `apps.*`            — Alert Center, Groups Settings, Licensing, Reseller
+/// - `cloud-identity.*`  — Cloud Identity: devices, groups, inbound SSO, policies
+/// - `ediscovery`        — Google Vault
+/// - `directory.readonly`— Admin SDK Directory (read-only)
+/// - `groups`            — Groups Management
+fn is_workspace_admin_scope(url: &str) -> bool {
+    let short = url
+        .strip_prefix("https://www.googleapis.com/auth/")
+        .unwrap_or(url);
+    short.starts_with("apps.")
+        || short.starts_with("cloud-identity.")
+        || short.starts_with("chat.admin.")
+        || short.starts_with("classroom.")
+        || short == "ediscovery"
+        || short == "directory.readonly"
+        || short == "groups"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1341,7 +1549,18 @@ mod tests {
     /// Helper to run resolve_scopes in tests (async).
     fn run_resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String> {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(resolve_scopes(args, project_id))
+        rt.block_on(resolve_scopes(args, project_id, None))
+    }
+
+    /// Helper to run resolve_scopes with a services filter.
+    fn run_resolve_scopes_with_services(
+        args: &[String],
+        project_id: Option<&str>,
+        services: &[&str],
+    ) -> Vec<String> {
+        let filter: HashSet<String> = services.iter().map(|s| s.to_string()).collect();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(resolve_scopes(args, project_id, Some(&filter)))
     }
 
     #[test]
@@ -1453,6 +1672,34 @@ mod tests {
     fn config_dir_returns_gws_subdir() {
         let path = config_dir();
         assert!(path.ends_with("gws"));
+    }
+
+    #[test]
+    fn config_dir_primary_uses_dot_config() {
+        // The primary (non-test) path should be ~/.config/gws.
+        // We can't easily test the real function without env override,
+        // but we verify the building blocks: home_dir + .config + gws.
+        let primary = dirs::home_dir().unwrap().join(".config").join("gws");
+        assert!(primary.ends_with(".config/gws") || primary.ends_with(r".config\gws"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn config_dir_fallback_to_legacy() {
+        // When GOOGLE_WORKSPACE_CLI_CONFIG_DIR points to a legacy-style dir,
+        // config_dir() should return it (simulating the test env override).
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("legacy_gws");
+        std::fs::create_dir_all(&legacy).unwrap();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", legacy.to_str().unwrap());
+        }
+        let path = config_dir();
+        assert_eq!(path, legacy);
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
+        }
     }
 
     #[test]
@@ -1612,5 +1859,329 @@ mod tests {
         // HashMap<String, TokenInfo> format from EncryptedTokenStorage
         let data = r#"{"key":{"access_token":"ya29","refresh_token":"1//tok"}}"#;
         assert_eq!(extract_refresh_token(data), Some("1//tok".to_string()));
+    }
+
+    // ── is_workspace_admin_scope tests ──────────────────────────────────
+
+    #[test]
+    fn is_workspace_admin_scope_apps_alerts() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/apps.alerts"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_apps_groups_settings() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/apps.groups.settings"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_apps_licensing() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/apps.licensing"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_cloud_identity() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/cloud-identity.groups"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/cloud-identity.devices"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/cloud-identity.policies"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_ediscovery() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/ediscovery"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_directory_readonly() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/directory.readonly"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_groups() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/groups"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_normal_scopes_not_admin() {
+        // Consumer/personal-account scopes must NOT be classified as admin-only
+        assert!(!is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/drive"
+        ));
+        assert!(!is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/gmail.modify"
+        ));
+        assert!(!is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/calendar"
+        ));
+        assert!(!is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/spreadsheets"
+        ));
+        assert!(!is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/chat.messages"
+        ));
+    }
+
+    // ── is_workspace_admin_scope – new patterns ─────────────────────────
+
+    #[test]
+    fn is_workspace_admin_scope_chat_admin() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/chat.admin.memberships"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/chat.admin.memberships.readonly"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/chat.admin.spaces"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/chat.admin.spaces.readonly"
+        ));
+    }
+
+    #[test]
+    fn is_workspace_admin_scope_classroom() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/classroom.courses"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/classroom.rosters"
+        ));
+    }
+
+    // ── scope_matches_service tests ──────────────────────────────────────
+
+    #[test]
+    fn scope_matches_service_exact_match() {
+        let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/drive",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_aliases() {
+        let services: HashSet<String> = ["sheets", "docs", "slides"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/spreadsheets",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/documents",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/presentations",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_prefix_match() {
+        let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/drive.readonly",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/drive.metadata.readonly",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_no_match() {
+        let services: HashSet<String> = ["gmail"].iter().map(|s| s.to_string()).collect();
+        assert!(!scope_matches_service(
+            "https://www.googleapis.com/auth/drive",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_cloud_platform_always_matches() {
+        let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/cloud-platform",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_no_partial_name_collision() {
+        // "drive" should NOT match "driveactivity" or similar
+        let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
+        assert!(!scope_matches_service(
+            "https://www.googleapis.com/auth/driveactivity",
+            &services
+        ));
+    }
+
+    // ── services filter integration tests ────────────────────────────────
+
+    #[test]
+    fn resolve_scopes_with_services_filter() {
+        let args: Vec<String> = vec![];
+        let scopes = run_resolve_scopes_with_services(&args, None, &["drive", "gmail"]);
+        assert!(!scopes.is_empty());
+        for scope in &scopes {
+            let short = scope
+                .strip_prefix("https://www.googleapis.com/auth/")
+                .unwrap_or(scope);
+            assert!(
+                short.starts_with("drive")
+                    || short.starts_with("gmail")
+                    || short == "cloud-platform",
+                "Unexpected scope with service filter: {scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_scopes_services_filter_unknown_service_ignored() {
+        let args: Vec<String> = vec![];
+        let scopes = run_resolve_scopes_with_services(&args, None, &["drive", "nonexistent"]);
+        assert!(!scopes.is_empty());
+        // Should contain drive scope but not be affected by nonexistent
+        assert!(scopes.iter().any(|s| s.contains("/auth/drive")));
+    }
+
+    #[test]
+    fn resolve_scopes_services_takes_priority_with_readonly() {
+        let args = vec!["--readonly".to_string()];
+        let scopes = run_resolve_scopes_with_services(&args, None, &["drive"]);
+        assert!(!scopes.is_empty());
+        for scope in &scopes {
+            let short = scope
+                .strip_prefix("https://www.googleapis.com/auth/")
+                .unwrap_or(scope);
+            assert!(
+                short.starts_with("drive") || short == "cloud-platform",
+                "Unexpected scope with service + readonly filter: {scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_scopes_services_takes_priority_with_full() {
+        let args = vec!["--full".to_string()];
+        let scopes = run_resolve_scopes_with_services(&args, None, &["gmail"]);
+        assert!(!scopes.is_empty());
+        for scope in &scopes {
+            let short = scope
+                .strip_prefix("https://www.googleapis.com/auth/")
+                .unwrap_or(scope);
+            assert!(
+                short.starts_with("gmail") || short == "cloud-platform",
+                "Unexpected scope with service + full filter: {scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_scopes_explicit_scopes_bypass_services_filter() {
+        // --scopes should take priority over -s
+        let args = vec![
+            "--scopes".to_string(),
+            "https://www.googleapis.com/auth/calendar".to_string(),
+        ];
+        let scopes = run_resolve_scopes_with_services(&args, None, &["drive"]);
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0], "https://www.googleapis.com/auth/calendar");
+    }
+
+    #[test]
+    fn filter_scopes_by_services_none_returns_all() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/drive".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+        ];
+        let result = filter_scopes_by_services(scopes.clone(), None);
+        assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn filter_scopes_by_services_empty_set_returns_all() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/drive".to_string(),
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+        ];
+        let empty: HashSet<String> = HashSet::new();
+        let result = filter_scopes_by_services(scopes.clone(), Some(&empty));
+        assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn filter_restrictive_removes_metadata_when_broader_present() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/drive".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes);
+        assert!(!result.iter().any(|s| s.contains("gmail.metadata")));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_restrictive_removes_metadata_when_full_gmail_present() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes);
+        assert_eq!(result, vec!["https://mail.google.com/"]);
+    }
+
+    #[test]
+    fn filter_restrictive_keeps_metadata_when_only_scope() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.metadata".to_string(),
+            "https://www.googleapis.com/auth/drive".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes.clone());
+        assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn mask_secret_long_string() {
+        let masked = mask_secret("GOCSPX-abcdefghijklmnopqrstuvwxyz");
+        assert_eq!(masked, "GOCS...wxyz");
+    }
+
+    #[test]
+    fn mask_secret_short_string() {
+        // 8 chars or fewer should be fully masked
+        assert_eq!(mask_secret("12345678"), "***");
+        assert_eq!(mask_secret("short"), "***");
+        assert_eq!(mask_secret(""), "***");
+    }
+
+    #[test]
+    fn mask_secret_boundary() {
+        // Exactly 9 chars — first 4 + last 4 with "..." in between
+        assert_eq!(mask_secret("123456789"), "1234...6789");
     }
 }

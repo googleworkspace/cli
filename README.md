@@ -23,34 +23,42 @@ npm install -g @googleworkspace/cli
 > [!IMPORTANT]
 > This project is under active development. Expect breaking changes as we march toward v1.0.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/googleworkspace/cli/refs/heads/main/docs/demo.gif" alt="Demo">
-</p>
-
 ## Contents
 
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Why gws?](#why-gws)
 - [Authentication](#authentication)
 - [AI Agent Skills](#ai-agent-skills)
 - [MCP Server](#mcp-server)
 - [Advanced Usage](#advanced-usage)
+- [Environment Variables](#environment-variables)
 - [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
 - [Development](#development)
 
-## Quick Start
+## Prerequisites
+
+- **Node.js 18+** — for `npm install` (or download a pre-built binary from [GitHub Releases](https://github.com/googleworkspace/cli/releases))
+- **A Google Cloud project** — required for OAuth credentials. You can create one via the [Google Cloud Console](https://console.cloud.google.com/) or with the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) or with the `gws auth setup` command.
+- **A Google account** with access to Google Workspace
+
+## Installation
 
 ```bash
 npm install -g @googleworkspace/cli
-
-gws auth setup     # walks you through Google Cloud project config + OAuth login
-gws drive files list --params '{"pageSize": 5}'
 ```
+
+> The npm package bundles pre-built native binaries for your OS and architecture.
+> No Rust toolchain required.
+
+Pre-built binaries are also available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
 
 Or build from source:
 
 ```bash
-cargo install --path .
+cargo install --git https://github.com/googleworkspace/cli --locked
 ```
 
 A Nix flake is also available at `github:googleworkspace/cli`
@@ -59,12 +67,17 @@ A Nix flake is also available at `github:googleworkspace/cli`
 nix run github:googleworkspace/cli
 ```
 
+## Quick Start
 
-
+```bash
+gws auth setup     # walks you through Google Cloud project config
+gws auth login     # subsequent OAuth login
+gws drive files list --params '{"pageSize": 5}'
+```
 
 ## Why gws?
 
-**For humans** — stop writing `curl` calls against REST docs. `gws` gives you tab‑completion, `--help` on every resource, `--dry-run` to preview requests, and auto‑pagination.
+**For humans** — stop writing `curl` calls against REST docs. `gws` gives you `--help` on every resource, `--dry-run` to preview requests, and auto‑pagination.
 
 **For AI agents** — every response is structured JSON. Pair it with the included agent skills and your LLM can manage Workspace without custom tooling.
 
@@ -92,30 +105,48 @@ gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].n
 
 The CLI supports multiple auth workflows so it works on your laptop, in CI, and on a server.
 
+### Which setup should I use?
+
+| I have… | Use |
+|---|---|
+| `gcloud` installed and authenticated | [`gws auth setup`](#interactive-local-desktop) (fastest) |
+| A GCP project but no `gcloud` | [Manual OAuth setup](#manual-oauth-setup-google-cloud-console) |
+| An existing OAuth access token | [`GOOGLE_WORKSPACE_CLI_TOKEN`](#pre-obtained-access-token) |
+| Existing Credentials | [`GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`](#service-account-server-to-server) |
+
 ### Interactive (local desktop)
 
 Credentials are encrypted at rest (AES-256-GCM) with the key stored in your OS keyring.
 
 ```bash
 gws auth setup       # one-time: creates a Cloud project, enables APIs, logs you in
-gws auth login       # subsequent logins
+gws auth login       # subsequent scope selection and login
 ```
 
-> Requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install) to be installed and authenticated.
+> `gws auth setup` requires the [`gcloud` CLI](https://cloud.google.com/sdk/docs/install). If you don't have `gcloud`, use the [manual setup](#manual-oauth-setup-google-cloud-console) below instead.
+
+> [!WARNING]
+> **Scope limits in testing mode:** If your OAuth app is unverified (testing mode),
+> Google limits consent to ~25 scopes. The `recommended` scope preset includes 85+
+> scopes and **will fail** for unverified apps (especially for `@gmail.com` accounts).
+> Choose individual services instead to filter the scope picker:
+> ```bash
+> gws auth login -s drive,gmail,sheets
+> ```
 
 ### Multiple accounts
 
 You can authenticate with more than one Google account and switch between them:
 
 ```bash
-gws auth login --account work@corp.com    # login and register an account
+gws auth login --account work@corp.com  # login and register an account
 gws auth login --account personal@gmail.com
 
-gws auth list                              # list registered accounts
-gws auth default work@corp.com             # set the default
+gws auth list  # list registered accounts
+gws auth default work@corp.com. # set the default
 
 gws --account personal@gmail.com drive files list  # one-off override
-export GOOGLE_WORKSPACE_CLI_ACCOUNT=personal@gmail.com              # env var override
+export GOOGLE_WORKSPACE_CLI_ACCOUNT=personal@gmail.com  # env var override
 ```
 
 Credentials are stored per-account as `credentials.<b64-email>.enc` in `~/.config/gws/`, with an `accounts.json` registry tracking defaults.
@@ -129,11 +160,16 @@ Use this when `gws auth setup` cannot automate project/client creation, or when 
    - Credentials: `https://console.cloud.google.com/apis/credentials?project=<PROJECT_ID>`
 2. Configure OAuth branding/audience if prompted:
    - App type: **External** (testing mode is fine)
-   - Add your account under **Test users**
-3. Create an OAuth client:
+3. Add your account under **Test users**
+4. Create an OAuth client:
    - Type: **Desktop app**
-4. Download the client JSON and save it to:
+5. Download the client JSON and save it to:
    - `~/.config/gws/client_secret.json`
+
+> [!IMPORTANT]
+> **You must add yourself as a test user.** In the OAuth consent screen, click
+> **Test users → Add users** and enter your Google account email. Without this,
+> login will fail with a generic "Access blocked" error.
 
 Then run:
 
@@ -292,6 +328,21 @@ gws drive files create --json '{"name": "report.pdf"}' --upload ./report.pdf
 | `--page-limit <N>`  | Max pages to fetch                             | 10      |
 | `--page-delay <MS>` | Delay between pages                            | 100 ms  |
 
+### Google Sheets — Shell Escaping
+
+Sheets ranges use `!` which bash interprets as history expansion. Always wrap values in **single quotes**:
+
+```bash
+# Read cells A1:C10 from "Sheet1"
+gws sheets spreadsheets values get \
+  --params '{"spreadsheetId": "SPREADSHEET_ID", "range": "Sheet1!A1:C10"}'
+
+# Append rows
+gws sheets spreadsheets values append \
+  --params '{"spreadsheetId": "ID", "range": "Sheet1!A1", "valueInputOption": "USER_ENTERED"}' \
+  --json '{"values": [["Name", "Score"], ["Alice", 95]]}'
+```
+
 ### Model Armor (Response Sanitization)
 
 Integrate [Google Cloud Model Armor](https://cloud.google.com/security/products/model-armor) to scan API responses for prompt injection before they reach your agent.
@@ -306,6 +357,25 @@ gws gmail users messages get --params '...' \
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE`     | `warn` (default) or `block`  |
 
+## Environment Variables
+
+All variables are optional. See [`.env.example`](.env.example) for a copy-paste template.
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
+| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email (overridden by `--account` flag) |
+| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email for Domain-Wide Delegation (service accounts) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
+| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID fallback for helper commands |
+
+Environment variables can also be set in a `.env` file (loaded via [dotenvy](https://crates.io/crates/dotenvy)).
+
 ## Architecture
 
 `gws` uses a **two-phase parsing** strategy:
@@ -319,6 +389,38 @@ gws gmail users messages get --params '...' \
 All output — success, errors, download metadata — is structured JSON.
 
 ## Troubleshooting
+
+### "Access blocked" or 403 during login
+
+Your OAuth app is in **testing mode** and your account is not listed as a test user.
+
+**Fix:** Open the [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) in your GCP project → **Test users** → **Add users** → enter your Google account email. Then retry `gws auth login`.
+
+### "Google hasn't verified this app"
+
+Expected when your app is in testing mode. Click **Advanced** → **Go to \<app name\> (unsafe)** to proceed. This is safe for personal use; verification is only required to publish the app to other users.
+
+### Too many scopes / consent screen error
+
+Unverified (testing mode) apps are limited to ~25 OAuth scopes. The `recommended` scope preset includes many scopes and will exceed this limit.
+
+**Fix:** Select only the scopes you need:
+
+```bash
+gws auth login --scopes drive,gmail,calendar
+```
+
+### `gcloud` CLI not found
+
+`gws auth setup` requires the `gcloud` CLI to automate project creation. You have three options:
+
+1. [Install gcloud](https://cloud.google.com/sdk/docs/install) and use `gcloud` directly.
+2. Re-run `gws auth setup` which wraps `gcloud` calls.
+3. Skip `gcloud` entirely — set up OAuth credentials manually in the [Cloud Console](#manual-oauth-setup-google-cloud-console)
+
+### `redirect_uri_mismatch`
+
+The OAuth client was not created as a **Desktop app** type. In the [Credentials](https://console.cloud.google.com/apis/credentials) page, delete the existing client, create a new one with type **Desktop app**, and download the new JSON.
 
 ### API not enabled — `accessNotConfigured`
 

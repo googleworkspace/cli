@@ -210,10 +210,7 @@ pub async fn fetch_discovery_document(
     let version =
         crate::validate::validate_api_identifier(version).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let cache_dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("gws")
-        .join("cache");
+    let cache_dir = crate::auth_commands::config_dir().join("cache");
     std::fs::create_dir_all(&cache_dir)?;
 
     let cache_file = cache_dir.join(format!("{service}_{version}.json"));

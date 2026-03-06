@@ -1,5 +1,152 @@
 # @googleworkspace/cli
 
+## 0.6.3
+
+### Patch Changes
+
+- 322529d: Document all environment variables and enable GOOGLE_WORKSPACE_CLI_CONFIG_DIR in release builds
+- 2173a92: Send x-goog-user-project header when using ADC with a quota_project_id
+- 1f47420: fix: extract CLA label job into dedicated workflow to prevent feedback loop
+
+  The Automation workflow's `check_run: [completed]` trigger caused a feedback
+  loop — every workflow completion fired a check_run event, re-triggering
+  Automation, which produced another check_run event, and so on. Moving the
+  CLA label job to its own `cla.yml` workflow eliminates the trigger from
+  Automation entirely.
+
+- 132c3b1: fix: warn on credential file permission failures instead of ignoring
+
+  Replaced silent `let _ =` on `set_permissions` calls in `save_encrypted`
+  with `eprintln!` warnings so users are aware if their credential files
+  end up with insecure permissions. Also log keyring access failures
+  instead of silently falling through to file storage.
+
+- a2cc523: Add `x86_64-unknown-linux-musl` build target for Linux musl/static binary support
+- c86b964: Fix multi-account selection: MCP server now respects `GOOGLE_WORKSPACE_CLI_ACCOUNT` env var (#221), and `--account` flag before service name no longer causes parse errors (#181)
+- ff53538: Fix scope selection to use first (broadest) scope instead of all method scopes, preventing gmail.metadata restrictions from blocking query parameters
+- c80eb52: Replace strip_suffix(".readonly").unwrap() with unwrap_or fallback
+
+  Two call sites used `.strip_suffix(".readonly").unwrap()` which would
+  panic if a scope URL marked as `is_readonly` didn't actually end with
+  ".readonly". While the current data makes this unlikely, using
+  `unwrap_or` is a defensive improvement that prevents potential panics
+  from inconsistent discovery data.
+
+- 9a780d7: Log token cache decryption/parse errors instead of silently swallowing
+
+  Previously, `load_from_disk` used four nested `if let Ok` blocks that
+  silently returned an empty map on any failure. When the encryption key
+  changed or the cache was corrupted, tokens silently stopped loading and
+  users were forced to re-authenticate with no explanation.
+
+  Now logs specific warnings to stderr for decryption failures, invalid
+  UTF-8, and JSON parse errors, with a hint to re-authenticate.
+
+- 6daf90d: Fix MCP tool schemas to conditionally include `body`, `upload`, and `page_all` properties only when the underlying Discovery Document method supports them. `body` is included only when a request body is defined, `upload` only when `supportsMediaUpload` is true, and `page_all` only when the method has a `pageToken` parameter. Also drops empty `body: {}` objects that LLMs commonly send on GET methods, preventing 400 errors from Google APIs.
+
+## 0.6.2
+
+### Patch Changes
+
+- 28fa25a: Clean up nits from PR #175 auth fix
+
+  - Update stale docstring on `resolve_account` to match new fallthrough behavior
+  - Add breadcrumb comment on string-based error matching in `main.rs`
+  - Move identity scope injection before authenticator build for readability
+
+## 0.6.1
+
+### Patch Changes
+
+- 88cb65c: chore: add automation workflow for auto-fmt, CLA labeling, and file-based PR triage
+- a926e3f: Fix auth failures when accounts.json registry is missing
+
+  Three related bugs caused all API calls to fail with "Access denied. No credentials provided" even after a successful `gws auth login`:
+
+  1. `resolve_account()` rejected valid `credentials.enc` as "legacy" when `accounts.json` was absent, instead of using them.
+  2. `main.rs` silently swallowed all auth errors, masking real failures behind a generic message.
+  3. `auth login` didn't include `openid`/`email` scopes, so `fetch_userinfo_email()` couldn't identify the user, causing credentials to be saved without an `accounts.json` entry.
+
+- cb1f988: Add Content-Length: 0 header for POST/PUT/PATCH requests with no body to fix HTTP 411 errors
+- 3d59b2e: fix: isolate flaky auth tests from host ADC credentials
+
+## 0.6.0
+
+### Minor Changes
+
+- b38b760: Add Application Default Credentials (ADC) support.
+
+  `gws` now discovers ADC as a fourth credential source, after the encrypted
+  and plaintext credential files. The lookup order is:
+
+  1. `GOOGLE_WORKSPACE_CLI_TOKEN` env var (raw access token, highest priority)
+  2. `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` env var
+  3. Encrypted credentials (`~/.config/gws/credentials.enc`)
+  4. Plaintext credentials (`~/.config/gws/credentials.json`)
+  5. **ADC** — `GOOGLE_APPLICATION_CREDENTIALS` env var (hard error if file missing), then
+     `~/.config/gcloud/application_default_credentials.json` (silent if absent)
+
+  This means `gcloud auth application-default login --client-id-file=client_secret.json`
+  is now a fully supported auth flow — no need to run `gws auth login` separately.
+  Both `authorized_user` and `service_account` ADC formats are supported.
+
+## 0.5.0
+
+### Minor Changes
+
+- 9cf6e0e: Add `--tool-mode compact|full` flag to `gws mcp`. Compact mode exposes one tool per service plus a `gws_discover` meta-tool, reducing context window usage from 200-400 tools to ~26.
+
+### Patch Changes
+
+- 0a16d0b: Add `-s`/`--services` flag to `gws auth login` to filter the scope picker
+  by service name (e.g. `-s drive,gmail,sheets`). Also expands the workspace
+  admin scope blocklist to include `chat.admin.*` and `classroom.*` patterns.
+- 5205467: fix(setup): drain stale keypresses between TUI screen transitions
+
+## 0.4.4
+
+### Patch Changes
+
+- e1e08eb: Fix highlight color on light terminal themes by using reverse video instead of a dark-gray background
+
+## 0.4.3
+
+### Patch Changes
+
+- fc6bc95: Exclude Workspace-admin-only scopes from the "Recommended" scope preset.
+
+  Scopes that require Google Workspace domain-admin access (`apps.*`,
+  `cloud-identity.*`, `ediscovery`, `directory.readonly`, `groups`) now return
+  `400 invalid_scope` when used by personal `@gmail.com` accounts. These scopes
+  are no longer included in the "Recommended" template, preventing login failures
+  for non-Workspace users.
+
+  Workspace admins can still select these scopes manually via the "Full Access"
+  template or by picking them individually in the scope picker.
+
+  Adds a new `is_workspace_admin_scope()` helper (mirroring the existing
+  `is_app_only_scope()`) that centralises this detection logic.
+
+- 2aa6084: docs: Comprehensive README overhaul addressing user feedback.
+
+  Added a Prerequisites section prior to the Quick Start to highlight the optional `gcloud` dependency.
+  Expanded the Authentication section with a decision matrix to help users choose the correct authentication path.
+  Added prominent warnings about OAuth "testing mode" limitations (the 25-scope cap) and the strict requirement to explicitly add the authorizing account as a "Test user" (#130).
+  Added a dedicated Troubleshooting section detailing fixes for common OAuth consent errors, "Access blocked" issues, and `redirect_uri_mismatch` failures.
+  Included shell escaping examples for Google Sheets A1 notation (`!`).
+  Clarified the `npm` installation rationale and added explicit links to pre-built native binaries on GitHub Releases.
+
+## 0.4.2
+
+### Patch Changes
+
+- d3e90e4: fix: use ~/.config/gws on all platforms for consistent config path
+
+  Previously used `dirs::config_dir()` which resolves to different paths per OS
+  (e.g. ~/Library/Application Support/gws on macOS, %APPDATA%\gws on Windows),
+  contradicting the documented ~/.config/gws/ path. Now uses ~/.config/gws/
+  everywhere with a fallback to the legacy OS-specific path for existing installs.
+
 ## 0.4.1
 
 ### Patch Changes

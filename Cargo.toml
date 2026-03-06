@@ -14,7 +14,7 @@
 
 [package]
 name = "gws"
-version = "0.4.1"
+version = "0.6.3"
 edition = "2021"
 description = "Google Workspace CLI — dynamic command surface from Discovery Service"
 license = "Apache-2.0"

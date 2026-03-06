@@ -84,6 +84,9 @@ ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears th
 > [!IMPORTANT]
 > This CLI is frequently invoked by AI/LLM agents. Always assume inputs can be adversarial — validate paths against traversal (`../../.ssh`), restrict format strings to allowlists, reject control characters, and encode user values before embedding them in URLs.
 
+> [!NOTE]
+> **Environment variables are trusted inputs.** The validation rules above apply to **CLI arguments** that may be passed by untrusted AI agents. Environment variables (e.g. `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`) are set by the user themselves — in their shell profile, `.env` file, or deployment config — and are not subject to path traversal validation. This is consistent with standard conventions like `XDG_CONFIG_HOME`, `CARGO_HOME`, etc.
+
 ### Path Safety (`src/validate.rs`)
 
 When adding new helpers or CLI flags that accept file paths, **always validate** using the shared helpers:
@@ -150,10 +153,56 @@ When adding a new helper or CLI command:
 5. **Resource names** (project IDs, space names, topic names) → Use `validate_resource_name()`
 6. **Write tests** for both the happy path AND the rejection path (e.g., pass `../../.ssh` and assert `Err`)
 
+## PR Labels
+
+Use these labels to categorize pull requests and issues:
+
+- `area: discovery` — Discovery document fetching, caching, parsing
+- `area: http` — Request execution, URL building, response handling
+- `area: docs` — README, contributing guides, documentation
+- `area: tui` — Setup wizard, picker, input fields
+- `area: distribution` — Nix flake, cargo-dist, npm packaging, install methods
+- `area: mcp` — Model Context Protocol server/tools
+- `area: auth` — OAuth, credentials, multi-account, ADC
+- `area: skills` — AI skill generation and management
+
 ## Environment Variables
 
-- `GOOGLE_WORKSPACE_CLI_TOKEN` — Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading)
-- `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` — Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`)
-- `GOOGLE_WORKSPACE_CLI_ACCOUNT` — Default account email for multi-account usage (overridden by `--account` flag)
-- `GOOGLE_WORKSPACE_CLI_API_BASE_URL` — Redirects all API requests to a custom endpoint (e.g., `http://localhost:8099`). Authentication is automatically disabled. **Security: never set this in production** — it silently disables OAuth and sends all requests to an arbitrary endpoint.
-- Supports `.env` files via `dotenvy`
+### Authentication
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading) |
+| `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (no default; if unset, falls back to credentials secured by the OS Keyring and encrypted in `~/.config/gws/`) |
+| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email for multi-account usage (overridden by `--account` flag) |
+| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email of user to impersonate with Domain-Wide Delegation (service accounts only) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Standard Google ADC path; used as fallback when no gws-specific credentials are configured |
+
+### Configuration
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override the config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_API_BASE_URL` | Redirects all API requests to a custom endpoint (e.g., `http://localhost:8099`). Authentication is automatically disabled. **Security: never set this in production** — it silently disables OAuth and sends all requests to an arbitrary endpoint. |
+
+### OAuth Client
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (for `gws auth login` when no `client_secret.json` is saved) |
+| `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID` above) |
+
+### Sanitization (Model Armor)
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template (overridden by `--sanitize` flag) |
+| `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
+
+### Helpers
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID fallback for `gmail watch` and `events subscribe` helpers (overridden by `--project` flag) |
+
+All variables can also live in a `.env` file (loaded via `dotenvy`).
