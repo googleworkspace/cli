@@ -195,6 +195,12 @@ TIPS:
                         .value_name("TEXT"),
                 )
                 .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
+                )
+                .arg(
                     Arg::new("cc")
                         .long("cc")
                         .help("Additional CC recipients (comma-separated)")
@@ -235,6 +241,12 @@ TIPS:
                         .help("Reply body (plain text)")
                         .required(true)
                         .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
                 )
                 .arg(
                     Arg::new("cc")
@@ -284,6 +296,12 @@ TIPS:
                         .help("Recipient email address(es), comma-separated")
                         .required(true)
                         .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
                 )
                 .arg(
                     Arg::new("cc")

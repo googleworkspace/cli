@@ -47,15 +47,17 @@ pub(super) async fn handle_reply(
     let in_reply_to = original.message_id_header.clone();
     let references = build_references(&original.references, &original.message_id_header);
 
-    let raw = create_reply_raw_message(
-        &reply_to.to,
-        reply_to.cc.as_deref(),
-        &subject,
-        &in_reply_to,
-        &references,
-        &config.body_text,
-        &original,
-    );
+    let envelope = ReplyEnvelope {
+        to: &reply_to.to,
+        cc: reply_to.cc.as_deref(),
+        from: config.from.as_deref(),
+        subject: &subject,
+        in_reply_to: &in_reply_to,
+        references: &references,
+        body: &config.body_text,
+    };
+
+    let raw = create_reply_raw_message(&envelope, &original);
 
     super::send_raw_email(doc, matches, &raw, &original.thread_id).await
 }
@@ -98,9 +100,20 @@ struct ReplyRecipients {
     cc: Option<String>,
 }
 
-pub struct ReplyConfig {
+struct ReplyEnvelope<'a> {
+    to: &'a str,
+    cc: Option<&'a str>,
+    from: Option<&'a str>,
+    subject: &'a str,
+    in_reply_to: &'a str,
+    references: &'a str,
+    body: &'a str,
+}
+
+pub(super) struct ReplyConfig {
     pub message_id: String,
     pub body_text: String,
+    pub from: Option<String>,
     pub cc: Option<String>,
     pub remove: Option<String>,
 }
@@ -113,17 +126,28 @@ pub(super) async fn fetch_message_metadata(
     message_id: &str,
 ) -> Result<OriginalMessage, GwsError> {
     let url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata\
-         &metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc\
-         &metadataHeaders=Subject&metadataHeaders=Date\
-         &metadataHeaders=Message-ID&metadataHeaders=References\
-         &metadataHeaders=Reply-To",
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
         crate::validate::encode_path_segment(message_id)
     );
 
-    let resp = crate::client::send_with_retry(|| client.get(&url).bearer_auth(token))
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get(&url)
+            .bearer_auth(token)
+            .query(&[
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "To"),
+                ("metadataHeaders", "Cc"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Date"),
+                ("metadataHeaders", "Message-ID"),
+                ("metadataHeaders", "References"),
+                ("metadataHeaders", "Reply-To"),
+            ])
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -328,27 +352,24 @@ fn build_references(original_references: &str, original_message_id: &str) -> Str
     }
 }
 
-fn create_reply_raw_message(
-    to: &str,
-    cc: Option<&str>,
-    subject: &str,
-    in_reply_to: &str,
-    references: &str,
-    body: &str,
-    original: &OriginalMessage,
-) -> String {
+fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage) -> String {
     let mut headers = format!(
-        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}",
-        to, subject, in_reply_to, references
+        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}\r\n\
+         MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
+        envelope.to, envelope.subject, envelope.in_reply_to, envelope.references
     );
 
-    if let Some(cc) = cc {
+    if let Some(from) = envelope.from {
+        headers.push_str(&format!("\r\nFrom: {}", from));
+    }
+
+    if let Some(cc) = envelope.cc {
         headers.push_str(&format!("\r\nCc: {}", cc));
     }
 
     let quoted = format_quoted_original(original);
 
-    format!("{}\r\n\r\n{}\r\n\r\n{}", headers, body, quoted)
+    format!("{}\r\n\r\n{}\r\n\r\n{}", headers, envelope.body, quoted)
 }
 
 fn format_quoted_original(original: &OriginalMessage) -> String {
@@ -388,6 +409,7 @@ fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
     ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
+        from: matches.get_one::<String>("from").map(|s| s.to_string()),
         cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
         remove: matches
             .try_get_one::<String>("remove")
@@ -447,20 +469,24 @@ mod tests {
             snippet: "Original body".to_string(),
         };
 
-        let raw = create_reply_raw_message(
-            "alice@example.com",
-            None,
-            "Re: Hello",
-            "<abc@example.com>",
-            "<abc@example.com>",
-            "My reply",
-            &original,
-        );
+        let envelope = ReplyEnvelope {
+            to: "alice@example.com",
+            cc: None,
+            from: None,
+            subject: "Re: Hello",
+            in_reply_to: "<abc@example.com>",
+            references: "<abc@example.com>",
+            body: "My reply",
+        };
+        let raw = create_reply_raw_message(&envelope, &original);
 
         assert!(raw.contains("To: alice@example.com"));
         assert!(raw.contains("Subject: Re: Hello"));
         assert!(raw.contains("In-Reply-To: <abc@example.com>"));
         assert!(raw.contains("References: <abc@example.com>"));
+        assert!(raw.contains("MIME-Version: 1.0"));
+        assert!(raw.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(!raw.contains("From:"));
         assert!(raw.contains("My reply"));
         assert!(raw.contains("> Original body"));
     }
@@ -480,15 +506,16 @@ mod tests {
             snippet: "Original body".to_string(),
         };
 
-        let raw = create_reply_raw_message(
-            "alice@example.com",
-            Some("carol@example.com"),
-            "Re: Hello",
-            "<abc@example.com>",
-            "<abc@example.com>",
-            "Reply with CC",
-            &original,
-        );
+        let envelope = ReplyEnvelope {
+            to: "alice@example.com",
+            cc: Some("carol@example.com"),
+            from: None,
+            subject: "Re: Hello",
+            in_reply_to: "<abc@example.com>",
+            references: "<abc@example.com>",
+            body: "Reply with CC",
+        };
+        let raw = create_reply_raw_message(&envelope, &original);
 
         assert!(raw.contains("Cc: carol@example.com"));
     }
@@ -543,6 +570,7 @@ mod tests {
         let cmd = Command::new("test")
             .arg(Arg::new("message-id").long("message-id"))
             .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("from").long("from"))
             .arg(Arg::new("cc").long("cc"))
             .arg(Arg::new("remove").long("remove"))
             .arg(

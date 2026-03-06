@@ -36,6 +36,7 @@ pub(super) async fn handle_forward(
     let raw = create_forward_raw_message(
         &config.to,
         config.cc.as_deref(),
+        config.from.as_deref(),
         &subject,
         config.body_text.as_deref(),
         &original,
@@ -44,9 +45,10 @@ pub(super) async fn handle_forward(
     super::send_raw_email(doc, matches, &raw, &original.thread_id).await
 }
 
-pub struct ForwardConfig {
+pub(super) struct ForwardConfig {
     pub message_id: String,
     pub to: String,
+    pub from: Option<String>,
     pub cc: Option<String>,
     pub body_text: Option<String>,
 }
@@ -62,11 +64,19 @@ fn build_forward_subject(original_subject: &str) -> String {
 fn create_forward_raw_message(
     to: &str,
     cc: Option<&str>,
+    from: Option<&str>,
     subject: &str,
     body: Option<&str>,
     original: &super::reply::OriginalMessage,
 ) -> String {
-    let mut headers = format!("To: {}\r\nSubject: {}", to, subject);
+    let mut headers = format!(
+        "To: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
+        to, subject
+    );
+
+    if let Some(from) = from {
+        headers.push_str(&format!("\r\nFrom: {}", from));
+    }
 
     if let Some(cc) = cc {
         headers.push_str(&format!("\r\nCc: {}", cc));
@@ -106,6 +116,7 @@ fn parse_forward_args(matches: &ArgMatches) -> ForwardConfig {
     ForwardConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         to: matches.get_one::<String>("to").unwrap().to_string(),
+        from: matches.get_one::<String>("from").map(|s| s.to_string()),
         cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
         body_text: matches.get_one::<String>("body").map(|s| s.to_string()),
     }
@@ -146,7 +157,7 @@ mod tests {
         };
 
         let raw =
-            create_forward_raw_message("dave@example.com", None, "Fwd: Hello", None, &original);
+            create_forward_raw_message("dave@example.com", None, None, "Fwd: Hello", None, &original);
 
         assert!(raw.contains("To: dave@example.com"));
         assert!(raw.contains("Subject: Fwd: Hello"));
@@ -173,6 +184,7 @@ mod tests {
         let raw = create_forward_raw_message(
             "dave@example.com",
             Some("eve@example.com"),
+            None,
             "Fwd: Hello",
             Some("FYI see below"),
             &original,
@@ -187,6 +199,7 @@ mod tests {
         let cmd = Command::new("test")
             .arg(Arg::new("message-id").long("message-id"))
             .arg(Arg::new("to").long("to"))
+            .arg(Arg::new("from").long("from"))
             .arg(Arg::new("cc").long("cc"))
             .arg(Arg::new("body").long("body"))
             .arg(
