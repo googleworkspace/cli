@@ -45,7 +45,7 @@ personas:
   - name: hr-coordinator
     title: HR Coordinator
     description: "Handle HR workflows — onboarding, announcements, and employee comms."
-    services: [gmail, calendar, drive, chat, admin]
+    services: [gmail, calendar, drive, chat]
     workflows: ["+email-to-task", "+file-announce"]
     instructions:
       - "For new hire onboarding, create calendar events for orientation sessions with `gws calendar +insert`."
@@ -56,7 +56,6 @@ personas:
     tips:
       - "Always use `--sanitize` for PII-sensitive operations."
       - "Create a dedicated 'HR Onboarding' calendar for tracking orientation schedules."
-      - "Use `gws admin` for user account management (creating accounts, resetting passwords)."
 
   - name: sales-ops
     title: Sales Operations
@@ -76,18 +75,15 @@ personas:
 
   - name: it-admin
     title: IT Administrator
-    description: "Administer IT — manage users, monitor security, configure Workspace."
-    services: [admin, gmail, drive, calendar]
+    description: "Administer IT — monitor security and configure Workspace."
+    services: [gmail, drive, calendar]
     workflows: ["+standup-report"]
     instructions:
       - "Start the day with `gws workflow +standup-report` to review any pending IT requests."
-      - "Manage user accounts with `gws admin` — create, suspend, or update users."
       - "Monitor suspicious login activity and review audit logs."
       - "Configure Drive sharing policies to enforce organizational security."
-      - "Set up group email aliases and distribution lists."
     tips:
-      - "Use `gws admin` extensively — it covers user management, groups, and org units."
-      - "Always use `--dry-run` before bulk user operations."
+      - "Always use `--dry-run` before bulk operations."
       - "Review `gws auth status` regularly to verify service account permissions."
 
   - name: content-creator

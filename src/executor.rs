@@ -41,12 +41,11 @@ pub enum AuthMethod {
 /// Resolve authentication, skipping OAuth when a custom API endpoint is set.
 pub async fn resolve_auth(
     scopes: &[&str],
-    account: Option<&str>,
 ) -> anyhow::Result<(Option<String>, AuthMethod)> {
     if crate::discovery::custom_api_base_url().is_some() {
         return Ok((None, AuthMethod::None));
     }
-    match crate::auth::get_token(scopes, account).await {
+    match crate::auth::get_token(scopes).await {
         Ok(t) => Ok((Some(t), AuthMethod::OAuth)),
         Err(e) => Err(e),
     }
@@ -177,6 +176,11 @@ async fn build_http_request(
         if *auth_method == AuthMethod::OAuth {
             request = request.bearer_auth(token);
         }
+    }
+
+    // Set quota project from ADC for billing/quota attribution
+    if let Some(quota_project) = crate::auth::get_quota_project() {
+        request = request.header("x-goog-user-project", quota_project);
     }
 
     for (key, value) in &input.query_params {

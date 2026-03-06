@@ -10,19 +10,7 @@
 #   - caution: optional warning for destructive operations
 
 recipes:
-  # ============================================================
-  # IT / SECURITY / COMPLIANCE
-  # ============================================================
-  - name: audit-external-sharing
-    title: Audit External Drive Sharing
-    description: "Find and review Google Drive files shared outside the organization."
-    category: security
-    services: [drive]
-    steps:
-      - "List externally shared files: `gws drive files list --params '{\"q\": \"visibility = '\\''anyoneWithLink'\\''\"}'`"
-      - "Check permissions on a file: `gws drive permissions list --params '{\"fileId\": \"FILE_ID\"}'`"
-      - "Revoke if needed: `gws drive permissions delete --params '{\"fileId\": \"FILE_ID\", \"permissionId\": \"PERM_ID\"}'`"
-    caution: "Revoking permissions immediately removes access. Confirm with the file owner first."
+
 
   # ============================================================
   # GMAIL WORKFLOWS
@@ -37,14 +25,7 @@ recipes:
       - "Apply a label: `gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"MESSAGE_ID\"}' --json '{\"addLabelIds\": [\"LABEL_ID\"]}'`"
       - "Archive (remove from inbox): `gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"MESSAGE_ID\"}' --json '{\"removeLabelIds\": [\"INBOX\"]}'`"
 
-  - name: send-personalized-emails
-    title: Send Personalized Emails from a Sheet
-    description: "Read recipient data from Google Sheets and send personalized Gmail messages to each row."
-    category: productivity
-    services: [sheets, gmail]
-    steps:
-      - "Read recipient list: `gws sheets +read --spreadsheet-id SHEET_ID --range 'Contacts!A2:C'`"
-      - "For each row, send a personalized email: `gws gmail +send --to recipient@example.com --subject 'Hello, Name' --body 'Hi Name, your report is ready.'`"
+
 
   - name: draft-email-from-doc
     title: Draft a Gmail Message from a Google Doc
@@ -154,15 +135,7 @@ recipes:
   # ============================================================
   # EMAIL / GMAIL
   # ============================================================
-  - name: search-and-export-emails
-    title: Search and Export Emails
-    description: "Find Gmail messages matching a query and export them for review."
-    category: productivity
-    services: [gmail]
-    steps:
-      - "Search for emails: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"from:client@example.com after:2024/01/01\"}'`"
-      - "Get full message: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}'`"
-      - "Export results: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"label:project-x\"}' --format json > project-emails.json`"
+
 
   - name: create-gmail-filter
     title: Create a Gmail Filter
@@ -178,16 +151,7 @@ recipes:
   # ============================================================
   # CALENDAR / SCHEDULING
   # ============================================================
-  - name: cancel-and-notify
-    title: Cancel Meeting and Notify Attendees
-    description: "Delete a Google Calendar event and send a cancellation email via Gmail."
-    category: scheduling
-    services: [calendar, gmail]
-    steps:
-      - "Find the meeting: `gws calendar +agenda --format json` and locate the event ID"
-      - "Delete the event: `gws calendar events delete --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\", \"sendUpdates\": \"all\"}'`"
-      - "Send follow-up: `gws gmail +send --to attendees --subject 'Meeting Cancelled: [Title]' --body 'Apologies, this meeting has been cancelled.'`"
-    caution: "Deleting with sendUpdates sends cancellation emails to all attendees."
+
 
   - name: schedule-recurring-event
     title: Schedule a Recurring Meeting
@@ -228,9 +192,7 @@ recipes:
     services: [drive]
     steps:
       - "List files sorted by size: `gws drive files list --params '{\"orderBy\": \"quotaBytesUsed desc\", \"pageSize\": 20, \"fields\": \"files(id,name,size,mimeType,owners)\"}' --format table`"
-      - "Review the output and identify files to delete or move"
-      - "Delete if needed: `gws drive files delete --params '{\"fileId\": \"FILE_ID\"}'`"
-    caution: "Deleting files is permanent if the trash is emptied. Confirm before deleting."
+      - "Review the output and identify files to archive or move"
 
   - name: create-shared-drive
     title: Create and Configure a Shared Drive
@@ -242,15 +204,7 @@ recipes:
       - "Add a member: `gws drive permissions create --params '{\"fileId\": \"DRIVE_ID\", \"supportsAllDrives\": true}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"member@company.com\"}'`"
       - "List members: `gws drive permissions list --params '{\"fileId\": \"DRIVE_ID\", \"supportsAllDrives\": true}'`"
 
-  - name: transfer-file-ownership
-    title: Transfer File Ownership
-    description: "Transfer ownership of Google Drive files from one user to another."
-    category: it
-    services: [drive]
-    steps:
-      - "List files owned by the user: `gws drive files list --params '{\"q\": \"'\\''user@company.com'\\'' in owners\"}'`"
-      - "Transfer ownership: `gws drive permissions create --params '{\"fileId\": \"FILE_ID\", \"transferOwnership\": true}' --json '{\"role\": \"owner\", \"type\": \"user\", \"emailAddress\": \"newowner@company.com\"}'`"
-    caution: "Transferring ownership is irreversible without the new owner's cooperation."
+
 
   # ============================================================
   # SHEETS / DATA
@@ -318,19 +272,7 @@ recipes:
   # ============================================================
   # CONTACTS / PEOPLE
   # ============================================================
-  # ============================================================
-  # APPS SCRIPT
-  # ============================================================
-  - name: deploy-apps-script
-    title: Deploy an Apps Script Project
-    description: "Push local files to a Google Apps Script project."
-    category: engineering
-    services: [apps-script]
-    steps:
-      - "List existing projects: `gws apps-script projects list --format table`"
-      - "Get project content: `gws apps-script projects getContent --params '{\"scriptId\": \"SCRIPT_ID\"}'`"
-      - "Update content: `gws apps-script projects updateContent --params '{\"scriptId\": \"SCRIPT_ID\"}' --json '{\"files\": [{\"name\": \"Code\", \"type\": \"SERVER_JS\", \"source\": \"function main() { ... }\"}]}'`"
-      - "Create a new version: `gws apps-script projects versions create --params '{\"scriptId\": \"SCRIPT_ID\"}' --json '{\"description\": \"v2 release\"}'`"
+
 
   # ============================================================
   # EVENT SUBSCRIPTIONS
@@ -397,18 +339,7 @@ recipes:
       - "Get the presentation ID from the response"
       - "Share with team: `gws drive permissions create --params '{\"fileId\": \"PRESENTATION_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"team@company.com\"}'`"
 
-  # ============================================================
-  # ALERT CENTER
-  # ============================================================
-  - name: triage-security-alerts
-    title: Triage Google Workspace Security Alerts
-    description: "List and review Google Workspace security alerts from Alert Center."
-    category: security
-    services: [alertcenter]
-    steps:
-      - "List active alerts: `gws alertcenter alerts list --format table`"
-      - "Get alert details: `gws alertcenter alerts get --params '{\"alertId\": \"ALERT_ID\"}'`"
-      - "Acknowledge an alert: `gws alertcenter alerts undelete --params '{\"alertId\": \"ALERT_ID\"}'`"
+
 
   # ============================================================
   # CONSUMER PRODUCTIVITY
@@ -567,29 +498,12 @@ recipes:
   # ============================================================
   # GMAIL — AUTOMATED REPLIES
   # ============================================================
-  - name: batch-reply-to-emails
-    title: Batch Reply to Similar Gmail Messages
-    description: "Find Gmail messages matching a query and send a standard reply to each one."
-    category: productivity
-    services: [gmail]
-    steps:
-      - "Find messages needing replies: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread from:customers label:support\"}' --format table`"
-      - "Read a message: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}'`"
-      - "Send a reply: `gws gmail +send --to sender@example.com --subject 'Re: Your Request' --body 'Thank you for reaching out. We have received your request and will respond within 24 hours.'`"
-      - "Mark as read: `gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}' --json '{\"removeLabelIds\": [\"UNREAD\"]}'`"
+
 
   # ============================================================
   # DRIVE — BATCH OPERATIONS
   # ============================================================
-  - name: batch-rename-files
-    title: Batch Rename Google Drive Files
-    description: "Rename multiple Google Drive files matching a pattern to follow a consistent naming convention."
-    category: productivity
-    services: [drive]
-    steps:
-      - "Find files to rename: `gws drive files list --params '{\"q\": \"name contains '\\''Report'\\''\"}' --format table`"
-      - "Rename a file: `gws drive files update --params '{\"fileId\": \"FILE_ID\"}' --json '{\"name\": \"2025-Q1 Report - Final\"}'`"
-      - "Verify the rename: `gws drive files get --params '{\"fileId\": \"FILE_ID\", \"fields\": \"name\"}'`"
+
 
   # ============================================================
   # SHEETS — DATA SYNC

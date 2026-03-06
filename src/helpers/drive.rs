@@ -96,7 +96,7 @@ TIPS:
                 let body_str = metadata.to_string();
 
                 let scopes: Vec<&str> = create_method.scopes.iter().map(|s| s.as_str()).collect();
-                let (token, auth_method) = match auth::get_token(&scopes, None).await {
+                let (token, auth_method) = match auth::get_token(&scopes).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                     Err(_) => (None, executor::AuthMethod::None),
                 };

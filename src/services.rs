@@ -49,12 +49,6 @@ pub const SERVICES: &[ServiceEntry] = &[
         description: "Manage calendars and events",
     },
     ServiceEntry {
-        aliases: &["admin", "directory"],
-        api_name: "admin",
-        version: "directory_v1",
-        description: "Manage users, groups, and devices",
-    },
-    ServiceEntry {
         aliases: &["admin-reports", "reports"],
         api_name: "admin",
         version: "reports_v1",
@@ -91,52 +85,10 @@ pub const SERVICES: &[ServiceEntry] = &[
         description: "Manage Chat spaces and messages",
     },
     ServiceEntry {
-        aliases: &["vault"],
-        api_name: "vault",
-        version: "v1",
-        description: "Manage eDiscovery holds and exports",
-    },
-    ServiceEntry {
-        aliases: &["groupssettings"],
-        api_name: "groupssettings",
-        version: "v1",
-        description: "Manage Google Groups settings",
-    },
-    ServiceEntry {
-        aliases: &["reseller"],
-        api_name: "reseller",
-        version: "v1",
-        description: "Manage Workspace subscriptions",
-    },
-    ServiceEntry {
-        aliases: &["licensing"],
-        api_name: "licensing",
-        version: "v1",
-        description: "Manage product licenses",
-    },
-    ServiceEntry {
-        aliases: &["apps-script", "script"],
-        api_name: "script",
-        version: "v1",
-        description: "Manage and execute Apps Script projects",
-    },
-    ServiceEntry {
         aliases: &["classroom"],
         api_name: "classroom",
         version: "v1",
         description: "Manage classes, rosters, and coursework",
-    },
-    ServiceEntry {
-        aliases: &["cloudidentity"],
-        api_name: "cloudidentity",
-        version: "v1",
-        description: "Manage identity groups and memberships",
-    },
-    ServiceEntry {
-        aliases: &["alertcenter"],
-        api_name: "alertcenter",
-        version: "v1beta1",
-        description: "Manage Workspace security alerts",
     },
     ServiceEntry {
         aliases: &["forms"],
@@ -205,12 +157,12 @@ mod tests {
             ("drive".to_string(), "v3".to_string())
         );
         assert_eq!(
-            resolve_service("admin").unwrap(),
-            ("admin".to_string(), "directory_v1".to_string())
+            resolve_service("admin-reports").unwrap(),
+            ("admin".to_string(), "reports_v1".to_string())
         );
         assert_eq!(
-            resolve_service("directory").unwrap(),
-            ("admin".to_string(), "directory_v1".to_string())
+            resolve_service("reports").unwrap(),
+            ("admin".to_string(), "reports_v1".to_string())
         );
     }
 

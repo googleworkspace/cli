@@ -131,9 +131,8 @@ fn token_cache_path() -> PathBuf {
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
-        "Usage: gws auth <login|setup|status|export|logout|list|default> [options]\n\n",
+        "Usage: gws auth <login|setup|status|export|logout> [options]\n\n",
         "  login    Authenticate via OAuth2 (opens browser)\n",
-        "           --account EMAIL  Associate credentials with a specific account\n",
         "           --readonly       Request read-only scopes\n",
         "           --full           Request all scopes incl. pubsub + cloud-platform\n",
         "                            (may trigger restricted_client for unverified apps)\n",
@@ -144,11 +143,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
         "  export   Print decrypted credentials to stdout\n",
-        "  logout   Clear saved credentials and token cache\n",
-        "           --account EMAIL  Logout a specific account (otherwise: all)\n",
-        "  list     List all registered accounts\n",
-        "  default  Set the default account\n",
-        "           --account EMAIL  Account to set as default",
+        "  logout   Clear saved credentials and token cache",
     );
 
     // Honour --help / -h before treating the first arg as a subcommand.
@@ -165,11 +160,9 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
             handle_export(unmasked).await
         }
-        "logout" => handle_logout(&args[1..]),
-        "list" => handle_list(),
-        "default" => handle_default(&args[1..]),
+        "logout" => handle_logout(),
         other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout, list, default"
+            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
         ))),
     }
 }
@@ -210,23 +203,13 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
 }
 
 async fn handle_login(args: &[String]) -> Result<(), GwsError> {
-    // Extract --account and -s/--services from args
-    let mut account_email: Option<String> = None;
+    // Extract -s/--services from args
     let mut services_filter: Option<HashSet<String>> = None;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for i in 0..args.len() {
         if skip_next {
             skip_next = false;
-            continue;
-        }
-        if args[i] == "--account" && i + 1 < args.len() {
-            account_email = Some(args[i + 1].clone());
-            skip_next = true;
-            continue;
-        }
-        if let Some(value) = args[i].strip_prefix("--account=") {
-            account_email = Some(value.to_string());
             continue;
         }
         let services_str = if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
@@ -273,9 +256,6 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     .await;
 
     // Remove restrictive scopes when broader alternatives are present.
-    // gmail.metadata blocks query parameters like `q`, and is redundant
-    // when broader scopes (gmail.modify, gmail.readonly, mail.google.com)
-    // are already included.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
     let secret = yup_oauth2::ApplicationSecret {
@@ -300,8 +280,6 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     let temp_path = config_dir().join("credentials.tmp");
 
     // Always start fresh — delete any stale temp cache from prior login attempts.
-    // Without this, yup-oauth2 finds a cached access token and skips the browser flow,
-    // which means no refresh_token is returned.
     let _ = std::fs::remove_file(&temp_path);
 
     // Ensure config directory exists
@@ -318,9 +296,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         temp_path.clone(),
     )))
     .force_account_selection(true) // Adds prompt=consent so Google always returns a refresh_token
-    .flow_delegate(Box::new(CliFlowDelegate {
-        login_hint: account_email.clone(),
-    }))
+    .flow_delegate(Box::new(CliFlowDelegate { login_hint: None }))
     .build()
     .await
     .map_err(|e| GwsError::Auth(format!("Failed to build authenticator: {e}")))?;
@@ -359,63 +335,13 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         let creds_str = serde_json::to_string_pretty(&creds_json)
             .map_err(|e| GwsError::Validation(format!("Failed to serialize credentials: {e}")))?;
 
-        // Fetch the user's email from Google userinfo to validate and register
+        // Fetch the user's email from Google userinfo
         let access_token = token.token().unwrap_or_default();
         let actual_email = fetch_userinfo_email(access_token).await;
 
-        // If --account was specified, validate the email matches
-        if let Some(ref requested) = account_email {
-            if let Some(ref actual) = actual_email {
-                let normalized_requested = crate::accounts::normalize_email(requested);
-                let normalized_actual = crate::accounts::normalize_email(actual);
-                if normalized_requested != normalized_actual {
-                    // Clean up temp file
-                    let _ = std::fs::remove_file(&temp_path);
-                    return Err(GwsError::Auth(format!(
-                        "Login account mismatch: requested '{}' but authenticated as '{}'. \
-                         Please try again and select the correct account in the browser.",
-                        requested, actual
-                    )));
-                }
-            }
-        }
-
-        // Determine which email to use for the account
-        let resolved_email = account_email.or(actual_email);
-
         // Save encrypted credentials
-        let enc_path = if let Some(ref email) = resolved_email {
-            // Per-account save
-            credential_store::save_encrypted_for(&creds_str, email)
-                .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
-
-            // Register in accounts.json
-            let mut registry = crate::accounts::load_accounts()
-                .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
-                .unwrap_or_default();
-            crate::accounts::add_account(&mut registry, email);
-            // If this is the first account, set it as default
-            if registry.default.is_none() || registry.accounts.len() == 1 {
-                crate::accounts::set_default(&mut registry, email)
-                    .map_err(|e| GwsError::Auth(format!("Failed to set default: {e}")))?;
-            }
-            crate::accounts::save_accounts(&registry)
-                .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
-
-            credential_store::encrypted_credentials_path_for(email)
-        } else {
-            // Legacy single-account save (no email available)
-            credential_store::save_encrypted(&creds_str)
-                .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?
-        };
-
-        // Clean up old legacy credentials.enc if we now have an account-keyed one
-        if resolved_email.is_some() {
-            let legacy = credential_store::encrypted_credentials_path();
-            if legacy.exists() && legacy != enc_path {
-                let _ = std::fs::remove_file(&legacy);
-            }
-        }
+        let enc_path = credential_store::save_encrypted(&creds_str)
+            .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
@@ -423,7 +349,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         let output = json!({
             "status": "success",
             "message": "Authentication successful. Encrypted credentials saved.",
-            "account": resolved_email.as_deref().unwrap_or("(unknown)"),
+            "account": actual_email.as_deref().unwrap_or("(unknown)"),
             "credentials_file": enc_path.display().to_string(),
             "encryption": "AES-256-GCM (key secured by OS Keyring or local `.encryption_key`)",
             "scopes": scopes,
@@ -1222,198 +1148,35 @@ async fn handle_status() -> Result<(), GwsError> {
     Ok(())
 }
 
-fn handle_logout(args: &[String]) -> Result<(), GwsError> {
-    // Extract --account from args
-    let mut account_email: Option<String> = None;
-    for i in 0..args.len() {
-        if args[i] == "--account" && i + 1 < args.len() {
-            account_email = Some(args[i + 1].clone());
-        } else if let Some(value) = args[i].strip_prefix("--account=") {
-            account_email = Some(value.to_string());
+fn handle_logout() -> Result<(), GwsError> {
+    let plain_path = plain_credentials_path();
+    let enc_path = credential_store::encrypted_credentials_path();
+    let token_cache = token_cache_path();
+    let sa_token_cache = config_dir().join("sa_token_cache.json");
+
+    let mut removed = Vec::new();
+
+    for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|e| {
+                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+            })?;
+            removed.push(path.display().to_string());
         }
     }
 
-    if let Some(ref email) = account_email {
-        // Per-account logout: remove credentials and token caches
-        let enc_path = credential_store::encrypted_credentials_path_for(email);
-        let b64 = crate::accounts::email_to_b64(&crate::accounts::normalize_email(email));
-        let config = config_dir();
-        let token_cache = config.join(format!("token_cache.{b64}.json"));
-        let sa_token_cache = config.join(format!("sa_token_cache.{b64}.json"));
-        let mut removed = Vec::new();
-
-        for path in [&enc_path, &token_cache, &sa_token_cache] {
-            if path.exists() {
-                std::fs::remove_file(path).map_err(|e| {
-                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-                })?;
-                removed.push(path.display().to_string());
-            }
-        }
-
-        // Remove from accounts.json registry
-        let mut registry = crate::accounts::load_accounts()
-            .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
-            .unwrap_or_default();
-        crate::accounts::remove_account(&mut registry, email);
-        crate::accounts::save_accounts(&registry)
-            .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
-
-        let output = if removed.is_empty() {
-            json!({
-                "status": "success",
-                "message": format!("No credentials found for account '{email}'."),
-            })
-        } else {
-            json!({
-                "status": "success",
-                "message": format!("Logged out account '{email}'. Credentials removed."),
-                "removed": removed,
-            })
-        };
-
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
-        );
-    } else {
-        // Full logout: remove all credentials
-        let plain_path = plain_credentials_path();
-        let enc_path = credential_store::encrypted_credentials_path();
-        let token_cache = token_cache_path();
-        let accounts_path = crate::accounts::accounts_path();
-
-        let mut removed = Vec::new();
-
-        // Load accounts BEFORE deleting accounts.json so we can clean up per-account files
-        let registry = crate::accounts::load_accounts()
-            .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
-            .unwrap_or_default();
-
-        for path in [&enc_path, &plain_path, &token_cache, &accounts_path] {
-            if path.exists() {
-                std::fs::remove_file(path).map_err(|e| {
-                    GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-                })?;
-                removed.push(path.display().to_string());
-            }
-        }
-
-        // Also remove any per-account credential and token cache files
-        for email in registry.accounts.keys() {
-            let b64 = crate::accounts::email_to_b64(&crate::accounts::normalize_email(email));
-            let cred_path = credential_store::encrypted_credentials_path_for(email);
-            let tc_path = config_dir().join(format!("token_cache.{b64}.json"));
-            let sa_tc_path = config_dir().join(format!("sa_token_cache.{b64}.json"));
-            for path in [&cred_path, &tc_path, &sa_tc_path] {
-                if path.exists() {
-                    std::fs::remove_file(path).map_err(|e| {
-                        GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-                    })?;
-                    removed.push(path.display().to_string());
-                }
-            }
-        }
-
-        let output = if removed.is_empty() {
-            json!({
-                "status": "success",
-                "message": "No credentials found to remove.",
-            })
-        } else {
-            json!({
-                "status": "success",
-                "message": "Logged out. All credentials and token caches removed.",
-                "removed": removed,
-            })
-        };
-
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
-        );
-    }
-    Ok(())
-}
-
-/// List all registered accounts.
-fn handle_list() -> Result<(), GwsError> {
-    let registry = crate::accounts::load_accounts()
-        .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
-        .unwrap_or_default();
-    let account_emails = crate::accounts::list_accounts(&registry);
-    let accounts: Vec<serde_json::Value> = account_emails
-        .iter()
-        .map(|email| {
-            let meta = registry.accounts.get(*email);
-            json!({
-                "email": email,
-                "is_default": registry.default.as_deref() == Some(*email),
-                "added": meta.map(|m| m.added.as_str()).unwrap_or(""),
-            })
+    let output = if removed.is_empty() {
+        json!({
+            "status": "success",
+            "message": "No credentials found to remove.",
         })
-        .collect();
-
-    let output = json!({
-        "accounts": accounts,
-        "default": registry.default.unwrap_or_default(),
-        "count": accounts.len(),
-    });
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&output).unwrap_or_default()
-    );
-    Ok(())
-}
-
-/// Set the default account.
-fn handle_default(args: &[String]) -> Result<(), GwsError> {
-    // Extract --account from args
-    let mut account_email: Option<String> = None;
-    for i in 0..args.len() {
-        if args[i] == "--account" && i + 1 < args.len() {
-            account_email = Some(args[i + 1].clone());
-        } else if let Some(value) = args[i].strip_prefix("--account=") {
-            account_email = Some(value.to_string());
-        }
-    }
-
-    // If no --account flag, check if the first arg is the email directly
-    let email = account_email
-        .or_else(|| args.first().filter(|a| !a.starts_with('-')).cloned())
-        .ok_or_else(|| {
-            GwsError::Validation(
-                "Usage: gws auth default <email> or gws auth default --account <email>".to_string(),
-            )
-        })?;
-
-    let mut registry = crate::accounts::load_accounts()
-        .map_err(|e| GwsError::Auth(format!("Failed to load accounts: {e}")))?
-        .unwrap_or_default();
-
-    // Verify the account exists
-    if !registry
-        .accounts
-        .keys()
-        .any(|k| crate::accounts::normalize_email(k) == crate::accounts::normalize_email(&email))
-    {
-        return Err(GwsError::Validation(format!(
-            "Account '{}' not found. Run `gws auth list` to see registered accounts.",
-            email
-        )));
-    }
-
-    crate::accounts::set_default(&mut registry, &email)
-        .map_err(|e| GwsError::Auth(format!("Failed to set default: {e}")))?;
-    crate::accounts::save_accounts(&registry)
-        .map_err(|e| GwsError::Auth(format!("Failed to save accounts: {e}")))?;
-
-    let output = json!({
-        "status": "success",
-        "message": format!("Default account set to '{email}'."),
-        "default": email,
-    });
+    } else {
+        json!({
+            "status": "success",
+            "message": "Logged out. All credentials and token caches removed.",
+            "removed": removed,
+        })
+    };
 
     println!(
         "{}",
@@ -1507,7 +1270,7 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
 // (parse_scopes removed — replaced by resolve_scopes above)
 
 /// Helper: check if a scope can't be used with user OAuth consent flow
-/// (requires a Chat app, service account, or domain-wide delegation).
+/// (requires a Chat app or service account).
 fn is_app_only_scope(url: &str) -> bool {
     url.contains("/auth/chat.app.")
         || url.contains("/auth/chat.bot")

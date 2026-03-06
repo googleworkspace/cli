@@ -269,7 +269,7 @@ fn format_and_print(value: &Value, matches: &ArgMatches) {
 async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
     let cal_scope = "https://www.googleapis.com/auth/calendar.readonly";
     let tasks_scope = "https://www.googleapis.com/auth/tasks.readonly";
-    let token = auth::get_token(&[cal_scope, tasks_scope], None)
+    let token = auth::get_token(&[cal_scope, tasks_scope])
         .await
         .map_err(|e| GwsError::Auth(format!("Auth failed: {e}")))?;
 
@@ -364,7 +364,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
 
 async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
     let cal_scope = "https://www.googleapis.com/auth/calendar.readonly";
-    let token = auth::get_token(&[cal_scope], None)
+    let token = auth::get_token(&[cal_scope])
         .await
         .map_err(|e| GwsError::Auth(format!("Auth failed: {e}")))?;
 
@@ -446,7 +446,7 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
 async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
     let gmail_scope = "https://www.googleapis.com/auth/gmail.readonly";
     let tasks_scope = "https://www.googleapis.com/auth/tasks";
-    let token = auth::get_token(&[gmail_scope, tasks_scope], None)
+    let token = auth::get_token(&[gmail_scope, tasks_scope])
         .await
         .map_err(|e| GwsError::Auth(format!("Auth failed: {e}")))?;
 
@@ -536,7 +536,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
 async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
     let cal_scope = "https://www.googleapis.com/auth/calendar.readonly";
     let gmail_scope = "https://www.googleapis.com/auth/gmail.readonly";
-    let token = auth::get_token(&[cal_scope, gmail_scope], None)
+    let token = auth::get_token(&[cal_scope, gmail_scope])
         .await
         .map_err(|e| GwsError::Auth(format!("Auth failed: {e}")))?;
 
@@ -618,7 +618,7 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
 async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
     let drive_scope = "https://www.googleapis.com/auth/drive.readonly";
     let chat_scope = "https://www.googleapis.com/auth/chat.messages.create";
-    let token = auth::get_token(&[drive_scope, chat_scope], None)
+    let token = auth::get_token(&[drive_scope, chat_scope])
         .await
         .map_err(|e| GwsError::Auth(format!("Auth failed: {e}")))?;
 

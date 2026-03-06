@@ -273,146 +273,9 @@ pub fn load_encrypted() -> anyhow::Result<String> {
     load_encrypted_from_path(&encrypted_credentials_path())
 }
 
-/// Returns the path for per-account encrypted credentials.
-///
-/// The filename is `credentials.<b64-email>.enc` where `<b64-email>` is the
-/// URL-safe, no-pad base64 encoding of the normalised email address.
-pub fn encrypted_credentials_path_for(account: &str) -> PathBuf {
-    let normalised = crate::accounts::normalize_email(account);
-    let b64 = crate::accounts::email_to_b64(&normalised);
-    crate::auth_commands::config_dir().join(format!("credentials.{b64}.enc"))
-}
-
-/// Saves credentials JSON to a per-account encrypted file.
-pub fn save_encrypted_for(json: &str, account: &str) -> anyhow::Result<PathBuf> {
-    let path = encrypted_credentials_path_for(account);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-            {
-                eprintln!(
-                    "Warning: failed to set directory permissions on {}: {e}",
-                    parent.display()
-                );
-            }
-        }
-    }
-
-    let encrypted = encrypt(json.as_bytes())?;
-    crate::fs_util::atomic_write(&path, &encrypted)
-        .map_err(|e| anyhow::anyhow!("Failed to write credentials for {account}: {e}"))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
-            eprintln!(
-                "Warning: failed to set file permissions on {}: {e}",
-                path.display()
-            );
-        }
-    }
-
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn encrypt_decrypt_round_trip() {
-        let plaintext = b"hello, world!";
-        let encrypted = encrypt(plaintext).expect("encryption should succeed");
-
-        // Encrypted data should be different from plaintext
-        assert_ne!(&encrypted, plaintext);
-
-        // Should be nonce (12) + ciphertext (plaintext + 16 byte tag)
-        assert_eq!(encrypted.len(), 12 + plaintext.len() + 16);
-
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
-        assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn encrypt_decrypt_empty() {
-        let plaintext = b"";
-        let encrypted = encrypt(plaintext).expect("encryption should succeed");
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
-        assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn encrypt_decrypt_json_credentials() {
-        let json = r#"{"type":"authorized_user","client_id":"test.apps.googleusercontent.com","client_secret":"secret","refresh_token":"1//token"}"#;
-        let encrypted = encrypt(json.as_bytes()).expect("encryption should succeed");
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
-        assert_eq!(String::from_utf8(decrypted).unwrap(), json);
-    }
-
-    #[test]
-    fn encrypt_decrypt_large_payload() {
-        let plaintext: Vec<u8> = (0..10_000).map(|i| (i % 256) as u8).collect();
-        let encrypted = encrypt(&plaintext).expect("encryption should succeed");
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
-        assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn decrypt_rejects_short_data() {
-        let result = decrypt(&[0u8; 11]);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("too short"));
-    }
-
-    #[test]
-    fn decrypt_rejects_tampered_ciphertext() {
-        let encrypted = encrypt(b"secret data").expect("encryption should succeed");
-
-        // Tamper with the ciphertext (after the 12-byte nonce)
-        let mut tampered = encrypted.clone();
-        if tampered.len() > 12 {
-            tampered[12] ^= 0xFF;
-        }
-
-        let result = decrypt(&tampered);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Decryption failed"));
-    }
-
-    #[test]
-    fn decrypt_rejects_tampered_nonce() {
-        let encrypted = encrypt(b"secret data").expect("encryption should succeed");
-
-        let mut tampered = encrypted.clone();
-        tampered[0] ^= 0xFF;
-
-        let result = decrypt(&tampered);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn each_encryption_produces_different_output() {
-        let plaintext = b"same input";
-        let enc1 = encrypt(plaintext).expect("encryption should succeed");
-        let enc2 = encrypt(plaintext).expect("encryption should succeed");
-
-        // Different nonces should produce different ciphertext
-        assert_ne!(enc1, enc2);
-
-        // But both should decrypt to the same plaintext
-        let dec1 = decrypt(&enc1).unwrap();
-        let dec2 = decrypt(&enc2).unwrap();
-        assert_eq!(dec1, dec2);
-        assert_eq!(dec1, plaintext);
-    }
 
     #[test]
     fn get_or_create_key_is_deterministic() {
@@ -428,34 +291,50 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypted_credentials_path_for_uses_b64() {
-        let path = encrypted_credentials_path_for("user@gmail.com");
-        let filename = path.file_name().unwrap().to_str().unwrap();
-        // Should start with "credentials." and end with ".enc"
-        assert!(filename.starts_with("credentials."));
-        assert!(filename.ends_with(".enc"));
-        // Should NOT contain the raw email
-        assert!(!filename.contains('@'));
-        assert!(!filename.contains("user@gmail.com"));
+    fn encrypt_decrypt_round_trip() {
+        let plaintext = b"hello, world!";
+        let encrypted = encrypt(plaintext).expect("encryption should succeed");
+        assert_ne!(&encrypted, plaintext);
+        assert_eq!(encrypted.len(), 12 + plaintext.len() + 16);
+        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn test_encrypted_credentials_path_for_case_insensitive() {
-        let path1 = encrypted_credentials_path_for("User@Gmail.COM");
-        let path2 = encrypted_credentials_path_for("user@gmail.com");
-        assert_eq!(
-            path1, path2,
-            "Case-different emails should map to same path"
-        );
+    fn encrypt_decrypt_empty() {
+        let plaintext = b"";
+        let encrypted = encrypt(plaintext).expect("encryption should succeed");
+        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
-    fn test_encrypted_credentials_path_for_different_emails_differ() {
-        let path1 = encrypted_credentials_path_for("alice@example.com");
-        let path2 = encrypted_credentials_path_for("bob@example.com");
-        assert_ne!(
-            path1, path2,
-            "Different emails should map to different paths"
-        );
+    fn decrypt_rejects_short_data() {
+        let result = decrypt(&[0u8; 11]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
+    }
+
+    #[test]
+    fn decrypt_rejects_tampered_ciphertext() {
+        let encrypted = encrypt(b"secret data").expect("encryption should succeed");
+        let mut tampered = encrypted.clone();
+        if tampered.len() > 12 {
+            tampered[12] ^= 0xFF;
+        }
+        let result = decrypt(&tampered);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn each_encryption_produces_different_output() {
+        let plaintext = b"same input";
+        let enc1 = encrypt(plaintext).expect("encryption should succeed");
+        let enc2 = encrypt(plaintext).expect("encryption should succeed");
+        assert_ne!(enc1, enc2);
+        let dec1 = decrypt(&enc1).unwrap();
+        let dec2 = decrypt(&enc2).unwrap();
+        assert_eq!(dec1, dec2);
+        assert_eq!(dec1, plaintext);
     }
 }

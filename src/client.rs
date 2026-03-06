@@ -11,13 +11,6 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
         headers.insert("x-goog-api-client", header_value);
     }
 
-    // Set quota project from ADC for billing/quota attribution
-    if let Some(quota_project) = crate::auth::get_quota_project() {
-        if let Ok(header_value) = HeaderValue::from_str(&quota_project) {
-            headers.insert("x-goog-user-project", header_value);
-        }
-    }
-
     reqwest::Client::builder()
         .default_headers(headers)
         .build()

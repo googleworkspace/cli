@@ -814,8 +814,7 @@ async fn execute_mcp_method(
     };
 
     let scopes: Vec<&str> = crate::select_scope(&method.scopes).into_iter().collect();
-    let account = std::env::var("GOOGLE_WORKSPACE_CLI_ACCOUNT").ok();
-    let (token, auth_method) = match crate::executor::resolve_auth(&scopes, account.as_deref()).await {
+    let (token, auth_method) = match crate::executor::resolve_auth(&scopes).await {
         Ok(auth) => auth,
         Err(e) => {
             eprintln!(

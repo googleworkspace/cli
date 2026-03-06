@@ -3,6 +3,9 @@
 **One CLI for all of Google Workspace — built for humans and AI agents.**<br>
 Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
 
+> [!IMPORTANT]
+> Temporarily disabling non-collaborator pull requests. See this discussion, https://github.com/googleworkspace/cli/discussions/249.
+
 > [!NOTE]
 > This is **not** an officially supported Google product.
 
@@ -134,22 +137,6 @@ gws auth login       # subsequent scope selection and login
 > gws auth login -s drive,gmail,sheets
 > ```
 
-### Multiple accounts
-
-You can authenticate with more than one Google account and switch between them:
-
-```bash
-gws auth login --account work@corp.com  # login and register an account
-gws auth login --account personal@gmail.com
-
-gws auth list  # list registered accounts
-gws auth default work@corp.com. # set the default
-
-gws --account personal@gmail.com drive files list  # one-off override
-export GOOGLE_WORKSPACE_CLI_ACCOUNT=personal@gmail.com  # env var override
-```
-
-Credentials are stored per-account as `credentials.<b64-email>.enc` in `~/.config/gws/`, with an `accounts.json` registry tracking defaults.
 
 ### Manual OAuth setup (Google Cloud Console)
 
@@ -209,12 +196,6 @@ export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
 gws drive files list
 ```
 
-For Domain-Wide Delegation, add:
-
-```bash
-export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=admin@example.com
-```
-
 ### Pre-obtained Access Token
 
 Useful when another tool (e.g. `gcloud`) already mints tokens for your environment.
@@ -225,14 +206,12 @@ export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 
 ### Precedence
 
-| Priority | Source                            | Set via                                 |
-| -------- | --------------------------------- | --------------------------------------- |
-| 1        | Access token                      | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
-| 2        | Credentials file                  | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
-| 3        | Per-account encrypted credentials | `gws auth login --account EMAIL`        |
-| 4        | Plaintext credentials             | `~/.config/gws/credentials.json`        |
-
-Account resolution: `--account` flag > `GOOGLE_WORKSPACE_CLI_ACCOUNT` env var > default in `accounts.json`.
+| Priority | Source                 | Set via                                 |
+| -------- | ---------------------- | --------------------------------------- |
+| 1        | Access token           | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
+| 2        | Credentials file       | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
+| 3        | Encrypted credentials  | `gws auth login`                        |
+| 4        | Plaintext credentials  | `~/.config/gws/credentials.json`        |
 
 Environment variables can also live in a `.env` file.
 
@@ -365,8 +344,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
-| `GOOGLE_WORKSPACE_CLI_ACCOUNT` | Default account email (overridden by `--account` flag) |
-| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email for Domain-Wide Delegation (service accounts) |
+
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |

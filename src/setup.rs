@@ -286,7 +286,7 @@ pub async fn fetch_scopes_for_apis(enabled_api_ids: &[String]) -> Vec<Discovered
                             continue;
                         }
                         // Filter out scopes that can't be used with user OAuth consent
-                        // (they require a Chat app, service account, or domain-wide delegation)
+                        // (they require a Chat app or service account)
                         if url.contains("/auth/chat.app.")
                             || url.contains("/auth/chat.bot")
                             || url.contains("/auth/chat.import")
