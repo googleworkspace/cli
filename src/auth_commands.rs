@@ -95,15 +95,18 @@ pub fn base_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         let path = PathBuf::from(&dir);
         
+        // Resolve symlinks to check the real path. If path doesn't exist, check the given path.
+        let path_to_check = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        
         // Check for suspicious paths like root, system directories, or .ssh
-        let is_suspicious = path.parent().is_none()
+        let is_suspicious = path_to_check.parent().is_none()
             || (cfg!(unix)
-                && (path.starts_with("/etc")
-                    || path.starts_with("/usr")
-                    || path.starts_with("/var")
-                    || path.starts_with("/bin")
-                    || path.starts_with("/sbin")))
-            || path.components().any(|c| c.as_os_str() == ".ssh");
+                && (path_to_check.starts_with("/etc")
+                    || path_to_check.starts_with("/usr")
+                    || path_to_check.starts_with("/var")
+                    || path_to_check.starts_with("/bin")
+                    || path_to_check.starts_with("/sbin")))
+            || path_to_check.components().any(|c| c.as_os_str() == ".ssh");
 
         if is_suspicious {
             eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
@@ -175,10 +178,12 @@ pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
     if profile_name.is_empty()
         || profile_name == "."
         || profile_name == ".."
-        || profile_name.chars().any(|c| !(c.is_alphanumeric() || c == '-' || c == '_'))
+        || profile_name.chars().any(|c| {
+            !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '-' && c != '_'
+        })
     {
         return Err(GwsError::Validation(
-            "Invalid profile name. It must not be empty, '.', or '..', and can only contain alphanumeric characters, dashes (-), and underscores (_).".to_string(),
+            "Invalid profile name. It must not be empty, '.', or '..', and can only contain lowercase alphanumeric characters, dashes (-), and underscores (_).".to_string(),
         ));
     }
     Ok(())
