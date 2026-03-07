@@ -2,7 +2,7 @@
 name: "gws-modelarmor"
 version: "1.0.0"
 description: "Google Model Armor: Filter user-generated content for safety."
-category: "productivity"
+category: "security"
 requires:
   bins: ["gws"]
 cliHelp: "gws modelarmor --help"
