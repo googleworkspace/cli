@@ -117,7 +117,8 @@ pub async fn base_config_dir() -> PathBuf {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // The directory doesn't exist yet, which is a valid use case.
                 // We can't canonicalize, so we'll run security checks on the provided path.
-                let is_suspicious = path.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
+                let is_suspicious = path.parent().is_none() 
+                    || path.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
                     || (cfg!(unix)
                         && (path.starts_with("/etc")
                             || path.starts_with("/usr")
@@ -1293,14 +1294,14 @@ async fn handle_status() -> Result<(), GwsError> {
         }
     } // end !cfg!(test)
 
+    // Determine the active profile
+    let profile = get_active_profile().await.unwrap_or_else(|| "default".to_string());
+    output["active_profile"] = json!(profile);
+
     println!(
         "{}",
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
-    // Determine the active profile
-    let profile = get_active_profile().await.unwrap_or_else(|| "default".to_string());
-        
-    println!("\nActive Profile: {profile}");
 
     Ok(())
 }
