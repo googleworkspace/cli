@@ -19,36 +19,34 @@ use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 
 use keyring::Entry;
 use rand::RngCore;
-use std::sync::OnceLock;
+
 
 /// Returns the encryption key derived from the OS keyring, or falls back to a local file.
 /// Generates a random 256-bit key and stores it securely if it doesn't exist.
-fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
-    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
+    static KEY: tokio::sync::RwLock<Option<[u8; 32]>> = tokio::sync::RwLock::const_new(None);
 
-    if let Some(key) = KEY.get() {
-        return Ok(*key);
+    if let Some(key) = *KEY.read().await {
+        return Ok(key);
     }
 
-    let cache_key = |candidate: [u8; 32]| -> [u8; 32] {
-        if KEY.set(candidate).is_ok() {
-            candidate
-        } else {
-            // If set() fails, another thread already initialized the key. .get() is
-            // guaranteed to return Some at this point.
-            *KEY.get()
-                .expect("key must be initialized if OnceLock::set() failed")
-        }
+    let mut lock = KEY.write().await;
+    if let Some(key) = *lock {
+        return Ok(key);
+    }
+
+    let mut cache_key = |candidate: [u8; 32]| -> [u8; 32] {
+        *lock = Some(candidate);
+        candidate
     };
 
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
 
-    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
+    let key_file = crate::auth_commands::config_dir().await.join(".encryption_key");
 
-    let profile = crate::auth_commands::get_active_profile();
-
+    let profile = crate::auth_commands::get_active_profile().await;
     let service_name = match profile.as_deref() {
         Some("default") | None => "gws-cli".to_string(),
         Some(name) => format!("gws-cli-{}", name),
@@ -178,7 +176,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     }
     #[cfg(not(unix))]
     {
-        let _ = std::fs::write(&key_file, b64_key);
+        let _ = tokio::fs::write(&key_file, b64_key).await;
     }
 
     Ok(cache_key(key))
@@ -186,8 +184,8 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 
 /// Encrypts plaintext bytes using AES-256-GCM with a machine-derived key.
 /// Returns nonce (12 bytes) || ciphertext.
-pub fn encrypt(plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let key = get_or_create_key()?;
+pub async fn encrypt(plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let key = get_or_create_key().await?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("Failed to create cipher: {e}"))?;
 
@@ -203,12 +201,12 @@ pub fn encrypt(plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Decrypts data produced by `encrypt()`.
-pub fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
+pub async fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     if data.len() < 12 {
         anyhow::bail!("Encrypted data too short");
     }
 
-    let key = get_or_create_key()?;
+    let key = get_or_create_key().await?;
     let cipher = Aes256Gcm::new_from_slice(&key)
         .map_err(|e| anyhow::anyhow!("Failed to create cipher: {e}"))?;
 
@@ -224,19 +222,21 @@ pub fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Returns the path for encrypted credentials.
-pub fn encrypted_credentials_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("credentials.enc")
+pub async fn encrypted_credentials_path() -> PathBuf {
+    crate::auth_commands::config_dir().await.join("credentials.enc")
 }
 
 /// Saves credentials JSON to an encrypted file.
-pub fn save_encrypted(json: &str) -> anyhow::Result<PathBuf> {
-    let path = encrypted_credentials_path();
+pub async fn save_encrypted(json: &str) -> anyhow::Result<PathBuf> {
+    let path = encrypted_credentials_path().await;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            let mut perms = tokio::fs::metadata(parent).await?.permissions();
+            perms.set_mode(0o700);
+            if let Err(e) = tokio::fs::set_permissions(parent, perms).await
             {
                 eprintln!(
                     "Warning: failed to set directory permissions on {}: {e}",
@@ -246,18 +246,20 @@ pub fn save_encrypted(json: &str) -> anyhow::Result<PathBuf> {
         }
     }
 
-    let encrypted = encrypt(json.as_bytes())?;
+    let encrypted = encrypt(json.as_bytes()).await?;
 
     // Write atomically via a sibling .tmp file + rename so the credentials
     // file is never left in a corrupt partial-write state on crash/Ctrl-C.
-    crate::fs_util::atomic_write(&path, &encrypted)
+    crate::fs_util::atomic_write_async(&path, &encrypted).await
         .map_err(|e| anyhow::anyhow!("Failed to write credentials: {e}"))?;
 
     // Set permissions to 600 on Unix (contains secrets)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+        let mut perms = tokio::fs::metadata(&path).await?.permissions();
+        perms.set_mode(0o600);
+        if let Err(e) = tokio::fs::set_permissions(&path, perms).await {
             eprintln!(
                 "Warning: failed to set file permissions on {}: {e}",
                 path.display()
@@ -269,78 +271,79 @@ pub fn save_encrypted(json: &str) -> anyhow::Result<PathBuf> {
 }
 
 /// Loads and decrypts credentials JSON from a specific path.
-pub fn load_encrypted_from_path(path: &std::path::Path) -> anyhow::Result<String> {
-    let data = std::fs::read(path)?;
-    let plaintext = decrypt(&data)?;
+pub async fn load_encrypted_from_path(path: &std::path::Path) -> anyhow::Result<String> {
+    let data = tokio::fs::read(path).await?;
+    let plaintext = decrypt(&data).await?;
     Ok(String::from_utf8(plaintext)?)
 }
 
 /// Loads and decrypts credentials JSON from the default encrypted file.
-pub fn load_encrypted() -> anyhow::Result<String> {
-    load_encrypted_from_path(&encrypted_credentials_path())
+pub async fn load_encrypted() -> anyhow::Result<String> {
+    let path = encrypted_credentials_path().await;
+    load_encrypted_from_path(&path).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn get_or_create_key_is_deterministic() {
-        let key1 = get_or_create_key().unwrap();
-        let key2 = get_or_create_key().unwrap();
+    #[tokio::test]
+    async fn get_or_create_key_is_deterministic() {
+        let key1 = get_or_create_key().await.unwrap();
+        let key2 = get_or_create_key().await.unwrap();
         assert_eq!(key1, key2);
     }
 
-    #[test]
-    fn get_or_create_key_produces_256_bits() {
-        let key = get_or_create_key().unwrap();
+    #[tokio::test]
+    async fn get_or_create_key_produces_256_bits() {
+        let key = get_or_create_key().await.unwrap();
         assert_eq!(key.len(), 32);
     }
 
-    #[test]
-    fn encrypt_decrypt_round_trip() {
+    #[tokio::test]
+    async fn encrypt_decrypt_round_trip() {
         let plaintext = b"hello, world!";
-        let encrypted = encrypt(plaintext).expect("encryption should succeed");
+        let encrypted = encrypt(plaintext).await.expect("encryption should succeed");
         assert_ne!(&encrypted, plaintext);
         assert_eq!(encrypted.len(), 12 + plaintext.len() + 16);
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
+        let decrypted = decrypt(&encrypted).await.expect("decryption should succeed");
         assert_eq!(decrypted, plaintext);
     }
 
-    #[test]
-    fn encrypt_decrypt_empty() {
+    #[tokio::test]
+    async fn encrypt_decrypt_empty() {
         let plaintext = b"";
-        let encrypted = encrypt(plaintext).expect("encryption should succeed");
-        let decrypted = decrypt(&encrypted).expect("decryption should succeed");
+        let encrypted = encrypt(plaintext).await.expect("encryption should succeed");
+        let decrypted = decrypt(&encrypted).await.expect("decryption should succeed");
         assert_eq!(decrypted, plaintext);
     }
 
-    #[test]
-    fn decrypt_rejects_short_data() {
-        let result = decrypt(&[0u8; 11]);
+    #[tokio::test]
+    async fn decrypt_rejects_short_data() {
+        let result = decrypt(&[0u8; 11]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too short"));
     }
 
-    #[test]
-    fn decrypt_rejects_tampered_ciphertext() {
-        let encrypted = encrypt(b"secret data").expect("encryption should succeed");
+    #[tokio::test]
+    async fn decrypt_rejects_tampered_ciphertext() {
+        let encrypted = encrypt(b"secret data").await.expect("encryption should succeed");
         let mut tampered = encrypted.clone();
         if tampered.len() > 12 {
             tampered[12] ^= 0xFF;
         }
-        let result = decrypt(&tampered);
+        let result = decrypt(&tampered).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn each_encryption_produces_different_output() {
+    #[tokio::test]
+    async fn each_encryption_produces_different_output() {
         let plaintext = b"same input";
-        let enc1 = encrypt(plaintext).expect("encryption should succeed");
-        let enc2 = encrypt(plaintext).expect("encryption should succeed");
+        let enc1 = encrypt(plaintext).await.expect("encryption should succeed");
+        let enc2 = encrypt(plaintext).await.expect("encryption should succeed");
         assert_ne!(enc1, enc2);
-        let dec1 = decrypt(&enc1).unwrap();
-        let dec2 = decrypt(&enc2).unwrap();
+        let dec1 = decrypt(&enc1).await.unwrap();
+        let dec2 = decrypt(&enc2).await.unwrap();
         assert_eq!(dec1, dec2);
         assert_eq!(dec1, plaintext);
     }

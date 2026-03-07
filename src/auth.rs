@@ -78,8 +78,8 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     }
 
     let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
-    let config_dir = crate::auth_commands::config_dir();
-    let enc_path = credential_store::encrypted_credentials_path();
+    let config_dir = crate::auth_commands::config_dir().await;
+    let enc_path = credential_store::encrypted_credentials_path().await;
     let default_path = config_dir.join("credentials.json");
     let token_cache = config_dir.join("token_cache.json");
 
@@ -189,6 +189,7 @@ async fn load_credentials_inner(
     // 2. Encrypted credentials (always AuthorizedUser for now)
     if enc_path.exists() {
         let json_str = credential_store::load_encrypted_from_path(enc_path)
+            .await
             .context("Failed to decrypt credentials")?;
 
         let creds: serde_json::Value =
@@ -539,7 +540,7 @@ mod tests {
         let enc_path = dir.path().join("credentials.enc");
 
         // Encrypt and write
-        let encrypted = crate::credential_store::encrypt(json.as_bytes()).unwrap();
+        let encrypted = crate::credential_store::encrypt(json.as_bytes()).await.unwrap();
         std::fs::write(&enc_path, &encrypted).unwrap();
 
         let res = load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
@@ -576,7 +577,7 @@ mod tests {
         let enc_path = dir.path().join("credentials.enc");
         let plain_path = dir.path().join("credentials.json");
 
-        let encrypted = crate::credential_store::encrypt(enc_json.as_bytes()).unwrap();
+        let encrypted = crate::credential_store::encrypt(enc_json.as_bytes()).await.unwrap();
         std::fs::write(&enc_path, &encrypted).unwrap();
         std::fs::write(&plain_path, plain_json).unwrap();
 

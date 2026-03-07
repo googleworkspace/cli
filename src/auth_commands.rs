@@ -91,12 +91,12 @@ const READONLY_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/tasks.readonly",
 ];
 
-pub fn base_config_dir() -> PathBuf {
+pub async fn base_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         let path = PathBuf::from(&dir);
         
         // Resolve symlinks to check the real path. If path doesn't exist, check the given path.
-        let path_to_check = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let path_to_check = tokio::fs::canonicalize(&path).await.unwrap_or_else(|_| path.clone());
         
         // Check for suspicious paths like root, system directories, or .ssh
         let is_suspicious = path_to_check.parent().is_none()
@@ -137,41 +137,43 @@ pub fn base_config_dir() -> PathBuf {
         }
 }
 
-pub fn get_active_profile() -> Option<String> {
-    std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
+pub async fn get_active_profile() -> Option<String> {
+    if let Some(s) = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
         .ok()
         .filter(|s| !s.is_empty())
-        .and_then(|s| match validate_profile_name(&s) {
-            Ok(_) => Some(s),
+    {
+        match validate_profile_name(&s) {
+            Ok(_) => return Some(s),
             Err(e) => {
                 eprintln!(
                     "Error: Invalid profile name '{}' from GOOGLE_WORKSPACE_CLI_PROFILE: {}. Using default profile.",
                     s, e
                 );
-                None
+                return None;
             }
-        })
-        .or_else(|| {
-            let base_dir = base_config_dir();
-            std::fs::read_to_string(base_dir.join("active_profile"))
-                .ok()
-                .and_then(|s| {
-                    let trimmed = s.trim();
-                    if trimmed.is_empty() {
-                        return None;
-                    }
-                    match validate_profile_name(trimmed) {
-                        Ok(_) => Some(trimmed.to_string()),
-                        Err(e) => {
-                            eprintln!(
-                                "Error: Invalid profile name '{}' found in active_profile file: {}. Please fix it or remove the file. Defaulting to 'default' profile.",
-                                trimmed, e
-                            );
-                            None
-                        }
-                    }
-                })
-        })
+        }
+    }
+
+    let base_dir = base_config_dir().await;
+    match tokio::fs::read_to_string(base_dir.join("active_profile")).await {
+        Ok(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            match validate_profile_name(trimmed) {
+                Ok(_) => Some(trimmed.to_string()),
+                Err(e) => {
+                    eprintln!(
+                        "Error: Invalid profile name '{}' found in active_profile file: {}. Please fix it or remove the file. Defaulting to 'default' profile.",
+                        trimmed, e
+                    );
+                    None
+                }
+            }
+        }
+        Err(_) => None,
+    }
 }
 
 pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
@@ -190,24 +192,24 @@ pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
     Ok(())
 }
 
-pub fn config_dir() -> PathBuf {
-    let base_dir = base_config_dir();
+pub async fn config_dir() -> PathBuf {
+    let base_dir = base_config_dir().await;
 
-    match get_active_profile().as_deref() {
+    match get_active_profile().await.as_deref() {
         Some("default") | None => base_dir,
         Some(name) => base_dir.join("profiles").join(name),
     }
 }
 
-fn plain_credentials_path() -> PathBuf {
+pub async fn plain_credentials_path() -> PathBuf {
     if let Ok(path) = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE") {
         return PathBuf::from(path);
     }
-    config_dir().join("credentials.json")
+    config_dir().await.join("credentials.json")
 }
 
-fn token_cache_path() -> PathBuf {
-    config_dir().join("token_cache.json")
+pub async fn token_cache_path() -> PathBuf {
+    config_dir().await.join("token_cache.json")
 }
 
 /// Handle `gws auth <subcommand>`.
@@ -244,7 +246,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
             handle_export(unmasked).await
         }
-        "logout" => handle_logout(),
+        "logout" => handle_logout().await,
         other => Err(GwsError::Validation(format!(
             "Unknown auth subcommand: '{other}'. Use: login, setup, status, switch, export, logout"
         ))),
@@ -263,7 +265,7 @@ async fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     validate_profile_name(profile_name)?;
 
     // Read the base directory without applying the current active profile
-    let base_dir = base_config_dir();
+    let base_dir = base_config_dir().await;
 
     if !base_dir.exists() {
         tokio::fs::create_dir_all(&base_dir).await.map_err(|e| {
@@ -359,11 +361,11 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     // Resolve client_id and client_secret:
     // 1. Env vars (highest priority)
     // 2. Saved client_secret.json from `gws auth setup` or manual download
-    let (client_id, client_secret, project_id) = resolve_client_credentials()?;
+    let (client_id, client_secret, project_id) = resolve_client_credentials().await?;
 
     // Persist credentials to client_secret.json if not already saved,
     // so they survive env var removal or shell session changes.
-    if !crate::oauth_config::client_config_path().exists() {
+    if !crate::oauth_config::client_config_path().await.exists() {
         let _ = crate::oauth_config::save_client_config(
             &client_id,
             &client_secret,
@@ -401,7 +403,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Use a temp file for yup-oauth2's token persistence, then encrypt it
-    let temp_path = config_dir().join("credentials.tmp");
+    let temp_path = config_dir().await.join("credentials.tmp");
 
     // Always start fresh — delete any stale temp cache from prior login attempts.
     let _ = std::fs::remove_file(&temp_path);
@@ -434,12 +436,14 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
 
     if token.token().is_some() {
         // Read yup-oauth2's token cache to extract the refresh_token.
-        // EncryptedTokenStorage stores data encrypted, so we must decrypt first.
-        let token_data = std::fs::read(&temp_path)
-            .ok()
-            .and_then(|bytes| crate::credential_store::decrypt(&bytes).ok())
-            .and_then(|decrypted| String::from_utf8(decrypted).ok())
-            .unwrap_or_default();
+        let mut token_data = String::new();
+        if let Ok(bytes) = tokio::fs::read(&temp_path).await {
+            if let Ok(decrypted) = crate::credential_store::decrypt(&bytes).await {
+                if let Ok(s) = String::from_utf8(decrypted) {
+                    token_data = s;
+                }
+            }
+        }
         let refresh_token = extract_refresh_token(&token_data).ok_or_else(|| {
             GwsError::Auth(
                 "OAuth flow completed but no refresh token was returned. \
@@ -465,6 +469,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
 
         // Save encrypted credentials
         let enc_path = credential_store::save_encrypted(&creds_str)
+            .await
             .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
 
         // Clean up temp file
@@ -514,14 +519,14 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
 }
 
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
-    let enc_path = credential_store::encrypted_credentials_path();
+    let enc_path = credential_store::encrypted_credentials_path().await;
     if !enc_path.exists() {
         return Err(GwsError::Auth(
             "No encrypted credentials found. Run 'gws auth login' first.".to_string(),
         ));
     }
 
-    match credential_store::load_encrypted() {
+    match credential_store::load_encrypted().await {
         Ok(contents) => {
             if unmasked {
                 println!("{contents}");
@@ -548,7 +553,7 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
 }
 
 /// Resolve OAuth client credentials from env vars or saved config file.
-fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsError> {
+async fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsError> {
     // 1. Try env vars first
     let env_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID").ok();
     let env_secret = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET").ok();
@@ -556,13 +561,14 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
     if let (Some(id), Some(secret)) = (env_id, env_secret) {
         // Still try to load project_id from config file for the scope picker
         let project_id = crate::oauth_config::load_client_config()
+            .await
             .ok()
             .map(|c| c.project_id);
         return Ok((id, secret, project_id));
     }
 
     // 2. Try saved client_secret.json
-    match crate::oauth_config::load_client_config() {
+    match crate::oauth_config::load_client_config().await {
         Ok(config) => Ok((
             config.client_id,
             config.client_secret,
@@ -576,7 +582,7 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
                    2. Download client_secret.json from Google Cloud Console and save it to:\n     \
                       {}\n  \
                    3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-                crate::oauth_config::client_config_path().display()
+                crate::oauth_config::client_config_path().await.display()
             ),
         )),
     }
@@ -1023,9 +1029,9 @@ fn run_simple_scope_picker(services_filter: Option<&HashSet<String>>) -> Option<
 }
 
 async fn handle_status() -> Result<(), GwsError> {
-    let plain_path = plain_credentials_path();
-    let enc_path = credential_store::encrypted_credentials_path();
-    let token_cache = token_cache_path();
+    let plain_path = plain_credentials_path().await;
+    let enc_path = credential_store::encrypted_credentials_path().await;
+    let token_cache = token_cache_path().await;
 
     let has_encrypted = enc_path.exists();
     let has_plain = plain_path.exists();
@@ -1056,13 +1062,13 @@ async fn handle_status() -> Result<(), GwsError> {
     });
 
     // Show client config (client_secret.json) status
-    let config_path = crate::oauth_config::client_config_path();
+    let config_path = crate::oauth_config::client_config_path().await;
     let has_config = config_path.exists();
     output["client_config"] = json!(config_path.display().to_string());
     output["client_config_exists"] = json!(has_config);
 
     if has_config {
-        match crate::oauth_config::load_client_config() {
+        match crate::oauth_config::load_client_config().await {
             Ok(config) => {
                 output["project_id"] = json!(config.project_id);
                 let masked_id = if config.client_id.len() > 12 {
@@ -1092,7 +1098,7 @@ async fn handle_status() -> Result<(), GwsError> {
         output["token_env_var"] = json!(true);
         "token_env_var"
     } else {
-        match resolve_client_credentials() {
+        match resolve_client_credentials().await {
             Ok((_, _, _)) => {
                 let has_env_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID").is_ok();
                 let has_env_secret = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET").is_ok();
@@ -1111,7 +1117,7 @@ async fn handle_status() -> Result<(), GwsError> {
     // Skip real credential/network access in test builds
     if !cfg!(test) {
         if has_encrypted {
-            match credential_store::load_encrypted() {
+            match credential_store::load_encrypted().await {
                 Ok(contents) => {
                     if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&contents) {
                         if let Some(client_id) = creds.get("client_id").and_then(|v| v.as_str()) {
@@ -1169,7 +1175,7 @@ async fn handle_status() -> Result<(), GwsError> {
     // Skip all network calls and subprocess spawning in test builds
     if !cfg!(test) {
         let creds_json_str = if has_encrypted {
-            credential_store::load_encrypted().ok()
+            credential_store::load_encrypted().await.ok()
         } else if has_plain {
             tokio::fs::read_to_string(&plain_path).await.ok()
         } else {
@@ -1270,18 +1276,18 @@ async fn handle_status() -> Result<(), GwsError> {
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
     // Determine the active profile
-    let profile = get_active_profile().unwrap_or_else(|| "default".to_string());
+    let profile = get_active_profile().await.unwrap_or_else(|| "default".to_string());
         
     println!("\nActive Profile: {profile}");
 
     Ok(())
 }
 
-fn handle_logout() -> Result<(), GwsError> {
-    let plain_path = plain_credentials_path();
-    let enc_path = credential_store::encrypted_credentials_path();
-    let token_cache = token_cache_path();
-    let sa_token_cache = config_dir().join("sa_token_cache.json");
+async fn handle_logout() -> Result<(), GwsError> {
+    let plain_path = plain_credentials_path().await;
+    let enc_path = credential_store::encrypted_credentials_path().await;
+    let token_cache = token_cache_path().await;
+    let sa_token_cache = config_dir().await.join("sa_token_cache.json");
 
     let mut removed = Vec::new();
 
@@ -1521,14 +1527,14 @@ mod tests {
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn resolve_client_credentials_from_env_vars() {
+    async fn resolve_client_credentials_from_env_vars() {
         unsafe {
             std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
             std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
         }
-        let result = resolve_client_credentials();
+        let result = resolve_client_credentials().await;
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
@@ -1539,16 +1545,16 @@ mod tests {
         // project_id may be Some if client_secret.json exists on the machine
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn resolve_client_credentials_missing_env_vars_uses_config() {
+    async fn resolve_client_credentials_missing_env_vars_uses_config() {
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
         }
         // Result depends on whether client_secret.json exists on the machine
-        let result = resolve_client_credentials();
-        if crate::oauth_config::client_config_path().exists() {
+        let result = resolve_client_credentials().await;
+        if crate::oauth_config::client_config_path().await.exists() {
             assert!(
                 result.is_ok(),
                 "Should succeed when client_secret.json exists"
@@ -1560,9 +1566,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn config_dir_returns_gws_subdir() {
-        let path = config_dir();
+    #[tokio::test]
+    async fn config_dir_returns_gws_subdir() {
+        let path = config_dir().await;
         assert!(path.ends_with("gws"));
     }
 
@@ -1575,9 +1581,9 @@ mod tests {
         assert!(primary.ends_with(".config/gws") || primary.ends_with(r".config\gws"));
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn config_dir_fallback_to_legacy() {
+    async fn config_dir_fallback_to_legacy() {
         // When GOOGLE_WORKSPACE_CLI_CONFIG_DIR points to a legacy-style dir,
         // config_dir() should return it (simulating the test env override).
         let dir = tempfile::tempdir().unwrap();
@@ -1587,46 +1593,47 @@ mod tests {
         unsafe {
             std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", legacy.to_str().unwrap());
         }
-        let path = config_dir();
-        assert_eq!(path, legacy);
+        let path = config_dir().await;
+        let expected = tokio::fs::canonicalize(&legacy).await.unwrap_or(legacy);
+        assert_eq!(path, expected);
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn plain_credentials_path_defaults_to_config_dir() {
+    async fn plain_credentials_path_defaults_to_config_dir() {
         // Without env var, should be in config dir
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
         }
-        let path = plain_credentials_path();
+        let path = plain_credentials_path().await;
         assert!(path.ends_with("credentials.json"));
-        assert!(path.starts_with(config_dir()));
+        assert!(path.starts_with(config_dir().await));
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn plain_credentials_path_respects_env_var() {
+    async fn plain_credentials_path_respects_env_var() {
         unsafe {
             std::env::set_var(
                 "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
                 "/tmp/test-creds.json",
             );
         }
-        let path = plain_credentials_path();
+        let path = plain_credentials_path().await;
         assert_eq!(path, PathBuf::from("/tmp/test-creds.json"));
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
         }
     }
 
-    #[test]
-    fn token_cache_path_is_in_config_dir() {
-        let path = token_cache_path();
+    #[tokio::test]
+    async fn token_cache_path_is_in_config_dir() {
+        let path = token_cache_path().await;
         assert!(path.ends_with("token_cache.json"));
-        assert!(path.starts_with(config_dir()));
+        assert!(path.starts_with(config_dir().await));
     }
 
     #[tokio::test]
@@ -1662,16 +1669,16 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn resolve_credentials_fails_without_env_vars_or_config() {
+    async fn resolve_credentials_fails_without_env_vars_or_config() {
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
         }
         // When no env vars AND no client_secret.json on disk, should fail
-        let result = resolve_client_credentials();
-        if !crate::oauth_config::client_config_path().exists() {
+        let result = resolve_client_credentials().await;
+        if !crate::oauth_config::client_config_path().await.exists() {
             assert!(result.is_err());
             match result.unwrap_err() {
                 GwsError::Auth(msg) => assert!(msg.contains("No OAuth client configured")),
@@ -1682,15 +1689,15 @@ mod tests {
         // successfully — that's correct behavior, not a test failure.
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn resolve_credentials_uses_env_vars_when_present() {
+    async fn resolve_credentials_uses_env_vars_when_present() {
         unsafe {
             std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "test-id");
             std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
         }
 
-        let result = resolve_client_credentials();
+        let result = resolve_client_credentials().await;
 
         // Clean up immediately
         unsafe {
@@ -1711,12 +1718,12 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn credential_store_save_load_round_trip() {
+    #[tokio::test]
+    async fn credential_store_save_load_round_trip() {
         // Use encrypt/decrypt directly to avoid writing to the real config dir
         let json = r#"{"client_id":"test","client_secret":"secret","refresh_token":"tok"}"#;
-        let encrypted = credential_store::encrypt(json.as_bytes()).expect("encrypt should succeed");
-        let decrypted = credential_store::decrypt(&encrypted).expect("decrypt should succeed");
+        let encrypted = credential_store::encrypt(json.as_bytes()).await.expect("encrypt should succeed");
+        let decrypted = credential_store::decrypt(&encrypted).await.expect("decrypt should succeed");
         assert_eq!(String::from_utf8(decrypted).unwrap(), json);
     }
 

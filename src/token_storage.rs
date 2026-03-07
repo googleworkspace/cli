@@ -40,7 +40,7 @@ impl EncryptedTokenStorage {
             Err(_) => return HashMap::new(), // File doesn't exist yet — normal on first run
         };
 
-        let decrypted = match crate::credential_store::decrypt(&data) {
+        let decrypted = match crate::credential_store::decrypt(&data).await {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(
@@ -71,7 +71,7 @@ impl EncryptedTokenStorage {
 
     async fn save_to_disk(&self, map: &HashMap<String, TokenInfo>) -> anyhow::Result<()> {
         let json = serde_json::to_string(map)?;
-        let encrypted = crate::credential_store::encrypt(json.as_bytes())?;
+        let encrypted = crate::credential_store::encrypt(json.as_bytes()).await?;
 
         if let Some(parent) = self.file_path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;

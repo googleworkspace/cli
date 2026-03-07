@@ -53,12 +53,12 @@ pub struct ClientSecretFile {
 }
 
 /// Returns the path for the client secret config file.
-pub fn client_config_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("client_secret.json")
+pub async fn client_config_path() -> PathBuf {
+    crate::auth_commands::config_dir().await.join("client_secret.json")
 }
 
 /// Saves OAuth client configuration in the standard Google Cloud Console format.
-pub fn save_client_config(
+pub async fn save_client_config(
     client_id: &str,
     client_secret: &str,
     project_id: &str,
@@ -75,29 +75,32 @@ pub fn save_client_config(
         },
     };
 
-    let path = client_config_path();
+    let path = client_config_path().await;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
     }
 
     let json = serde_json::to_string_pretty(&config)?;
-    crate::fs_util::atomic_write(&path, json.as_bytes())
+    crate::fs_util::atomic_write_async(&path, json.as_bytes()).await
         .map_err(|e| anyhow::anyhow!("Failed to write client config: {e}"))?;
 
     // Set file permissions to 600 on Unix (contains secrets)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        let mut perms = tokio::fs::metadata(&path).await?.permissions();
+        perms.set_mode(0o600);
+        tokio::fs::set_permissions(&path, perms).await?;
     }
 
     Ok(path)
 }
 
 /// Loads OAuth client configuration from the standard Google Cloud Console format.
-pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
-    let path = client_config_path();
-    let data = std::fs::read_to_string(&path)
+pub async fn load_client_config() -> anyhow::Result<InstalledConfig> {
+    let path = client_config_path().await;
+    let data = tokio::fs::read_to_string(&path)
+        .await
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
     let file: ClientSecretFile = serde_json::from_str(&data)
         .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
@@ -228,9 +231,9 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[serial_test::serial]
-    fn test_load_client_config() {
+    async fn test_load_client_config() {
         let dir = tempfile::tempdir().unwrap();
         let _env_guard = EnvGuard::new(
             "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
@@ -238,24 +241,24 @@ mod tests {
         );
 
         // Initially no config file exists
-        let result = load_client_config();
+        let result = load_client_config().await;
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Cannot read"));
 
         // Create a valid config file
-        save_client_config("test-id", "test-secret", "test-project").unwrap();
+        save_client_config("test-id", "test-secret", "test-project").await.unwrap();
 
         // Now loading should succeed
-        let config = load_client_config().unwrap();
+        let config = load_client_config().await.unwrap();
         assert_eq!(config.client_id, "test-id");
         assert_eq!(config.client_secret, "test-secret");
         assert_eq!(config.project_id, "test-project");
 
         // Create an invalid config file
-        let path = client_config_path();
-        std::fs::write(&path, "invalid json").unwrap();
+        let path = client_config_path().await;
+        tokio::fs::write(&path, "invalid json").await.unwrap();
 
-        let result = load_client_config();
+        let result = load_client_config().await;
         let err = result.unwrap_err();
         assert!(err
             .to_string()
