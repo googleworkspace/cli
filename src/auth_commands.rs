@@ -94,18 +94,19 @@ const READONLY_SCOPES: &[&str] = &[
 pub fn base_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         let path = PathBuf::from(&dir);
-        let path_str = path.to_string_lossy();
         
         // Check for suspicious paths like root, system directories, or .ssh
-        if path_str == "/" 
-            || path_str.starts_with("/etc") 
-            || path_str.starts_with("/usr") 
-            || path_str.starts_with("/var")
-            || path_str.starts_with("/bin")
-            || path_str.starts_with("/sbin")
-            || path.components().any(|c| c.as_os_str() == ".ssh") 
-        {
-            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path_str);
+        let is_suspicious = path.parent().is_none()
+            || (cfg!(unix)
+                && (path.starts_with("/etc")
+                    || path.starts_with("/usr")
+                    || path.starts_with("/var")
+                    || path.starts_with("/bin")
+                    || path.starts_with("/sbin")))
+            || path.components().any(|c| c.as_os_str() == ".ssh");
+
+        if is_suspicious {
+            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
         } else {
             return path;
         }
