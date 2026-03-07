@@ -92,18 +92,6 @@ async fn run() -> Result<(), GwsError> {
 
         filtered_args.push(a.clone());
         
-        if a == "--api-version" {
-            if i + 1 < args.len() {
-                filtered_args.push(args[i+1].clone());
-            }
-            i += 2; // Skip both the flag and the value
-            continue;
-        }
-        if a.starts_with("--api-version=") {
-            i += 1;
-            continue;
-        }
-        
         if first_arg.is_none() && !a.starts_with("--") && a != "--help" && a != "--version" {
             first_arg = Some(a.clone());
         }

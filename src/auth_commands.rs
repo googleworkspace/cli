@@ -129,15 +129,17 @@ pub fn get_active_profile() -> Option<String> {
                 .and_then(|s| {
                     let trimmed = s.trim();
                     if trimmed.is_empty() {
-                        None
-                    } else if let Err(e) = validate_profile_name(trimmed) {
-                        eprintln!(
-                            "Error: Invalid profile name '{}' found in active_profile file: {}. Please fix it or remove the file.",
-                            trimmed, e
-                        );
-                        std::process::exit(1);
-
-                        Some(trimmed.to_string())
+                        return None;
+                    }
+                    match validate_profile_name(trimmed) {
+                        Ok(_) => Some(trimmed.to_string()),
+                        Err(e) => {
+                            eprintln!(
+                                "Error: Invalid profile name '{}' found in active_profile file: {}. Please fix it or remove the file. Defaulting to 'default' profile.",
+                                trimmed, e
+                            );
+                            None
+                        }
                     }
                 })
         })
