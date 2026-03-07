@@ -1,13 +1,12 @@
 ---
-name: gws-sheets
-version: 1.0.0
+name: "gws-sheets"
+version: "1.0.0"
 description: "Google Sheets: Read and write spreadsheets."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws sheets --help"
 ---
-
 # sheets (v4)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

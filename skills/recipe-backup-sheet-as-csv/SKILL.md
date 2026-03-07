@@ -1,18 +1,13 @@
 ---
-name: recipe-backup-sheet-as-csv
-version: 1.0.0
-description: Export a Google Sheets spreadsheet as a CSV file for local backup or
-  processing.
-category: recipe
-domain: productivity
+name: "recipe-backup-sheet-as-csv"
+version: "1.0.0"
+description: "Export a Google Sheets spreadsheet as a CSV file for local backup or processing."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-sheets
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-sheets", "gws-drive"]
 ---
-
 # Export a Google Sheet as CSV
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-sheets`, `gws-drive`

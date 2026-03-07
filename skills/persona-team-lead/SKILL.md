@@ -1,19 +1,12 @@
 ---
-name: persona-team-lead
-version: 1.0.0
-description: Lead a team — run standups, coordinate tasks, and communicate.
-category: persona
+name: "persona-team-lead"
+version: "1.0.0"
+description: "Lead a team — run standups, coordinate tasks, and communicate."
+category: "persona"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-calendar
-  - gws-gmail
-  - gws-chat
-  - gws-drive
-  - gws-sheets
+  bins: ["gws"]
+  skills: ["gws-calendar", "gws-gmail", "gws-chat", "gws-drive", "gws-sheets"]
 ---
-
 # Team Lead
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-calendar`, `gws-gmail`, `gws-chat`, `gws-drive`, `gws-sheets`

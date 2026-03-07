@@ -1,13 +1,12 @@
 ---
-name: gws-workflow-file-announce
-version: 1.0.0
+name: "gws-workflow-file-announce"
+version: "1.0.0"
 description: "Google Workflow: Announce a Drive file in a Chat space."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws workflow +file-announce --help"
 ---
-
 # workflow +file-announce
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

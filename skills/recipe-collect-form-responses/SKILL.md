@@ -1,16 +1,13 @@
 ---
-name: recipe-collect-form-responses
-version: 1.0.0
-description: Retrieve and review responses from a Google Form.
-category: recipe
-domain: productivity
+name: "recipe-collect-form-responses"
+version: "1.0.0"
+description: "Retrieve and review responses from a Google Form."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-forms
+  bins: ["gws"]
+  skills: ["gws-forms"]
 ---
-
 # Check Form Responses
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-forms`

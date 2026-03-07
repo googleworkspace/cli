@@ -1,13 +1,12 @@
 ---
-name: gws-docs-write
-version: 1.0.0
+name: "gws-docs-write"
+version: "1.0.0"
 description: "Google Docs: Append text to a document."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws docs +write --help"
 ---
-
 # docs +write
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

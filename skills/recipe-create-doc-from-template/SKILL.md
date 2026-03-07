@@ -1,17 +1,13 @@
 ---
-name: recipe-create-doc-from-template
-version: 1.0.0
-description: Copy a Google Docs template, fill in content, and share with collaborators.
-category: recipe
-domain: productivity
+name: "recipe-create-doc-from-template"
+version: "1.0.0"
+description: "Copy a Google Docs template, fill in content, and share with collaborators."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
-  - gws-docs
+  bins: ["gws"]
+  skills: ["gws-drive", "gws-docs"]
 ---
-
 # Create a Google Doc from a Template
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`, `gws-docs`

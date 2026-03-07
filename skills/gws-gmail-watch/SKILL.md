@@ -1,13 +1,12 @@
 ---
-name: gws-gmail-watch
-version: 1.0.0
+name: "gws-gmail-watch"
+version: "1.0.0"
 description: "Gmail: Watch for new emails and stream them as NDJSON."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws gmail +watch --help"
 ---
-
 # gmail +watch
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

@@ -1,13 +1,12 @@
 ---
-name: gws-meet
-version: 1.0.0
+name: "gws-meet"
+version: "1.0.0"
 description: "Manage Google Meet conferences."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws meet --help"
 ---
-
 # meet (v2)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

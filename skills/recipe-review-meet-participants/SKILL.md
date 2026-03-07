@@ -1,16 +1,13 @@
 ---
-name: recipe-review-meet-participants
-version: 1.0.0
-description: Review who attended a Google Meet conference and for how long.
-category: recipe
-domain: productivity
+name: "recipe-review-meet-participants"
+version: "1.0.0"
+description: "Review who attended a Google Meet conference and for how long."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-meet
+  bins: ["gws"]
+  skills: ["gws-meet"]
 ---
-
 # Review Google Meet Attendance
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-meet`

@@ -1,12 +1,11 @@
 ---
-name: gws-shared
-version: 1.0.0
+name: "gws-shared"
+version: "1.0.0"
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 category: "productivity"
 requires:
   bins: ["gws"]
 ---
-
 # gws — Shared Reference
 
 ## Installation

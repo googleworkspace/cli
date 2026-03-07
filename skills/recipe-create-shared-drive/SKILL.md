@@ -1,16 +1,13 @@
 ---
-name: recipe-create-shared-drive
-version: 1.0.0
-description: Create a Google Shared Drive and add members with appropriate roles.
-category: recipe
-domain: productivity
+name: "recipe-create-shared-drive"
+version: "1.0.0"
+description: "Create a Google Shared Drive and add members with appropriate roles."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-drive"]
 ---
-
 # Create and Configure a Shared Drive
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`

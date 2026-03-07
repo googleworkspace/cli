@@ -1,13 +1,12 @@
 ---
-name: gws-forms
-version: 1.0.0
+name: "gws-forms"
+version: "1.0.0"
 description: "Read and write Google Forms."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws forms --help"
 ---
-
 # forms (v1)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

@@ -1,17 +1,13 @@
 ---
-name: recipe-organize-drive-folder
-version: 1.0.0
-description: Create a Google Drive folder structure and move files into the right
-  locations.
-category: recipe
-domain: productivity
+name: "recipe-organize-drive-folder"
+version: "1.0.0"
+description: "Create a Google Drive folder structure and move files into the right locations."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-drive"]
 ---
-
 # Organize Files into Google Drive Folders
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`

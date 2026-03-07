@@ -1,17 +1,13 @@
 ---
-name: recipe-share-event-materials
-version: 1.0.0
-description: Share Google Drive files with all attendees of a Google Calendar event.
-category: recipe
-domain: productivity
+name: "recipe-share-event-materials"
+version: "1.0.0"
+description: "Share Google Drive files with all attendees of a Google Calendar event."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-calendar
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-calendar", "gws-drive"]
 ---
-
 # Share Files with Meeting Attendees
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-calendar`, `gws-drive`

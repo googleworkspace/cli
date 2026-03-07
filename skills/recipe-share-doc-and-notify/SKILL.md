@@ -1,19 +1,13 @@
 ---
-name: recipe-share-doc-and-notify
-version: 1.0.0
-description: Share a Google Docs document with edit access and email collaborators
-  the link.
-category: recipe
-domain: productivity
+name: "recipe-share-doc-and-notify"
+version: "1.0.0"
+description: "Share a Google Docs document with edit access and email collaborators the link."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
-  - gws-docs
-  - gws-gmail
+  bins: ["gws"]
+  skills: ["gws-drive", "gws-docs", "gws-gmail"]
 ---
-
 # Share a Google Doc and Notify Collaborators
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`, `gws-docs`, `gws-gmail`

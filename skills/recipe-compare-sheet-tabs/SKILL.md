@@ -1,16 +1,13 @@
 ---
-name: recipe-compare-sheet-tabs
-version: 1.0.0
-description: Read data from two tabs in a Google Sheet to compare and identify differences.
-category: recipe
-domain: productivity
+name: "recipe-compare-sheet-tabs"
+version: "1.0.0"
+description: "Read data from two tabs in a Google Sheet to compare and identify differences."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-sheets
+  bins: ["gws"]
+  skills: ["gws-sheets"]
 ---
-
 # Compare Two Google Sheets Tabs
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-sheets`

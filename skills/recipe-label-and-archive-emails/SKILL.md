@@ -1,17 +1,13 @@
 ---
-name: recipe-label-and-archive-emails
-version: 1.0.0
-description: Apply Gmail labels to matching messages and archive them to keep your
-  inbox clean.
-category: recipe
-domain: productivity
+name: "recipe-label-and-archive-emails"
+version: "1.0.0"
+description: "Apply Gmail labels to matching messages and archive them to keep your inbox clean."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-gmail
+  bins: ["gws"]
+  skills: ["gws-gmail"]
 ---
-
 # Label and Archive Gmail Threads
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-gmail`

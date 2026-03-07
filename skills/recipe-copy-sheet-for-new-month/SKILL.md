@@ -1,16 +1,13 @@
 ---
-name: recipe-copy-sheet-for-new-month
-version: 1.0.0
-description: Duplicate a Google Sheets template tab for a new month of tracking.
-category: recipe
-domain: productivity
+name: "recipe-copy-sheet-for-new-month"
+version: "1.0.0"
+description: "Duplicate a Google Sheets template tab for a new month of tracking."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-sheets
+  bins: ["gws"]
+  skills: ["gws-sheets"]
 ---
-
 # Copy a Google Sheet for a New Month
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-sheets`

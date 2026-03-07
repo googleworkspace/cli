@@ -1,13 +1,12 @@
 ---
-name: gws-drive
-version: 1.0.0
+name: "gws-drive"
+version: "1.0.0"
 description: "Google Drive: Manage files, folders, and shared drives."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws drive --help"
 ---
-
 # drive (v3)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

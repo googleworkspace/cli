@@ -1,13 +1,12 @@
 ---
-name: gws-admin-reports
-version: 1.0.0
+name: "gws-admin-reports"
+version: "1.0.0"
 description: "Google Workspace Admin SDK: Audit logs and usage reports."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws admin-reports --help"
 ---
-
 # admin-reports (reports_v1)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

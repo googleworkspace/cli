@@ -1,17 +1,13 @@
 ---
-name: recipe-send-team-announcement
-version: 1.0.0
-description: Send a team announcement via both Gmail and a Google Chat space.
-category: recipe
-domain: communication
+name: "recipe-send-team-announcement"
+version: "1.0.0"
+description: "Send a team announcement via both Gmail and a Google Chat space."
+category: "recipe"
+domain: "communication"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-gmail
-  - gws-chat
+  bins: ["gws"]
+  skills: ["gws-gmail", "gws-chat"]
 ---
-
 # Announce via Gmail and Google Chat
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-gmail`, `gws-chat`

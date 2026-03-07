@@ -1,17 +1,13 @@
 ---
-name: recipe-log-deal-update
-version: 1.0.0
-description: Append a deal status update to a Google Sheets sales tracking spreadsheet.
-category: recipe
-domain: sales
+name: "recipe-log-deal-update"
+version: "1.0.0"
+description: "Append a deal status update to a Google Sheets sales tracking spreadsheet."
+category: "recipe"
+domain: "sales"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-sheets
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-sheets", "gws-drive"]
 ---
-
 # Log Deal Update to Sheet
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-sheets`, `gws-drive`

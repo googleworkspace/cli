@@ -1,18 +1,12 @@
 ---
-name: persona-researcher
-version: 1.0.0
-description: Organize research — manage references, notes, and collaboration.
-category: persona
+name: "persona-researcher"
+version: "1.0.0"
+description: "Organize research — manage references, notes, and collaboration."
+category: "persona"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
-  - gws-docs
-  - gws-sheets
-  - gws-gmail
+  bins: ["gws"]
+  skills: ["gws-drive", "gws-docs", "gws-sheets", "gws-gmail"]
 ---
-
 # Researcher
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-drive`, `gws-docs`, `gws-sheets`, `gws-gmail`

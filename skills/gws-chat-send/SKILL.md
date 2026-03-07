@@ -1,13 +1,12 @@
 ---
-name: gws-chat-send
-version: 1.0.0
+name: "gws-chat-send"
+version: "1.0.0"
 description: "Google Chat: Send a message to a space."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws chat +send --help"
 ---
-
 # chat +send
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

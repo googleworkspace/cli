@@ -1,13 +1,12 @@
 ---
-name: gws-modelarmor-sanitize-prompt
-version: 1.0.0
+name: "gws-modelarmor-sanitize-prompt"
+version: "1.0.0"
 description: "Google Model Armor: Sanitize a user prompt through a Model Armor template."
 category: "security"
 requires:
   bins: ["gws"]
 cliHelp: "gws modelarmor +sanitize-prompt --help"
 ---
-
 # modelarmor +sanitize-prompt
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

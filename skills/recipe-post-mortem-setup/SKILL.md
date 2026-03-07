@@ -1,19 +1,13 @@
 ---
-name: recipe-post-mortem-setup
-version: 1.0.0
-description: Create a Google Docs post-mortem, schedule a Google Calendar review,
-  and notify via Chat.
-category: recipe
-domain: engineering
+name: "recipe-post-mortem-setup"
+version: "1.0.0"
+description: "Create a Google Docs post-mortem, schedule a Google Calendar review, and notify via Chat."
+category: "recipe"
+domain: "engineering"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-docs
-  - gws-calendar
-  - gws-chat
+  bins: ["gws"]
+  skills: ["gws-docs", "gws-calendar", "gws-chat"]
 ---
-
 # Set Up Post-Mortem
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-docs`, `gws-calendar`, `gws-chat`

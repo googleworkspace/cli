@@ -1,16 +1,13 @@
 ---
-name: recipe-find-large-files
-version: 1.0.0
-description: Identify large Google Drive files consuming storage quota.
-category: recipe
-domain: productivity
+name: "recipe-find-large-files"
+version: "1.0.0"
+description: "Identify large Google Drive files consuming storage quota."
+category: "recipe"
+domain: "productivity"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-drive
+  bins: ["gws"]
+  skills: ["gws-drive"]
 ---
-
 # Find Largest Files in Drive
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-drive`

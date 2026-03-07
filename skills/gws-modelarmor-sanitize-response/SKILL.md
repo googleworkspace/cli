@@ -1,13 +1,12 @@
 ---
-name: gws-modelarmor-sanitize-response
-version: 1.0.0
+name: "gws-modelarmor-sanitize-response"
+version: "1.0.0"
 description: "Google Model Armor: Sanitize a model response through a Model Armor template."
 category: "security"
 requires:
   bins: ["gws"]
 cliHelp: "gws modelarmor +sanitize-response --help"
 ---
-
 # modelarmor +sanitize-response
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

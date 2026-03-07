@@ -1,17 +1,13 @@
 ---
-name: recipe-block-focus-time
-version: 1.0.0
-description: Create recurring focus time blocks on Google Calendar to protect deep
-  work hours.
-category: recipe
-domain: scheduling
+name: "recipe-block-focus-time"
+version: "1.0.0"
+description: "Create recurring focus time blocks on Google Calendar to protect deep work hours."
+category: "recipe"
+domain: "scheduling"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-calendar
+  bins: ["gws"]
+  skills: ["gws-calendar"]
 ---
-
 # Block Focus Time on Google Calendar
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-calendar`

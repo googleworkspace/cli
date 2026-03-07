@@ -1,17 +1,13 @@
 ---
-name: recipe-plan-weekly-schedule
-version: 1.0.0
-description: Review your Google Calendar week, identify gaps, and add events to fill
-  them.
-category: recipe
-domain: scheduling
+name: "recipe-plan-weekly-schedule"
+version: "1.0.0"
+description: "Review your Google Calendar week, identify gaps, and add events to fill them."
+category: "recipe"
+domain: "scheduling"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-calendar
+  bins: ["gws"]
+  skills: ["gws-calendar"]
 ---
-
 # Plan Your Weekly Google Calendar Schedule
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-calendar`

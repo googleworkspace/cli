@@ -1,13 +1,12 @@
 ---
-name: gws-calendar
-version: 1.0.0
+name: "gws-calendar"
+version: "1.0.0"
 description: "Google Calendar: Manage calendars and events."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws calendar --help"
 ---
-
 # calendar (v3)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

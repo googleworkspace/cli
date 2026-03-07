@@ -1,13 +1,12 @@
 ---
-name: gws-drive-upload
-version: 1.0.0
+name: "gws-drive-upload"
+version: "1.0.0"
 description: "Google Drive: Upload a file with automatic metadata."
 category: "productivity"
 requires:
   bins: ["gws"]
 cliHelp: "gws drive +upload --help"
 ---
-
 # drive +upload
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.
