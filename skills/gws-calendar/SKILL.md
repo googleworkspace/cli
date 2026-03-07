@@ -2,7 +2,7 @@
 name: "gws-calendar"
 version: "1.0.0"
 description: "Google Calendar: Manage calendars and events."
-category: "productivity"
+category: "scheduling"
 requires:
   bins: ["gws"]
 cliHelp: "gws calendar --help"

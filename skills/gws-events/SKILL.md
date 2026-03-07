@@ -2,7 +2,7 @@
 name: "gws-events"
 version: "1.0.0"
 description: "Subscribe to Google Workspace events."
-category: "productivity"
+category: "engineering"
 requires:
   bins: ["gws"]
 cliHelp: "gws events --help"

@@ -2,7 +2,7 @@
 name: "gws-gmail"
 version: "1.0.0"
 description: "Gmail: Send, read, and manage email."
-category: "productivity"
+category: "communication"
 requires:
   bins: ["gws"]
 cliHelp: "gws gmail --help"

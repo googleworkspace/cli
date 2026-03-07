@@ -2,7 +2,7 @@
 name: "gws-classroom"
 version: "1.0.0"
 description: "Google Classroom: Manage classes, rosters, and coursework."
-category: "productivity"
+category: "education"
 requires:
   bins: ["gws"]
 cliHelp: "gws classroom --help"

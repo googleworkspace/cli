@@ -2,7 +2,7 @@
 name: "gws-chat"
 version: "1.0.0"
 description: "Google Chat: Manage Chat spaces and messages."
-category: "productivity"
+category: "communication"
 requires:
   bins: ["gws"]
 cliHelp: "gws chat --help"

@@ -2,7 +2,7 @@
 name: "gws-meet"
 version: "1.0.0"
 description: "Manage Google Meet conferences."
-category: "productivity"
+category: "scheduling"
 requires:
   bins: ["gws"]
 cliHelp: "gws meet --help"

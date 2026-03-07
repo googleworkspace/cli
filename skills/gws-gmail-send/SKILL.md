@@ -2,7 +2,7 @@
 name: "gws-gmail-send"
 version: "1.0.0"
 description: "Gmail: Send an email."
-category: "productivity"
+category: "communication"
 requires:
   bins: ["gws"]
 cliHelp: "gws gmail +send --help"

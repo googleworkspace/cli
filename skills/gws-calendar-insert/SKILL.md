@@ -2,7 +2,7 @@
 name: "gws-calendar-insert"
 version: "1.0.0"
 description: "Google Calendar: Create a new event."
-category: "productivity"
+category: "scheduling"
 requires:
   bins: ["gws"]
 cliHelp: "gws calendar +insert --help"

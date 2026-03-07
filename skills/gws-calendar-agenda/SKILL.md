@@ -2,7 +2,7 @@
 name: "gws-calendar-agenda"
 version: "1.0.0"
 description: "Google Calendar: Show upcoming events across all calendars."
-category: "productivity"
+category: "scheduling"
 requires:
   bins: ["gws"]
 cliHelp: "gws calendar +agenda --help"
