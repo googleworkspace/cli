@@ -35,6 +35,18 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     // Concurrency is resolved securely just before returning by checking whether
     // another runtime resolved the key while we were generating ours.
 
+    macro_rules! cache_and_return {
+        ($candidate:expr) => {{
+            let mut write_lock = KEY.write().await;
+            if let Some(existing) = *write_lock {
+                existing
+            } else {
+                *write_lock = Some($candidate);
+                $candidate
+            }
+        }};
+    }
+
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
@@ -57,12 +69,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        let mut write_lock = KEY.write().await;
-                        if let Some(existing) = *write_lock {
-                            return Ok(existing);
-                        }
-                        *write_lock = Some(arr);
-                        return Ok(arr);
+                        return Ok(cache_and_return!(arr));
                     }
                 }
             }
@@ -78,12 +85,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                                 arr.copy_from_slice(&decoded);
                                 // Best effort: repopulate keyring for future runs.
                                 let _ = entry.set_password(&b64_key);
-                                let mut write_lock = KEY.write().await;
-                                if let Some(existing) = *write_lock {
-                                    return Ok(existing);
-                                }
-                                *write_lock = Some(arr);
-                                return Ok(arr);
+                                return Ok(cache_and_return!(arr));
                             }
                         }
                     }
@@ -132,12 +134,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 // Best effort: also store in keyring when available.
                 let _ = entry.set_password(&b64_key);
 
-                let mut write_lock = KEY.write().await;
-                if let Some(existing) = *write_lock {
-                    return Ok(existing);
-                }
-                *write_lock = Some(key);
-                return Ok(key);
+                return Ok(cache_and_return!(key));
             }
             Err(e) => {
                 eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
@@ -154,12 +151,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 if decoded.len() == 32 {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&decoded);
-                    let mut write_lock = KEY.write().await;
-                    if let Some(existing) = *write_lock {
-                        return Ok(existing);
-                    }
-                    *write_lock = Some(arr);
-                    return Ok(arr);
+                    return Ok(cache_and_return!(arr));
                 }
             }
         }
@@ -205,12 +197,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         let _ = tokio::fs::write(&key_file, b64_key).await;
     }
 
-    let mut write_lock = KEY.write().await;
-    if let Some(existing) = *write_lock {
-        return Ok(existing);
-    }
-    *write_lock = Some(key);
-    Ok(key)
+    Ok(cache_and_return!(key))
 }
 
 /// Encrypts plaintext bytes using AES-256-GCM with a machine-derived key.

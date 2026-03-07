@@ -99,16 +99,7 @@ pub async fn base_config_dir() -> PathBuf {
         match tokio::fs::canonicalize(&path).await {
             Ok(path_to_check) => {
                 // Check for suspicious paths like root, system directories, or .ssh
-                let is_suspicious = path_to_check.parent().is_none()
-                    || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
-                    || (cfg!(unix)
-                        && (path_to_check.starts_with("/etc")
-                            || path_to_check.starts_with("/usr")
-                            || path_to_check.starts_with("/var")
-                            || path_to_check.starts_with("/bin")
-                            || path_to_check.starts_with("/sbin")));
-
-                if is_suspicious {
+                if is_suspicious_path(&path_to_check) {
                     eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
                 } else {
                     return path_to_check;
@@ -126,16 +117,7 @@ pub async fn base_config_dir() -> PathBuf {
                     }
                 }
 
-                let is_suspicious = path_to_check.parent().is_none() 
-                    || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
-                    || (cfg!(unix)
-                        && (path_to_check.starts_with("/etc")
-                            || path_to_check.starts_with("/usr")
-                            || path_to_check.starts_with("/var")
-                            || path_to_check.starts_with("/bin")
-                            || path_to_check.starts_with("/sbin")));
-
-                if is_suspicious {
+                if is_suspicious_path(&path_to_check) {
                     eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
                 } else {
                     return path_to_check; // Return the explicitly resolved path
@@ -167,6 +149,17 @@ pub async fn base_config_dir() -> PathBuf {
                 primary
             }
         }
+}
+
+fn is_suspicious_path(path_to_check: &std::path::Path) -> bool {
+    path_to_check.parent().is_none() 
+        || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
+        || (cfg!(unix)
+            && (path_to_check.starts_with("/etc")
+                || path_to_check.starts_with("/usr")
+                || path_to_check.starts_with("/var")
+                || path_to_check.starts_with("/bin")
+                || path_to_check.starts_with("/sbin")))
 }
 
 pub async fn get_active_profile() -> Option<String> {
@@ -468,14 +461,13 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
 
     if token.token().is_some() {
         // Read yup-oauth2's token cache to extract the refresh_token.
-        let mut token_data = String::new();
-        if let Ok(bytes) = tokio::fs::read(&temp_path).await {
-            if let Ok(decrypted) = crate::credential_store::decrypt(&bytes).await {
-                if let Ok(s) = String::from_utf8(decrypted) {
-                    token_data = s;
-                }
-            }
+        let token_data = async {
+            let bytes = tokio::fs::read(&temp_path).await.ok()?;
+            let decrypted = crate::credential_store::decrypt(&bytes).await.ok()?;
+            String::from_utf8(decrypted).ok()
         }
+        .await
+        .unwrap_or_default();
         let refresh_token = extract_refresh_token(&token_data).ok_or_else(|| {
             GwsError::Auth(
                 "OAuth flow completed but no refresh token was returned. \
