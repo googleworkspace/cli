@@ -137,6 +137,15 @@ pub fn get_active_profile() -> Option<String> {
         })
 }
 
+pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
+    if profile_name.contains('/') || profile_name.contains('\\') || profile_name == "." || profile_name == ".." {
+        return Err(GwsError::Validation(
+            "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn config_dir() -> PathBuf {
     let base_dir = base_config_dir();
 
@@ -207,11 +216,7 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
 
     let profile_name = &args[0];
 
-    if profile_name.contains('/') || profile_name.contains('\\') || profile_name == "." || profile_name == ".." {
-        return Err(GwsError::Validation(
-            "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
-        ));
-    }
+    validate_profile_name(profile_name)?;
 
     // Read the base directory without applying the current active profile
     let base_dir = base_config_dir();

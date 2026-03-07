@@ -111,11 +111,7 @@ async fn run() -> Result<(), GwsError> {
     }
 
     if let Some(profile) = profile_name {
-        if profile.contains('/') || profile.contains('\\') || profile == "." || profile == ".." {
-            return Err(GwsError::Validation(
-                "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
-            ));
-        }
+        crate::auth_commands::validate_profile_name(&profile)?;
         std::env::set_var("GOOGLE_WORKSPACE_CLI_PROFILE", profile);
     }
 
