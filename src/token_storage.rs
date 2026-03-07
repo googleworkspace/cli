@@ -40,7 +40,7 @@ impl EncryptedTokenStorage {
             Err(_) => return HashMap::new(), // File doesn't exist yet — normal on first run
         };
 
-        let decrypted = match crate::credential_store::decrypt(&data) {
+        let decrypted = match crate::credential_store::decrypt(&data).await {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(
@@ -71,14 +71,22 @@ impl EncryptedTokenStorage {
 
     async fn save_to_disk(&self, map: &HashMap<String, TokenInfo>) -> anyhow::Result<()> {
         let json = serde_json::to_string(map)?;
-        let encrypted = crate::credential_store::encrypt(json.as_bytes())?;
+        let encrypted = crate::credential_store::encrypt(json.as_bytes()).await?;
 
         if let Some(parent) = self.file_path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+                let perms_result = async {
+                    let mut perms = tokio::fs::metadata(parent).await?.permissions();
+                    perms.set_mode(0o700);
+                    tokio::fs::set_permissions(parent, perms).await
+                }
+                .await;
+                if let Err(e) = perms_result {
+                    eprintln!("warning: failed to set secure permissions on token storage directory: {e}");
+                }
             }
         }
 
