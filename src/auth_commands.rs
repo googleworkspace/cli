@@ -225,7 +225,11 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     let active_profile_path = base_dir.join("active_profile");
 
     if profile_name == "default" {
-        let _ = std::fs::remove_file(active_profile_path);
+        if let Err(e) = std::fs::remove_file(active_profile_path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(GwsError::Validation(format!("Failed to remove active_profile file: {e}")));
+            }
+        }
         println!("Switched to default profile.");
     } else {
         std::fs::write(&active_profile_path, profile_name).map_err(|e| {
