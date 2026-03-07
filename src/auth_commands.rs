@@ -116,20 +116,29 @@ pub async fn base_config_dir() -> PathBuf {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // The directory doesn't exist yet, which is a valid use case.
-                // We can't canonicalize, so we'll run security checks on the provided path.
-                let is_suspicious = path.parent().is_none() 
-                    || path.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
+                // To prevent TOCTOU symlink injection, we try to canonicalize the parent directory.
+                let mut path_to_check = path.clone();
+                if let Some(parent) = path.parent() {
+                    if let Ok(canon_parent) = tokio::fs::canonicalize(parent).await {
+                        if let Some(file_name) = path.file_name() {
+                            path_to_check = canon_parent.join(file_name);
+                        }
+                    }
+                }
+
+                let is_suspicious = path_to_check.parent().is_none() 
+                    || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
                     || (cfg!(unix)
-                        && (path.starts_with("/etc")
-                            || path.starts_with("/usr")
-                            || path.starts_with("/var")
-                            || path.starts_with("/bin")
-                            || path.starts_with("/sbin")));
+                        && (path_to_check.starts_with("/etc")
+                            || path_to_check.starts_with("/usr")
+                            || path_to_check.starts_with("/var")
+                            || path_to_check.starts_with("/bin")
+                            || path_to_check.starts_with("/sbin")));
 
                 if is_suspicious {
                     eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
                 } else {
-                    return path; // Return the user-provided path
+                    return path_to_check; // Return the explicitly resolved path
                 }
             }
             Err(e) => {
