@@ -365,6 +365,19 @@ fn is_blocked_method(alias: &str, resource: &str, method: &str) -> bool {
         .any(|(s, r, m)| *s == alias && *r == resource && *m == method)
 }
 
+/// Category used in generated SKILL frontmatter by service alias.
+fn service_category(alias: &str) -> &'static str {
+    match alias {
+        "admin-reports" | "reports" => "admin",
+        "classroom" => "education",
+        "events" => "engineering",
+        "modelarmor" => "security",
+        "calendar" | "meet" => "scheduling",
+        "chat" | "gmail" => "communication",
+        _ => "productivity",
+    }
+}
+
 fn render_service_skill(
     alias: &str,
     entry: &services::ServiceEntry,
@@ -378,17 +391,16 @@ fn render_service_skill(
     let trigger_desc = service_description(product_name, entry.description);
 
     // Frontmatter
+    let category = service_category(alias);
     out.push_str(&format!(
         r#"---
-name: gws-{alias}
-version: 1.0.0
+name: "gws-{alias}"
+version: "1.0.0"
 description: "{trigger_desc}"
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws {alias} --help"
+category: "{category}"
+requires:
+  bins: ["gws"]
+cliHelp: "gws {alias} --help"
 ---
 
 "#,
@@ -507,24 +519,18 @@ fn render_helper_skill(
             | "create-template"
             | "subscribe"
     );
-    let category = if alias == "modelarmor" {
-        "security"
-    } else {
-        "productivity"
-    };
+    let category = service_category(alias);
 
     // Frontmatter
     out.push_str(&format!(
         r#"---
-name: gws-{alias}-{short}
-version: 1.0.0
+name: "gws-{alias}-{short}"
+version: "1.0.0"
 description: "{trigger_desc}"
-metadata:
-  openclaw:
-    category: "{category}"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws {alias} {cmd_name} --help"
+category: "{category}"
+requires:
+  bins: ["gws"]
+cliHelp: "gws {alias} {cmd_name} --help"
 ---
 
 "#,
@@ -663,14 +669,12 @@ metadata:
 
 fn generate_shared_skill(base: &Path) -> Result<(), GwsError> {
     let content = r#"---
-name: gws-shared
-version: 1.0.0
+name: "gws-shared"
+version: "1.0.0"
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
+category: "productivity"
+requires:
+  bins: ["gws"]
 ---
 
 # gws — Shared Reference
@@ -748,15 +752,13 @@ fn render_persona_skill(persona: &PersonaEntry) -> String {
 
     out.push_str(&format!(
         r#"---
-name: persona-{name}
-version: 1.0.0
+name: "persona-{name}"
+version: "1.0.0"
 description: "{trigger_desc}"
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: [{skills}]
+category: "persona"
+requires:
+  bins: ["gws"]
+  skills: [{skills}]
 ---
 
 # {title}
@@ -818,16 +820,14 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
 
     out.push_str(&format!(
         r#"---
-name: recipe-{name}
-version: 1.0.0
+name: "recipe-{name}"
+version: "1.0.0"
 description: "{trigger_desc}"
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "{category}"
-    requires:
-      bins: ["gws"]
-      skills: [{skills}]
+category: "recipe"
+domain: "{category}"
+requires:
+  bins: ["gws"]
+  skills: [{skills}]
 ---
 
 # {title}

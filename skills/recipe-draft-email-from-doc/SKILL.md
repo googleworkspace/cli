@@ -1,16 +1,13 @@
 ---
-name: recipe-draft-email-from-doc
-version: 1.0.0
+name: "recipe-draft-email-from-doc"
+version: "1.0.0"
 description: "Read content from a Google Doc and use it as the body of a Gmail message."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-docs", "gws-gmail"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-docs", "gws-gmail"]
 ---
-
 # Draft a Gmail Message from a Google Doc
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-docs`, `gws-gmail`

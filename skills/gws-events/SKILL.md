@@ -1,15 +1,12 @@
 ---
-name: gws-events
-version: 1.0.0
+name: "gws-events"
+version: "1.0.0"
 description: "Subscribe to Google Workspace events."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws events --help"
+category: "engineering"
+requires:
+  bins: ["gws"]
+cliHelp: "gws events --help"
 ---
-
 # events (v1)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

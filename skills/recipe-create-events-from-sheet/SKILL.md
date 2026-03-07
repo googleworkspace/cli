@@ -1,16 +1,13 @@
 ---
-name: recipe-create-events-from-sheet
-version: 1.0.0
+name: "recipe-create-events-from-sheet"
+version: "1.0.0"
 description: "Read event data from a Google Sheets spreadsheet and create Google Calendar entries for each row."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-calendar"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-sheets", "gws-calendar"]
 ---
-
 # Create Google Calendar Events from a Sheet
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-sheets`, `gws-calendar`

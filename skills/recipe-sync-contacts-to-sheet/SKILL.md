@@ -1,16 +1,13 @@
 ---
-name: recipe-sync-contacts-to-sheet
-version: 1.0.0
+name: "recipe-sync-contacts-to-sheet"
+version: "1.0.0"
 description: "Export Google Contacts directory to a Google Sheets spreadsheet."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-people", "gws-sheets"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-people", "gws-sheets"]
 ---
-
 # Export Google Contacts to Sheets
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-people`, `gws-sheets`

@@ -1,15 +1,12 @@
 ---
-name: gws-gmail-send
-version: 1.0.0
+name: "gws-gmail-send"
+version: "1.0.0"
 description: "Gmail: Send an email."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws gmail +send --help"
+category: "communication"
+requires:
+  bins: ["gws"]
+cliHelp: "gws gmail +send --help"
 ---
-
 # gmail +send
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

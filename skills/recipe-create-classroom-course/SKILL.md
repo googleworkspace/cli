@@ -1,16 +1,13 @@
 ---
-name: recipe-create-classroom-course
-version: 1.0.0
+name: "recipe-create-classroom-course"
+version: "1.0.0"
 description: "Create a Google Classroom course and invite students."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "education"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-classroom"]
+category: "recipe"
+domain: "education"
+requires:
+  bins: ["gws"]
+  skills: ["gws-classroom"]
 ---
-
 # Create a Google Classroom Course
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-classroom`

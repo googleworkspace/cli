@@ -1,15 +1,12 @@
 ---
-name: persona-it-admin
-version: 1.0.0
+name: "persona-it-admin"
+version: "1.0.0"
 description: "Administer IT — monitor security and configure Workspace."
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-drive", "gws-calendar"]
+category: "persona"
+requires:
+  bins: ["gws"]
+  skills: ["gws-gmail", "gws-drive", "gws-calendar"]
 ---
-
 # IT Administrator
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-drive`, `gws-calendar`

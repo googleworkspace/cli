@@ -1,15 +1,12 @@
 ---
-name: gws-classroom
-version: 1.0.0
+name: "gws-classroom"
+version: "1.0.0"
 description: "Google Classroom: Manage classes, rosters, and coursework."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws classroom --help"
+category: "education"
+requires:
+  bins: ["gws"]
+cliHelp: "gws classroom --help"
 ---
-
 # classroom (v1)
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

@@ -1,15 +1,12 @@
 ---
-name: gws-gmail-triage
-version: 1.0.0
+name: "gws-gmail-triage"
+version: "1.0.0"
 description: "Gmail: Show unread inbox summary (sender, subject, date)."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws gmail +triage --help"
+category: "communication"
+requires:
+  bins: ["gws"]
+cliHelp: "gws gmail +triage --help"
 ---
-
 # gmail +triage
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

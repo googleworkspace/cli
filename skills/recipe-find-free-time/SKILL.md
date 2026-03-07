@@ -1,16 +1,13 @@
 ---
-name: recipe-find-free-time
-version: 1.0.0
+name: "recipe-find-free-time"
+version: "1.0.0"
 description: "Query Google Calendar free/busy status for multiple users to find a meeting slot."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "scheduling"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-calendar"]
+category: "recipe"
+domain: "scheduling"
+requires:
+  bins: ["gws"]
+  skills: ["gws-calendar"]
 ---
-
 # Find Free Time Across Calendars
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-calendar`

@@ -1,15 +1,12 @@
 ---
-name: gws-events-renew
-version: 1.0.0
+name: "gws-events-renew"
+version: "1.0.0"
 description: "Google Workspace Events: Renew/reactivate Workspace Events subscriptions."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws events +renew --help"
+category: "engineering"
+requires:
+  bins: ["gws"]
+cliHelp: "gws events +renew --help"
 ---
-
 # events +renew
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

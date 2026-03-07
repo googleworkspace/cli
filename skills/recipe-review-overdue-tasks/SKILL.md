@@ -1,16 +1,13 @@
 ---
-name: recipe-review-overdue-tasks
-version: 1.0.0
+name: "recipe-review-overdue-tasks"
+version: "1.0.0"
 description: "Find Google Tasks that are past due and need attention."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-tasks"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-tasks"]
 ---
-
 # Review Overdue Tasks
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-tasks`

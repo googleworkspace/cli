@@ -1,16 +1,13 @@
 ---
-name: recipe-create-feedback-form
-version: 1.0.0
+name: "recipe-create-feedback-form"
+version: "1.0.0"
 description: "Create a Google Form for feedback and share it via Gmail."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-forms", "gws-gmail"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-forms", "gws-gmail"]
 ---
-
 # Create and Share a Google Form
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-forms`, `gws-gmail`

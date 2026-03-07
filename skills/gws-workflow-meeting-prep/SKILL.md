@@ -1,15 +1,12 @@
 ---
-name: gws-workflow-meeting-prep
-version: 1.0.0
+name: "gws-workflow-meeting-prep"
+version: "1.0.0"
 description: "Google Workflow: Prepare for your next meeting: agenda, attendees, and linked docs."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws workflow +meeting-prep --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws workflow +meeting-prep --help"
 ---
-
 # workflow +meeting-prep
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

@@ -1,15 +1,12 @@
 ---
-name: gws-workflow-standup-report
-version: 1.0.0
+name: "gws-workflow-standup-report"
+version: "1.0.0"
 description: "Google Workflow: Today's meetings + open tasks as a standup summary."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws workflow +standup-report --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws workflow +standup-report --help"
 ---
-
 # workflow +standup-report
 
 > **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.

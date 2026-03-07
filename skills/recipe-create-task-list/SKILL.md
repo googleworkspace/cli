@@ -1,16 +1,13 @@
 ---
-name: recipe-create-task-list
-version: 1.0.0
+name: "recipe-create-task-list"
+version: "1.0.0"
 description: "Set up a new Google Tasks list with initial tasks."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-tasks"]
+category: "recipe"
+domain: "productivity"
+requires:
+  bins: ["gws"]
+  skills: ["gws-tasks"]
 ---
-
 # Create a Task List and Add Tasks
 
 > **PREREQUISITE:** Load the following skills to execute this recipe: `gws-tasks`

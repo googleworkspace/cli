@@ -1,15 +1,12 @@
 ---
-name: persona-exec-assistant
-version: 1.0.0
+name: "persona-exec-assistant"
+version: "1.0.0"
 description: "Manage an executive's schedule, inbox, and communications."
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-calendar", "gws-drive", "gws-chat"]
+category: "persona"
+requires:
+  bins: ["gws"]
+  skills: ["gws-gmail", "gws-calendar", "gws-drive", "gws-chat"]
 ---
-
 # Executive Assistant
 
 > **PREREQUISITE:** Load the following utility skills to operate as this persona: `gws-gmail`, `gws-calendar`, `gws-drive`, `gws-chat`
