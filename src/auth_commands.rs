@@ -130,6 +130,12 @@ pub fn get_active_profile() -> Option<String> {
                     let trimmed = s.trim();
                     if trimmed.is_empty() {
                         None
+                    } else if validate_profile_name(trimmed).is_err() {
+                        eprintln!(
+                            "Warning: invalid profile name '{}' found in active_profile file. Ignoring and using default.",
+                            trimmed
+                        );
+                        None
                     } else {
                         Some(trimmed.to_string())
                     }
