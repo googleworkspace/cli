@@ -199,6 +199,6 @@ Use these labels to categorize pull requests and issues:
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID fallback for `gmail watch` and `events subscribe` helpers (overridden by `--project` flag) |
+| `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing and fallback for helper commands (overridden by `--project` flag) |
 
 All variables can also live in a `.env` file (loaded via `dotenvy`).
