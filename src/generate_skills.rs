@@ -378,12 +378,17 @@ fn render_service_skill(
     let trigger_desc = service_description(product_name, entry.description);
 
     // Frontmatter
+    let category = if alias == "modelarmor" {
+        "security"
+    } else {
+        "productivity"
+    };
     out.push_str(&format!(
         r#"---
 name: "gws-{alias}"
 version: "1.0.0"
 description: "{trigger_desc}"
-category: "productivity"
+category: "{category}"
 requires:
   bins: ["gws"]
 cliHelp: "gws {alias} --help"
