@@ -93,11 +93,27 @@ const READONLY_SCOPES: &[&str] = &[
 
 pub fn base_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-        PathBuf::from(dir)
-    } else {
-        // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
-        let primary = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+        let path = PathBuf::from(&dir);
+        let path_str = path.to_string_lossy();
+        
+        // Check for suspicious paths like root, system directories, or .ssh
+        if path_str == "/" 
+            || path_str.starts_with("/etc") 
+            || path_str.starts_with("/usr") 
+            || path_str.starts_with("/var")
+            || path_str.starts_with("/bin")
+            || path_str.starts_with("/sbin")
+            || path_str.contains(".ssh") 
+        {
+            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path_str);
+        } else {
+            return path;
+        }
+    }
+
+    // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
+    let primary = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
             .join(".config")
             .join("gws");
         
@@ -115,13 +131,22 @@ pub fn base_config_dir() -> PathBuf {
                 primary
             }
         }
-    }
 }
 
 pub fn get_active_profile() -> Option<String> {
     std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
         .ok()
         .filter(|s| !s.is_empty())
+        .and_then(|s| match validate_profile_name(&s) {
+            Ok(_) => Some(s),
+            Err(e) => {
+                eprintln!(
+                    "Error: Invalid profile name '{}' from GOOGLE_WORKSPACE_CLI_PROFILE: {}. Using default profile.",
+                    s, e
+                );
+                None
+            }
+        })
         .or_else(|| {
             let base_dir = base_config_dir();
             std::fs::read_to_string(base_dir.join("active_profile"))
