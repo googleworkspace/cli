@@ -19,7 +19,7 @@ Read data from a Google Sheet and create a formatted Google Docs report.
 
 ## Steps
 
-1. Read the data: `gws sheets +read --spreadsheet-id SHEET_ID --range "Sales!A1:D"`
+1. Read the data: `gws sheets +read --spreadsheet-id SHEET_ID --range 'Sales!A1:D'`
 2. Create the report doc: `gws docs documents create --json "{\"title\": \"Sales Report - January 2025\"}"`
 3. Write the report: `gws docs +write --document-id DOC_ID --text '## Sales Report - January 2025
 

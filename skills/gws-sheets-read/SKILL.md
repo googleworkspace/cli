@@ -27,12 +27,12 @@ gws sheets +read --spreadsheet <ID> --range <RANGE>
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--spreadsheet` | ✓ | — | Spreadsheet ID |
-| `--range` | ✓ | — | Range to read (e.g. "Sheet1!A1:B2") |
+| `--range` | ✓ | — | Range to read (e.g. 'Sheet1!A1:B2') |
 
 ## Examples
 
 ```bash
-gws sheets +read --spreadsheet ID --range "Sheet1!A1:D10"
+gws sheets +read --spreadsheet ID --range 'Sheet1!A1:D10'
 gws sheets +read --spreadsheet ID --range Sheet1
 ```
 

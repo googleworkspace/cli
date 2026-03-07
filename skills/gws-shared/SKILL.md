@@ -53,7 +53,7 @@ gws <service> <resource> [sub-resource] <method> [flags]
 
 ## Shell Tips
 
-- In shells with history expansion (for example zsh), `!` can be interpreted unexpectedly. Use double-quoted arguments for values like sheet ranges (`"Sheet1!A1:B2"`) and escaped JSON passed to `--params`/`--json`.
+- In shells with history expansion (for example zsh), `!` can be interpreted unexpectedly. Prefer single-quoted sheet ranges (for example `'Sheet1!A1:B2'`) and escaped JSON passed to `--params`/`--json`.
 
 ## Security Rules
 
