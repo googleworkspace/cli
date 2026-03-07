@@ -57,6 +57,10 @@ npm install -g @googleworkspace/cli
 
 Or install with `asdf` (using a community-maintained plugin):
 
+> [!WARNING]
+> The `asdf-gws` plugin is community-maintained and is not officially supported or vetted by Google.
+> Review the plugin source before installing and use it at your own risk.
+
 ```bash
 # Add plugin
 asdf plugin add gws https://github.com/treezio/asdf-gws.git
