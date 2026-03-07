@@ -178,12 +178,13 @@ pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
     if profile_name.is_empty()
         || profile_name == "."
         || profile_name == ".."
+        || profile_name.starts_with('-')
         || profile_name.chars().any(|c| {
             !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '-' && c != '_'
         })
     {
         return Err(GwsError::Validation(
-            "Invalid profile name. It must not be empty, '.', or '..', and can only contain lowercase alphanumeric characters, dashes (-), and underscores (_).".to_string(),
+            "Invalid profile name. It must not be empty, '.', or '..', start with a dash (-), and can only contain lowercase alphanumeric characters, dashes, and underscores (_).".to_string(),
         ));
     }
     Ok(())
