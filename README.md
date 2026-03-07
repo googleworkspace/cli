@@ -305,7 +305,7 @@ When using `gmail.users.drafts.create` with a raw RFC 2822 message, non-ASCII su
 
 ```bash
 SUBJECT_B64=$(printf '三月分享老師邀請' | base64 | tr -d '\n')
-RAW=$(printf "To: recipient@example.com\nSubject: =?UTF-8?B?%s?=\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\nHello\n" "$SUBJECT_B64" | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+RAW=$(printf "To: recipient@example.com\r\nSubject: =?UTF-8?B?%s?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello\r\n" "$SUBJECT_B64" | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
 
 gws gmail users drafts create \
   --params '{"userId":"me"}' \
