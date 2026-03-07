@@ -13,10 +13,14 @@
 // limitations under the License.
 
 use super::Helper;
+pub mod forward;
+pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
+use forward::handle_forward;
+use reply::handle_reply;
 use send::handle_send;
 use triage::handle_triage;
 use watch::handle_watch;
@@ -35,6 +39,280 @@ pub struct GmailHelper;
 
 pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
+
+pub(super) struct OriginalMessage {
+    pub thread_id: String,
+    pub message_id_header: String,
+    pub references: String,
+    pub from: String,
+    pub reply_to: String,
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    pub date: String,
+    pub body_text: String,
+}
+
+impl OriginalMessage {
+    /// Placeholder used for `--dry-run` to avoid requiring auth/network.
+    pub(super) fn dry_run_placeholder(message_id: &str) -> Self {
+        Self {
+            thread_id: format!("thread-{message_id}"),
+            message_id_header: format!("<{message_id}@example.com>"),
+            references: String::new(),
+            from: "sender@example.com".to_string(),
+            reply_to: String::new(),
+            to: "you@example.com".to_string(),
+            cc: String::new(),
+            subject: "Original subject".to_string(),
+            date: "Thu, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original message body".to_string(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ParsedMessageHeaders {
+    from: String,
+    reply_to: String,
+    to: String,
+    cc: String,
+    subject: String,
+    date: String,
+    message_id_header: String,
+    references: String,
+}
+
+fn append_header_value(existing: &mut String, value: &str) {
+    if !existing.is_empty() {
+        existing.push(' ');
+    }
+    existing.push_str(value);
+}
+
+fn append_address_list_header_value(existing: &mut String, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+
+    if !existing.is_empty() {
+        existing.push_str(", ");
+    }
+    existing.push_str(value);
+}
+
+fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
+    let mut parsed = ParsedMessageHeaders::default();
+
+    for header in headers {
+        let name = header.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let value = header.get("value").and_then(|v| v.as_str()).unwrap_or("");
+
+        match name {
+            "From" => parsed.from = value.to_string(),
+            "Reply-To" => append_address_list_header_value(&mut parsed.reply_to, value),
+            "To" => append_address_list_header_value(&mut parsed.to, value),
+            "Cc" => append_address_list_header_value(&mut parsed.cc, value),
+            "Subject" => parsed.subject = value.to_string(),
+            "Date" => parsed.date = value.to_string(),
+            "Message-ID" | "Message-Id" => parsed.message_id_header = value.to_string(),
+            "References" => append_header_value(&mut parsed.references, value),
+            _ => {}
+        }
+    }
+
+    parsed
+}
+
+fn parse_original_message(msg: &Value) -> OriginalMessage {
+    let thread_id = msg
+        .get("threadId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let snippet = msg
+        .get("snippet")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let parsed_headers = msg
+        .get("payload")
+        .and_then(|p| p.get("headers"))
+        .and_then(|h| h.as_array())
+        .map(|headers| parse_message_headers(headers))
+        .unwrap_or_default();
+
+    let body_text = msg
+        .get("payload")
+        .and_then(extract_plain_text_body)
+        .unwrap_or(snippet);
+
+    OriginalMessage {
+        thread_id,
+        message_id_header: parsed_headers.message_id_header,
+        references: parsed_headers.references,
+        from: parsed_headers.from,
+        reply_to: parsed_headers.reply_to,
+        to: parsed_headers.to,
+        cc: parsed_headers.cc,
+        subject: parsed_headers.subject,
+        date: parsed_headers.date,
+        body_text,
+    }
+}
+
+pub(super) async fn fetch_message_metadata(
+    client: &reqwest::Client,
+    token: &str,
+    message_id: &str,
+) -> Result<OriginalMessage, GwsError> {
+    let url = format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+        crate::validate::encode_path_segment(message_id)
+    );
+
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get(&url)
+            .bearer_auth(token)
+            .query(&[("format", "full")])
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let err = resp.text().await.unwrap_or_default();
+        return Err(GwsError::Api {
+            code: status,
+            message: format!("Failed to fetch message {message_id}: {err}"),
+            reason: "fetchFailed".to_string(),
+            enable_url: None,
+        });
+    }
+
+    let msg: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
+
+    Ok(parse_original_message(&msg))
+}
+
+fn extract_plain_text_body(payload: &Value) -> Option<String> {
+    let mime_type = payload
+        .get("mimeType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if mime_type == "text/plain" {
+        if let Some(data) = payload
+            .get("body")
+            .and_then(|b| b.get("data"))
+            .and_then(|d| d.as_str())
+        {
+            if let Ok(decoded) = URL_SAFE.decode(data) {
+                return String::from_utf8(decoded).ok();
+            }
+        }
+        return None;
+    }
+
+    if let Some(parts) = payload.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            if let Some(text) = extract_plain_text_body(part) {
+                return Some(text);
+            }
+        }
+    }
+
+    None
+}
+
+pub(super) fn resolve_send_method(
+    doc: &crate::discovery::RestDescription,
+) -> Result<&crate::discovery::RestMethod, GwsError> {
+    let users_res = doc
+        .resources
+        .get("users")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users' not found".to_string()))?;
+    let messages_res = users_res
+        .resources
+        .get("messages")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users.messages' not found".to_string()))?;
+    messages_res
+        .methods
+        .get("send")
+        .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
+}
+
+/// Shared helper: base64-encode a raw RFC 2822 message and send it via
+/// `users.messages.send`, optionally keeping it in the given thread.
+pub(super) fn build_raw_send_body(raw_message: &str, thread_id: Option<&str>) -> Value {
+    let mut body =
+        serde_json::Map::from_iter([("raw".to_string(), json!(URL_SAFE.encode(raw_message)))]);
+
+    if let Some(thread_id) = thread_id {
+        body.insert("threadId".to_string(), json!(thread_id));
+    }
+
+    Value::Object(body)
+}
+
+pub(super) async fn send_raw_email(
+    doc: &crate::discovery::RestDescription,
+    matches: &ArgMatches,
+    raw_message: &str,
+    thread_id: Option<&str>,
+    existing_token: Option<&str>,
+) -> Result<(), GwsError> {
+    let body = build_raw_send_body(raw_message, thread_id);
+    let body_str = body.to_string();
+
+    let send_method = resolve_send_method(doc)?;
+    let params = json!({ "userId": "me" });
+    let params_str = params.to_string();
+
+    let (token, auth_method) = match existing_token {
+        Some(t) => (Some(t.to_string()), executor::AuthMethod::OAuth),
+        None => {
+            let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+            match auth::get_token(&scopes).await {
+                Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+                Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
+                Err(e) => return Err(GwsError::Auth(format!("Gmail auth failed: {e}"))),
+            }
+        }
+    };
+
+    let pagination = executor::PaginationConfig {
+        page_all: false,
+        page_limit: 10,
+        page_delay_ms: 100,
+    };
+
+    executor::execute_method(
+        doc,
+        send_method,
+        Some(&params_str),
+        Some(&body_str),
+        token.as_deref(),
+        auth_method,
+        None,
+        None,
+        matches.get_flag("dry-run"),
+        &pagination,
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await?;
+
+    Ok(())
+}
 
 impl Helper for GmailHelper {
     /// Injects helper subcommands (`+send`, `+watch`) into the main CLI command.
@@ -66,6 +344,12 @@ impl Helper for GmailHelper {
                         .help("Email body (plain text)")
                         .required(true)
                         .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
                 )
                 .after_help(
                     "\
@@ -112,6 +396,164 @@ EXAMPLES:
 TIPS:
   Read-only — never modifies your mailbox.
   Defaults to table output format.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+reply")
+                .about("[Helper] Reply to a message (handles threading automatically)")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to reply to")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Reply body (plain text)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("Additional CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
+
+TIPS:
+  Automatically sets In-Reply-To, References, and threadId headers.
+  Quotes the original message in the reply body.
+  For reply-all, use +reply-all instead.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+reply-all")
+                .about("[Helper] Reply-all to a message (handles threading automatically)")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to reply to")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Reply body (plain text)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("Additional CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("remove")
+                        .long("remove")
+                        .help("Exclude recipients from the outgoing reply (comma-separated emails)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
+
+TIPS:
+  Replies to the sender and all original To/CC recipients.
+  Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
+  The command fails if exclusions leave no reply target.
+  Use --cc to add new recipients.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+forward")
+                .about("[Helper] Forward a message to new recipients")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to forward")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Recipient email address(es), comma-separated")
+                        .required(true)
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("from")
+                        .long("from")
+                        .help("Sender address (for send-as/alias; omit to use account default)")
+                        .value_name("EMAIL"),
+                )
+                .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("CC recipients (comma-separated)")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("body")
+                        .long("body")
+                        .help("Optional note to include above the forwarded message")
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
+
+TIPS:
+  Includes the original message with sender, date, subject, and recipients.
+  Sends the forward as a new message rather than forcing it into the original thread.",
                 ),
         );
 
@@ -212,6 +654,21 @@ TIPS:
                 return Ok(true);
             }
 
+            if let Some(matches) = matches.subcommand_matches("+reply") {
+                handle_reply(doc, matches, false).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+reply-all") {
+                handle_reply(doc, matches, true).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+forward") {
+                handle_forward(doc, matches).await?;
+                return Ok(true);
+            }
+
             if let Some(matches) = matches.subcommand_matches("+triage") {
                 handle_triage(matches).await?;
                 return Ok(true);
@@ -230,6 +687,7 @@ TIPS:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_inject_commands() {
@@ -242,5 +700,102 @@ mod tests {
         let subcommands: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         assert!(subcommands.contains(&"+watch"));
         assert!(subcommands.contains(&"+send"));
+        assert!(subcommands.contains(&"+reply"));
+        assert!(subcommands.contains(&"+reply-all"));
+        assert!(subcommands.contains(&"+forward"));
+    }
+
+    #[test]
+    fn test_build_raw_send_body_with_thread_id() {
+        let body = build_raw_send_body("raw message", Some("thread-123"));
+
+        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
+        assert_eq!(body["threadId"], "thread-123");
+    }
+
+    #[test]
+    fn test_build_raw_send_body_without_thread_id() {
+        let body = build_raw_send_body("raw message", None);
+
+        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
+        assert!(body.get("threadId").is_none());
+    }
+
+    #[test]
+    fn test_append_address_list_header_value() {
+        let mut header_value = String::new();
+
+        append_address_list_header_value(&mut header_value, "alice@example.com");
+        append_address_list_header_value(&mut header_value, "bob@example.com");
+        append_address_list_header_value(&mut header_value, "");
+
+        assert_eq!(header_value, "alice@example.com, bob@example.com");
+    }
+
+    #[test]
+    fn test_parse_original_message_concatenates_repeated_address_and_reference_headers() {
+        let msg = json!({
+            "threadId": "thread-123",
+            "snippet": "Snippet fallback",
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Reply-To", "value": "team@example.com" },
+                    { "name": "Reply-To", "value": "owner@example.com" },
+                    { "name": "To", "value": "bob@example.com" },
+                    { "name": "To", "value": "carol@example.com" },
+                    { "name": "Cc", "value": "dave@example.com" },
+                    { "name": "Cc", "value": "erin@example.com" },
+                    { "name": "Subject", "value": "Hello" },
+                    { "name": "Date", "value": "Fri, 6 Mar 2026 12:00:00 +0000" },
+                    { "name": "Message-ID", "value": "<msg@example.com>" },
+                    { "name": "References", "value": "<ref-1@example.com>" },
+                    { "name": "References", "value": "<ref-2@example.com>" }
+                ],
+                "body": {
+                    "data": URL_SAFE.encode("<p>HTML only</p>")
+                }
+            }
+        });
+
+        let original = parse_original_message(&msg);
+
+        assert_eq!(original.thread_id, "thread-123");
+        assert_eq!(original.from, "alice@example.com");
+        assert_eq!(original.reply_to, "team@example.com, owner@example.com");
+        assert_eq!(original.to, "bob@example.com, carol@example.com");
+        assert_eq!(original.cc, "dave@example.com, erin@example.com");
+        assert_eq!(original.subject, "Hello");
+        assert_eq!(original.date, "Fri, 6 Mar 2026 12:00:00 +0000");
+        assert_eq!(original.message_id_header, "<msg@example.com>");
+        assert_eq!(
+            original.references,
+            "<ref-1@example.com> <ref-2@example.com>"
+        );
+        assert_eq!(original.body_text, "Snippet fallback");
+    }
+
+    #[test]
+    fn test_resolve_send_method_finds_gmail_send_method() {
+        let mut doc = crate::discovery::RestDescription::default();
+        let send_method = crate::discovery::RestMethod {
+            http_method: "POST".to_string(),
+            path: "gmail/v1/users/{userId}/messages/send".to_string(),
+            ..Default::default()
+        };
+
+        let mut messages = crate::discovery::RestResource::default();
+        messages.methods.insert("send".to_string(), send_method);
+
+        let mut users = crate::discovery::RestResource::default();
+        users.resources.insert("messages".to_string(), messages);
+
+        doc.resources = HashMap::from([("users".to_string(), users)]);
+
+        let resolved = resolve_send_method(&doc).unwrap();
+
+        assert_eq!(resolved.http_method, "POST");
+        assert_eq!(resolved.path, "gmail/v1/users/{userId}/messages/send");
     }
 }
