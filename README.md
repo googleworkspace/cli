@@ -68,11 +68,13 @@ asdf plugin add gws https://github.com/treezio/asdf-gws.git
 # Show installable versions
 asdf list-all gws
 
-# Install latest (or replace with a fixed version)
+# Install the latest version and pin it globally
 asdf install gws latest
-
-# Set globally in ~/.tool-versions (pin the current latest version)
 asdf global gws $(asdf latest gws)
+
+# Or install and pin a specific version
+# asdf install gws <version>
+# asdf global gws <version>
 ```
 
 Pre-built binaries are also available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
