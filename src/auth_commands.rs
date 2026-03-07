@@ -100,13 +100,13 @@ pub fn base_config_dir() -> PathBuf {
         
         // Check for suspicious paths like root, system directories, or .ssh
         let is_suspicious = path_to_check.parent().is_none()
+            || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
             || (cfg!(unix)
                 && (path_to_check.starts_with("/etc")
                     || path_to_check.starts_with("/usr")
                     || path_to_check.starts_with("/var")
                     || path_to_check.starts_with("/bin")
-                    || path_to_check.starts_with("/sbin")))
-            || path_to_check.components().any(|c| c.as_os_str() == ".ssh");
+                    || path_to_check.starts_with("/sbin")));
 
         if is_suspicious {
             eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
