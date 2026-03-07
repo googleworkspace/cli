@@ -384,11 +384,10 @@ name: gws-{alias}
 version: 1.0.0
 description: "{trigger_desc}"
 metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws {alias} --help"
+  category: "productivity"
+  requires:
+    bins: ["gws"]
+  cliHelp: "gws {alias} --help"
 ---
 
 "#,
@@ -520,11 +519,10 @@ name: gws-{alias}-{short}
 version: 1.0.0
 description: "{trigger_desc}"
 metadata:
-  openclaw:
-    category: "{category}"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws {alias} {cmd_name} --help"
+  category: "{category}"
+  requires:
+    bins: ["gws"]
+  cliHelp: "gws {alias} {cmd_name} --help"
 ---
 
 "#,
@@ -667,10 +665,9 @@ name: gws-shared
 version: 1.0.0
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
+  category: "productivity"
+  requires:
+    bins: ["gws"]
 ---
 
 # gws — Shared Reference
@@ -752,11 +749,10 @@ name: persona-{name}
 version: 1.0.0
 description: "{trigger_desc}"
 metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: [{skills}]
+  category: "persona"
+  requires:
+    bins: ["gws"]
+    skills: [{skills}]
 ---
 
 # {title}
@@ -822,12 +818,11 @@ name: recipe-{name}
 version: 1.0.0
 description: "{trigger_desc}"
 metadata:
-  openclaw:
-    category: "recipe"
-    domain: "{category}"
-    requires:
-      bins: ["gws"]
-      skills: [{skills}]
+  category: "recipe"
+  domain: "{category}"
+  requires:
+    bins: ["gws"]
+    skills: [{skills}]
 ---
 
 # {title}
