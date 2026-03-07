@@ -114,6 +114,23 @@ pub async fn base_config_dir() -> PathBuf {
                     return path_to_check;
                 }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // The directory doesn't exist yet, which is a valid use case.
+                // We can't canonicalize, so we'll run security checks on the provided path.
+                let is_suspicious = path.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
+                    || (cfg!(unix)
+                        && (path.starts_with("/etc")
+                            || path.starts_with("/usr")
+                            || path.starts_with("/var")
+                            || path.starts_with("/bin")
+                            || path.starts_with("/sbin")));
+
+                if is_suspicious {
+                    eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
+                } else {
+                    return path; // Return the user-provided path
+                }
+            }
             Err(e) => {
                 eprintln!("Warning: Could not resolve GOOGLE_WORKSPACE_CLI_CONFIG_DIR path '{}': {}. Using default.", path.display(), e);
             }
