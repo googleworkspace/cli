@@ -96,22 +96,27 @@ pub async fn base_config_dir() -> PathBuf {
         let path = PathBuf::from(&dir);
         
         // Resolve symlinks to check the real path. If path doesn't exist, check the given path.
-        let path_to_check = tokio::fs::canonicalize(&path).await.unwrap_or_else(|_| path.clone());
-        
-        // Check for suspicious paths like root, system directories, or .ssh
-        let is_suspicious = path_to_check.parent().is_none()
-            || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
-            || (cfg!(unix)
-                && (path_to_check.starts_with("/etc")
-                    || path_to_check.starts_with("/usr")
-                    || path_to_check.starts_with("/var")
-                    || path_to_check.starts_with("/bin")
-                    || path_to_check.starts_with("/sbin")));
+        match tokio::fs::canonicalize(&path).await {
+            Ok(path_to_check) => {
+                // Check for suspicious paths like root, system directories, or .ssh
+                let is_suspicious = path_to_check.parent().is_none()
+                    || path_to_check.components().any(|c| c.as_os_str() == ".." || c.as_os_str() == ".ssh")
+                    || (cfg!(unix)
+                        && (path_to_check.starts_with("/etc")
+                            || path_to_check.starts_with("/usr")
+                            || path_to_check.starts_with("/var")
+                            || path_to_check.starts_with("/bin")
+                            || path_to_check.starts_with("/sbin")));
 
-        if is_suspicious {
-            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
-        } else {
-            return path_to_check;
+                if is_suspicious {
+                    eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
+                } else {
+                    return path_to_check;
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not resolve GOOGLE_WORKSPACE_CLI_CONFIG_DIR path '{}': {}. Using default.", path.display(), e);
+            }
         }
     }
 
@@ -121,7 +126,7 @@ pub async fn base_config_dir() -> PathBuf {
             .join(".config")
             .join("gws");
         
-        if primary.exists() {
+        if tokio::fs::metadata(&primary).await.is_ok() {
             primary
         } else {
             // Backward compat: fall back to OS-specific config dir for existing installs
@@ -129,7 +134,7 @@ pub async fn base_config_dir() -> PathBuf {
             let legacy = dirs::config_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("gws");
-            if legacy.exists() {
+            if tokio::fs::metadata(&legacy).await.is_ok() {
                 legacy
             } else {
                 primary
@@ -267,7 +272,7 @@ async fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     // Read the base directory without applying the current active profile
     let base_dir = base_config_dir().await;
 
-    if !base_dir.exists() {
+    if tokio::fs::metadata(&base_dir).await.is_err() {
         tokio::fs::create_dir_all(&base_dir).await.map_err(|e| {
             GwsError::Validation(format!("Failed to create base config dir: {e}"))
         })?;
