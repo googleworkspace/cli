@@ -383,11 +383,10 @@ fn render_service_skill(
 name: gws-{alias}
 version: 1.0.0
 description: "{trigger_desc}"
-metadata:
-  category: "productivity"
-  requires:
-    bins: ["gws"]
-  cliHelp: "gws {alias} --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws {alias} --help"
 ---
 
 "#,
@@ -518,11 +517,10 @@ fn render_helper_skill(
 name: gws-{alias}-{short}
 version: 1.0.0
 description: "{trigger_desc}"
-metadata:
-  category: "{category}"
-  requires:
-    bins: ["gws"]
-  cliHelp: "gws {alias} {cmd_name} --help"
+category: "{category}"
+requires:
+  bins: ["gws"]
+cliHelp: "gws {alias} {cmd_name} --help"
 ---
 
 "#,
@@ -664,10 +662,9 @@ fn generate_shared_skill(base: &Path) -> Result<(), GwsError> {
 name: gws-shared
 version: 1.0.0
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
-metadata:
-  category: "productivity"
-  requires:
-    bins: ["gws"]
+category: "productivity"
+requires:
+  bins: ["gws"]
 ---
 
 # gws — Shared Reference
@@ -748,11 +745,10 @@ fn render_persona_skill(persona: &PersonaEntry) -> String {
 name: persona-{name}
 version: 1.0.0
 description: "{trigger_desc}"
-metadata:
-  category: "persona"
-  requires:
-    bins: ["gws"]
-    skills: [{skills}]
+category: "persona"
+requires:
+  bins: ["gws"]
+  skills: [{skills}]
 ---
 
 # {title}
@@ -817,12 +813,11 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
 name: recipe-{name}
 version: 1.0.0
 description: "{trigger_desc}"
-metadata:
-  category: "recipe"
-  domain: "{category}"
-  requires:
-    bins: ["gws"]
-    skills: [{skills}]
+category: "recipe"
+domain: "{category}"
+requires:
+  bins: ["gws"]
+  skills: [{skills}]
 ---
 
 # {title}

@@ -1,17 +1,11 @@
 ---
 name: persona-content-creator
 version: 1.0.0
-description: Create, organize, and distribute content across Workspace.
-category: persona
+description: "Create, organize, and distribute content across Workspace."
+category: "persona"
 requires:
-  bins:
-  - gws
-  skills:
-  - gws-docs
-  - gws-drive
-  - gws-gmail
-  - gws-chat
-  - gws-slides
+  bins: ["gws"]
+  skills: ["gws-docs", "gws-drive", "gws-gmail", "gws-chat", "gws-slides"]
 ---
 
 # Content Creator
