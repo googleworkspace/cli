@@ -365,6 +365,19 @@ fn is_blocked_method(alias: &str, resource: &str, method: &str) -> bool {
         .any(|(s, r, m)| *s == alias && *r == resource && *m == method)
 }
 
+/// Category used in generated SKILL frontmatter by service alias.
+fn service_category(alias: &str) -> &'static str {
+    match alias {
+        "admin-reports" | "reports" => "admin",
+        "classroom" => "education",
+        "events" => "engineering",
+        "modelarmor" => "security",
+        "calendar" | "meet" => "scheduling",
+        "chat" | "gmail" => "communication",
+        _ => "productivity",
+    }
+}
+
 fn render_service_skill(
     alias: &str,
     entry: &services::ServiceEntry,
@@ -378,11 +391,7 @@ fn render_service_skill(
     let trigger_desc = service_description(product_name, entry.description);
 
     // Frontmatter
-    let category = if alias == "modelarmor" {
-        "security"
-    } else {
-        "productivity"
-    };
+    let category = service_category(alias);
     out.push_str(&format!(
         r#"---
 name: "gws-{alias}"
@@ -510,11 +519,7 @@ fn render_helper_skill(
             | "create-template"
             | "subscribe"
     );
-    let category = if alias == "modelarmor" {
-        "security"
-    } else {
-        "productivity"
-    };
+    let category = service_category(alias);
 
     // Frontmatter
     out.push_str(&format!(
