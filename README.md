@@ -55,7 +55,7 @@ npm install -g @googleworkspace/cli
 > The npm package bundles pre-built native binaries for your OS and architecture.
 > No Rust toolchain required.
 
-Or install with `asdf`:
+Or install with `asdf` (using a community-maintained plugin):
 
 ```bash
 # Add plugin
@@ -68,7 +68,7 @@ asdf list-all gws
 asdf install gws latest
 
 # Set globally in ~/.tool-versions
-asdf set --home gws latest
+asdf global gws latest
 ```
 
 Pre-built binaries are also available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
