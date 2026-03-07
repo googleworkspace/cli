@@ -536,9 +536,13 @@ fn set_gcloud_project(project_id: &str) -> Result<(), GwsError> {
     Ok(())
 }
 
+/// Timeout (in seconds) for listing GCP projects via `gcloud projects list`.
+/// Increased from 10s to 30s to accommodate users with many projects.
+const LIST_PROJECTS_TIMEOUT_SECS: u64 = 30;
+
 /// List all GCP projects accessible to the current user.
 /// Returns a list of (project_id, project_name) tuples, and an optional error message.
-/// Times out after 10 seconds to avoid hanging on CBA-enrolled devices.
+/// Times out after `LIST_PROJECTS_TIMEOUT_SECS` to avoid hanging on CBA-enrolled devices.
 /// gcloud stderr flows through to the terminal so users see progress/error messages.
 fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
     let child = gcloud_cmd()
@@ -568,7 +572,7 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
     });
 
     // Wait with timeout
-    let timeout = std::time::Duration::from_secs(10);
+    let timeout = std::time::Duration::from_secs(LIST_PROJECTS_TIMEOUT_SECS);
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -601,7 +605,7 @@ fn list_gcloud_projects() -> (Vec<(String, String)>, Option<String>) {
                     let _ = child.kill();
                     return (
                         Vec::new(),
-                        Some("Timed out listing projects (10s)".to_string()),
+                        Some(format!("Timed out listing projects ({LIST_PROJECTS_TIMEOUT_SECS}s)")),
                     );
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -976,6 +980,28 @@ fn stage_account(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
     }
 }
 
+/// Prompt the user to enter a project ID via the TUI input dialog.
+///
+/// Shared by both the "Create new project" and "Enter project ID manually"
+/// flows to avoid duplicating the input → validate → cancel logic.
+fn prompt_project_id(
+    ctx: &mut SetupContext,
+    title: &str,
+    placeholder: &str,
+    cancel_msg: &str,
+) -> Result<String, GwsError> {
+    match ctx
+        .wizard
+        .as_mut()
+        .unwrap()
+        .show_input(title, placeholder, None)
+        .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
+    {
+        crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => Ok(v),
+        _ => Err(GwsError::Validation(cancel_msg.to_string())),
+    }
+}
+
 /// Stage 3: Select or create a GCP project.
 fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
     ctx.wiz(2, StepStatus::InProgress(String::new()));
@@ -1047,20 +1073,12 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
                 let chosen = items.iter().find(|i| i.selected);
                 match chosen {
                     Some(item) if item.label.starts_with('➕') => {
-                        let project_name = match ctx
-                            .wizard
-                            .as_mut()
-                            .unwrap()
-                            .show_input("Create new GCP project", "Enter a unique project ID", None)
-                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
-                        {
-                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
-                            _ => {
-                                return Err(GwsError::Validation(
-                                    "Project creation cancelled by user".to_string(),
-                                ))
-                            }
-                        };
+                        let project_name = prompt_project_id(
+                            ctx,
+                            "Create new GCP project",
+                            "Enter a unique project ID",
+                            "Project creation cancelled by user",
+                        )?;
 
                         ctx.wizard
                             .as_mut()
@@ -1086,24 +1104,12 @@ fn stage_project(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
                         Ok(SetupStage::EnableApis)
                     }
                     Some(item) if item.label.starts_with('⌨') => {
-                        let project_id = match ctx
-                            .wizard
-                            .as_mut()
-                            .unwrap()
-                            .show_input(
-                                "Enter GCP project ID",
-                                "Type your existing project ID",
-                                None,
-                            )
-                            .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?
-                        {
-                            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => v,
-                            _ => {
-                                return Err(GwsError::Validation(
-                                    "Project entry cancelled by user".to_string(),
-                                ))
-                            }
-                        };
+                        let project_id = prompt_project_id(
+                            ctx,
+                            "Enter GCP project ID",
+                            "Type your existing project ID",
+                            "Project entry cancelled by user",
+                        )?;
                         set_gcloud_project(&project_id)?;
                         ctx.wiz(2, StepStatus::Done(project_id.clone()));
                         ctx.project_id = project_id;
