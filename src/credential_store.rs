@@ -70,8 +70,8 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
                 // If keyring is empty, prefer a persisted local key first.
-                if key_file.exists() {
-                    if let Ok(b64_key) = std::fs::read_to_string(&key_file) {
+                if tokio::fs::metadata(&key_file).await.is_ok() {
+                    if let Ok(b64_key) = tokio::fs::read_to_string(&key_file).await {
                         if let Ok(decoded) = STANDARD.decode(b64_key.trim()) {
                             if decoded.len() == 32 {
                                 let mut arr = [0u8; 32];
@@ -90,12 +90,12 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 let b64_key = STANDARD.encode(key);
 
                 if let Some(parent) = key_file.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                    let _ = tokio::fs::create_dir_all(parent).await;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
                         if let Err(e) =
-                            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                            tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).await
                         {
                             eprintln!(
                                 "Warning: failed to set secure permissions on key directory: {e}"
@@ -107,16 +107,17 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::OpenOptionsExt;
-                    let mut options = std::fs::OpenOptions::new();
-                    options.write(true).create(true).truncate(true).mode(0o600);
-                    if let Ok(mut file) = options.open(&key_file) {
-                        use std::io::Write;
-                        let _ = file.write_all(b64_key.as_bytes());
+                    let mut std_options = std::fs::OpenOptions::new();
+                    std_options.write(true).create(true).truncate(true).mode(0o600);
+                    let options: tokio::fs::OpenOptions = std_options.into();
+                    if let Ok(mut file) = options.open(&key_file).await {
+                        use tokio::io::AsyncWriteExt;
+                        let _ = file.write_all(b64_key.as_bytes()).await;
                     }
                 }
                 #[cfg(not(unix))]
                 {
-                    let _ = std::fs::write(&key_file, &b64_key);
+                    let _ = tokio::fs::write(&key_file, &b64_key).await;
                 }
 
                 // Best effort: also store in keyring when available.
@@ -132,8 +133,8 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 
     // Fallback: Local file `.encryption_key`
 
-    if key_file.exists() {
-        if let Ok(b64_key) = std::fs::read_to_string(&key_file) {
+    if tokio::fs::metadata(&key_file).await.is_ok() {
+        if let Ok(b64_key) = tokio::fs::read_to_string(&key_file).await {
             use base64::{engine::general_purpose::STANDARD, Engine as _};
             if let Ok(decoded) = STANDARD.decode(b64_key.trim()) {
                 if decoded.len() == 32 {
@@ -153,11 +154,11 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     let b64_key = STANDARD.encode(key);
 
     if let Some(parent) = key_file.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = tokio::fs::create_dir_all(parent).await;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            if let Err(e) = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).await
             {
                 eprintln!("Warning: failed to set secure permissions on key directory: {e}");
             }
@@ -167,11 +168,12 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true).mode(0o600);
-        if let Ok(mut file) = options.open(&key_file) {
-            use std::io::Write;
-            let _ = file.write_all(b64_key.as_bytes());
+        let mut std_options = std::fs::OpenOptions::new();
+        std_options.write(true).create(true).truncate(true).mode(0o600);
+        let options: tokio::fs::OpenOptions = std_options.into();
+        if let Ok(mut file) = options.open(&key_file).await {
+            use tokio::io::AsyncWriteExt;
+            let _ = file.write_all(b64_key.as_bytes()).await;
         }
     }
     #[cfg(not(unix))]
