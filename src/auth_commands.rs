@@ -95,36 +95,27 @@ pub async fn base_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         let path = PathBuf::from(&dir);
         
-        // Resolve symlinks to check the real path. If path doesn't exist, check the given path.
-        match tokio::fs::canonicalize(&path).await {
-            Ok(path_to_check) => {
-                // Check for suspicious paths like root, system directories, or .ssh
-                if is_suspicious_path(&path_to_check) {
-                    eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
-                } else {
-                    return path_to_check;
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // The directory doesn't exist yet, which is a valid use case.
-                // To prevent TOCTOU symlink injection, we try to canonicalize the parent directory.
-                let mut path_to_check = path.clone();
-                if let Some(parent) = path.parent() {
-                    if let Ok(canon_parent) = tokio::fs::canonicalize(parent).await {
-                        if let Some(file_name) = path.file_name() {
-                            path_to_check = canon_parent.join(file_name);
+        // First, do a basic check for ".." to prevent trivial traversal.
+        if path.components().any(|c| c.as_os_str() == "..") {
+            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains '..'. Using default.");
+        } else {
+            // Create the directory if it doesn't exist. This is the key to preventing TOCTOU.
+            if let Err(e) = tokio::fs::create_dir_all(&path).await {
+                eprintln!("Warning: Could not create GOOGLE_WORKSPACE_CLI_CONFIG_DIR '{}': {}. Using default.", path.display(), e);
+            } else {
+                // Now that the path is guaranteed to exist, we can safely canonicalize it.
+                match tokio::fs::canonicalize(&path).await {
+                    Ok(canonical_path) => {
+                        if is_suspicious_path(&canonical_path) {
+                            eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR resolves to a restricted or sensitive path ({}). Using default.", canonical_path.display());
+                        } else {
+                            return canonical_path;
                         }
                     }
+                    Err(e) => {
+                        eprintln!("Warning: Could not resolve GOOGLE_WORKSPACE_CLI_CONFIG_DIR path '{}': {}. Using default.", path.display(), e);
+                    }
                 }
-
-                if is_suspicious_path(&path_to_check) {
-                    eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
-                } else {
-                    return path_to_check; // Return the explicitly resolved path
-                }
-            }
-            Err(e) => {
-                eprintln!("Warning: Could not resolve GOOGLE_WORKSPACE_CLI_CONFIG_DIR path '{}': {}. Using default.", path.display(), e);
             }
         }
     }
