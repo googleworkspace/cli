@@ -288,6 +288,30 @@ gws sheets spreadsheets values append \
   --json '{"values": [["Name", "Score"], ["Alice", 95]]}'
 ```
 
+### `fields` Selection Lives Inside `--params`
+
+For Discovery API methods, include partial response selectors inside `--params` JSON:
+
+```bash
+gws drive files list \
+  --params '{"q":"trashed=false","fields":"nextPageToken,files(id,name,mimeType)"}'
+```
+
+Avoid passing `--fields` as a standalone flag for API response fields.
+
+### Gmail Raw Drafts — UTF-8 Subject Headers
+
+When using `gmail.users.drafts.create` with a raw RFC 2822 message, non-ASCII subjects should be RFC 2047 encoded:
+
+```bash
+SUBJECT_B64=$(printf '三月分享老師邀請' | base64 | tr -d '\n')
+RAW=$(printf "To: recipient@example.com\nSubject: =?UTF-8?B?%s?=\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\nHello\n" "$SUBJECT_B64" | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')
+
+gws gmail users drafts create \
+  --params '{"userId":"me"}' \
+  --json "{\"message\":{\"raw\":\"$RAW\"}}"
+```
+
 ### Model Armor (Response Sanitization)
 
 Integrate [Google Cloud Model Armor](https://cloud.google.com/security/products/model-armor) to scan API responses for prompt injection before they reach your agent.
@@ -354,6 +378,14 @@ Unverified (testing mode) apps are limited to ~25 OAuth scopes. The `recommended
 gws auth login --scopes drive,gmail,calendar
 ```
 
+### `--fields` errors or ignored output filtering
+
+For Discovery API methods, use `"fields"` inside `--params` JSON. Example:
+
+```bash
+gws drive files list --params '{"q":"trashed=false","fields":"files(id,name)"}'
+```
+
 ### `gcloud` CLI not found
 
 `gws auth setup` requires the `gcloud` CLI to automate project creation. You have three options:
@@ -365,6 +397,21 @@ gws auth login --scopes drive,gmail,calendar
 ### `redirect_uri_mismatch`
 
 The OAuth client was not created as a **Desktop app** type. In the [Credentials](https://console.cloud.google.com/apis/credentials) page, delete the existing client, create a new one with type **Desktop app**, and download the new JSON.
+
+### Gmail draft/send subject appears garbled for non-ASCII text
+
+For raw RFC 2822 payloads, encode the `Subject` header using RFC 2047 encoded-word format:
+
+```text
+Subject: =?UTF-8?B?<base64-utf8-subject>?=
+```
+
+Also keep message headers/body UTF-8 aware:
+
+```text
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+```
 
 ### API not enabled — `accessNotConfigured`
 
