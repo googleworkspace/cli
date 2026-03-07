@@ -29,6 +29,7 @@ gws gmail +send --to <EMAIL> --subject <SUBJECT> --body <TEXT>
 | `--to` | ✓ | — | Recipient email address |
 | `--subject` | ✓ | — | Email subject |
 | `--body` | ✓ | — | Email body (plain text) |
+| `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
 
