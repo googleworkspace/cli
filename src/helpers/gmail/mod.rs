@@ -90,6 +90,17 @@ fn append_header_value(existing: &mut String, value: &str) {
     existing.push_str(value);
 }
 
+fn append_address_list_header_value(existing: &mut String, value: &str) {
+    if value.is_empty() {
+        return;
+    }
+
+    if !existing.is_empty() {
+        existing.push_str(", ");
+    }
+    existing.push_str(value);
+}
+
 fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
     let mut parsed = ParsedMessageHeaders::default();
 
@@ -99,9 +110,9 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
 
         match name {
             "From" => parsed.from = value.to_string(),
-            "Reply-To" => parsed.reply_to = value.to_string(),
-            "To" => parsed.to = value.to_string(),
-            "Cc" => parsed.cc = value.to_string(),
+            "Reply-To" => append_address_list_header_value(&mut parsed.reply_to, value),
+            "To" => append_address_list_header_value(&mut parsed.to, value),
+            "Cc" => append_address_list_header_value(&mut parsed.cc, value),
             "Subject" => parsed.subject = value.to_string(),
             "Date" => parsed.date = value.to_string(),
             "Message-ID" | "Message-Id" => parsed.message_id_header = value.to_string(),
@@ -711,7 +722,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_original_message_concatenates_repeated_references_headers() {
+    fn test_append_address_list_header_value() {
+        let mut header_value = String::new();
+
+        append_address_list_header_value(&mut header_value, "alice@example.com");
+        append_address_list_header_value(&mut header_value, "bob@example.com");
+        append_address_list_header_value(&mut header_value, "");
+
+        assert_eq!(header_value, "alice@example.com, bob@example.com");
+    }
+
+    #[test]
+    fn test_parse_original_message_concatenates_repeated_address_and_reference_headers() {
         let msg = json!({
             "threadId": "thread-123",
             "snippet": "Snippet fallback",
@@ -720,8 +742,11 @@ mod tests {
                 "headers": [
                     { "name": "From", "value": "alice@example.com" },
                     { "name": "Reply-To", "value": "team@example.com" },
+                    { "name": "Reply-To", "value": "owner@example.com" },
                     { "name": "To", "value": "bob@example.com" },
-                    { "name": "Cc", "value": "carol@example.com" },
+                    { "name": "To", "value": "carol@example.com" },
+                    { "name": "Cc", "value": "dave@example.com" },
+                    { "name": "Cc", "value": "erin@example.com" },
                     { "name": "Subject", "value": "Hello" },
                     { "name": "Date", "value": "Fri, 6 Mar 2026 12:00:00 +0000" },
                     { "name": "Message-ID", "value": "<msg@example.com>" },
@@ -738,9 +763,9 @@ mod tests {
 
         assert_eq!(original.thread_id, "thread-123");
         assert_eq!(original.from, "alice@example.com");
-        assert_eq!(original.reply_to, "team@example.com");
-        assert_eq!(original.to, "bob@example.com");
-        assert_eq!(original.cc, "carol@example.com");
+        assert_eq!(original.reply_to, "team@example.com, owner@example.com");
+        assert_eq!(original.to, "bob@example.com, carol@example.com");
+        assert_eq!(original.cc, "dave@example.com, erin@example.com");
         assert_eq!(original.subject, "Hello");
         assert_eq!(original.date, "Fri, 6 Mar 2026 12:00:00 +0000");
         assert_eq!(original.message_id_header, "<msg@example.com>");
