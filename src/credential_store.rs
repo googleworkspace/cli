@@ -21,32 +21,16 @@ use keyring::Entry;
 use rand::RngCore;
 
 
+static KEY: tokio::sync::OnceCell<[u8; 32]> = tokio::sync::OnceCell::const_new();
+
 /// Returns the encryption key derived from the OS keyring, or falls back to a local file.
 /// Generates a random 256-bit key and stores it securely if it doesn't exist.
 async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
-    static KEY: tokio::sync::RwLock<Option<[u8; 32]>> = tokio::sync::RwLock::const_new(None);
+    let key = KEY.get_or_try_init(generate_key_logic).await?;
+    Ok(*key)
+}
 
-    if let Some(key) = *KEY.read().await {
-        return Ok(key);
-    }
-
-    // We do NOT acquire the write lock here because the subsequent file I/O operations
-    // could block other threads attempting concurrent profile accesses.
-    // Concurrency is resolved securely just before returning by checking whether
-    // another runtime resolved the key while we were generating ours.
-
-    macro_rules! cache_and_return {
-        ($candidate:expr) => {{
-            let mut write_lock = KEY.write().await;
-            if let Some(existing) = *write_lock {
-                existing
-            } else {
-                *write_lock = Some($candidate);
-                $candidate
-            }
-        }};
-    }
-
+async fn generate_key_logic() -> anyhow::Result<[u8; 32]> {
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
@@ -69,7 +53,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        return Ok(cache_and_return!(arr));
+                        return Ok(arr);
                     }
                 }
             }
@@ -85,7 +69,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                                 arr.copy_from_slice(&decoded);
                                 // Best effort: repopulate keyring for future runs.
                                 let _ = entry.set_password(&b64_key);
-                                return Ok(cache_and_return!(arr));
+                                return Ok(arr);
                             }
                         }
                     }
@@ -134,7 +118,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 // Best effort: also store in keyring when available.
                 let _ = entry.set_password(&b64_key);
 
-                return Ok(cache_and_return!(key));
+                return Ok(key);
             }
             Err(e) => {
                 eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
@@ -151,7 +135,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 if decoded.len() == 32 {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&decoded);
-                    return Ok(cache_and_return!(arr));
+                    return Ok(arr);
                 }
             }
         }
@@ -197,7 +181,7 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         let _ = tokio::fs::write(&key_file, b64_key).await;
     }
 
-    Ok(cache_and_return!(key))
+    Ok(key)
 }
 
 /// Encrypts plaintext bytes using AES-256-GCM with a machine-derived key.
