@@ -73,7 +73,11 @@ async fn run() -> Result<(), GwsError> {
         
         if a == "--profile" {
             if let Some(val) = args.get(i + 1) {
-                if !val.starts_with('-') {
+                // A profile name cannot be a known service or built-in command.
+                let is_command = crate::services::SERVICES.iter().any(|s| s.aliases.contains(&val.as_str()))
+                    || matches!(val.as_str(), "auth" | "schema" | "generate-skills");
+
+                if !val.starts_with('-') && !is_command {
                     if profile_name.is_none() {
                         profile_name = Some(val.clone());
                     }
