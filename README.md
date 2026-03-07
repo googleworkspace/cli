@@ -71,8 +71,8 @@ asdf list-all gws
 # Install latest (or replace with a fixed version)
 asdf install gws latest
 
-# Set globally in ~/.tool-versions
-asdf global gws latest
+# Set globally in ~/.tool-versions (pin the current latest version)
+asdf global gws $(asdf latest gws)
 ```
 
 Pre-built binaries are also available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
