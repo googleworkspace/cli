@@ -95,7 +95,7 @@ async fn run() -> Result<(), GwsError> {
 
         filtered_args.push(a.clone());
         
-        if first_arg.is_none() && !a.starts_with("--") && a != "--help" && a != "--version" {
+        if first_arg.is_none() && (!a.starts_with("--") || a == "--help" || a == "--version") {
             first_arg = Some(a.clone());
         }
         i += 1;

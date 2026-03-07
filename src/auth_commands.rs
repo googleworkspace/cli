@@ -103,7 +103,7 @@ pub fn base_config_dir() -> PathBuf {
             || path_str.starts_with("/var")
             || path_str.starts_with("/bin")
             || path_str.starts_with("/sbin")
-            || path_str.contains(".ssh") 
+            || path.components().any(|c| c.as_os_str() == ".ssh") 
         {
             eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path_str);
         } else {
@@ -232,7 +232,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "login" => handle_login(&args[1..]).await,
         "setup" => crate::setup::run_setup(&args[1..]).await,
         "status" => handle_status().await,
-        "switch" => handle_switch(&args[1..]),
+        "switch" => handle_switch(&args[1..]).await,
         "export" => {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
             handle_export(unmasked).await
@@ -244,7 +244,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     }
 }
 
-fn handle_switch(args: &[String]) -> Result<(), GwsError> {
+async fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     if args.is_empty() {
         return Err(GwsError::Validation(
             "Missing profile name. Usage: gws auth switch <profile_name>".to_string(),
@@ -259,7 +259,7 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     let base_dir = base_config_dir();
 
     if !base_dir.exists() {
-        std::fs::create_dir_all(&base_dir).map_err(|e| {
+        tokio::fs::create_dir_all(&base_dir).await.map_err(|e| {
             GwsError::Validation(format!("Failed to create base config dir: {e}"))
         })?;
     }
@@ -267,14 +267,14 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     let active_profile_path = base_dir.join("active_profile");
 
     if profile_name == "default" {
-        if let Err(e) = std::fs::remove_file(active_profile_path) {
+        if let Err(e) = tokio::fs::remove_file(&active_profile_path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(GwsError::Validation(format!("Failed to remove active_profile file: {e}")));
             }
         }
         println!("Switched to default profile.");
     } else {
-        std::fs::write(&active_profile_path, profile_name).map_err(|e| {
+        tokio::fs::write(&active_profile_path, profile_name).await.map_err(|e| {
             GwsError::Validation(format!("Failed to write active_profile: {e}"))
         })?;
         println!("Switched to profile: {profile_name}");
