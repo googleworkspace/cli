@@ -43,13 +43,17 @@ gws <service> <resource> [sub-resource] <method> [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--params '{"key": "val"}'` | URL/query parameters |
-| `--json '{"key": "val"}'` | Request body |
+| `--params "{\"key\": \"val\"}"` | URL/query parameters |
+| `--json "{\"key\": \"val\"}"` | Request body |
 | `-o, --output <PATH>` | Save binary responses to file |
 | `--upload <PATH>` | Upload file content (multipart) |
 | `--page-all` | Auto-paginate (NDJSON output) |
 | `--page-limit <N>` | Max pages when using --page-all (default: 10) |
 | `--page-delay <MS>` | Delay between pages in ms (default: 100) |
+
+## Shell Tips
+
+- In shells with history expansion (for example zsh), `!` can be interpreted unexpectedly. Use double-quoted arguments for values like sheet ranges (`"Sheet1!A1:B2"`) and escaped JSON passed to `--params`/`--json`.
 
 ## Security Rules
 
