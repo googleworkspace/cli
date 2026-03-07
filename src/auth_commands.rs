@@ -118,24 +118,29 @@ pub fn base_config_dir() -> PathBuf {
     }
 }
 
+pub fn get_active_profile() -> Option<String> {
+    std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let base_dir = base_config_dir();
+            std::fs::read_to_string(base_dir.join("active_profile"))
+                .ok()
+                .and_then(|s| {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                })
+        })
+}
+
 pub fn config_dir() -> PathBuf {
     let base_dir = base_config_dir();
 
-    // Determine the active profile
-    let mut profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE").ok().filter(|s| !s.is_empty());
-    
-    // Fall back to reading active_profile file
-    if profile.is_none() {
-        let active_profile_path = base_dir.join("active_profile");
-        if let Ok(content) = std::fs::read_to_string(active_profile_path) {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                profile = Some(trimmed.to_string());
-            }
-        }
-    }
-
-    match profile.as_deref() {
+    match get_active_profile().as_deref() {
         Some("default") | None => base_dir,
         Some(name) => base_dir.join("profiles").join(name),
     }
@@ -201,6 +206,12 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     }
 
     let profile_name = &args[0];
+
+    if profile_name.contains('/') || profile_name.contains('\\') || profile_name == "." || profile_name == ".." {
+        return Err(GwsError::Validation(
+            "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
+        ));
+    }
 
     // Read the base directory without applying the current active profile
     let base_dir = base_config_dir();
@@ -1205,20 +1216,8 @@ async fn handle_status() -> Result<(), GwsError> {
         "{}",
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
-
     // Determine the active profile
-    let base_dir = base_config_dir();
-    
-    let profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            std::fs::read_to_string(base_dir.join("active_profile"))
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "default".to_string());
+    let profile = get_active_profile().unwrap_or_else(|| "default".to_string());
         
     println!("\nActive Profile: {profile}");
 

@@ -66,15 +66,26 @@ async fn run() -> Result<(), GwsError> {
 
     let mut filtered_args = vec![args[0].clone()];
     let mut first_arg: Option<String> = None;
+    let mut profile_name: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         let a = &args[i];
         
         if a == "--profile" {
-            i += 2; // Skip --profile and its value
+            if i + 1 < args.len() {
+                if profile_name.is_none() {
+                    profile_name = Some(args[i + 1].clone());
+                }
+                i += 2; // Skip --profile and its value
+            } else {
+                i += 1; // Skip dangling --profile flag
+            }
             continue;
         }
-        if a.starts_with("--profile=") {
+        if let Some(stripped) = a.strip_prefix("--profile=") {
+            if profile_name.is_none() {
+                profile_name = Some(stripped.to_string());
+            }
             i += 1;
             continue;
         }
@@ -99,19 +110,12 @@ async fn run() -> Result<(), GwsError> {
         i += 1;
     }
 
-    // Extract profile early to set environment variable
-    let mut profile_name = None;
-    for i in 1..args.len() {
-        if args[i] == "--profile" && i + 1 < args.len() {
-            profile_name = Some(args[i + 1].clone());
-            break;
-        } else if let Some(stripped) = args[i].strip_prefix("--profile=") {
-            profile_name = Some(stripped.to_string());
-            break;
-        }
-    }
-
     if let Some(profile) = profile_name {
+        if profile.contains('/') || profile.contains('\\') || profile == "." || profile == ".." {
+            return Err(GwsError::Validation(
+                "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
+            ));
+        }
         std::env::set_var("GOOGLE_WORKSPACE_CLI_PROFILE", profile);
     }
 
