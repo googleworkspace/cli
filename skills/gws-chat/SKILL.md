@@ -2,12 +2,10 @@
 name: gws-chat
 version: 1.0.0
 description: "Google Chat: Manage Chat spaces and messages."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws chat --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws chat --help"
 ---
 
 # chat (v1)

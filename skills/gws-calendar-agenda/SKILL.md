@@ -2,12 +2,10 @@
 name: gws-calendar-agenda
 version: 1.0.0
 description: "Google Calendar: Show upcoming events across all calendars."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws calendar +agenda --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws calendar +agenda --help"
 ---
 
 # calendar +agenda

@@ -1,13 +1,12 @@
 ---
 name: gws-modelarmor-create-template
 version: 1.0.0
-description: "Google Model Armor: Create a new Model Armor template."
-metadata:
-  openclaw:
-    category: "security"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws modelarmor +create-template --help"
+description: 'Google Model Armor: Create a new Model Armor template.'
+category: security
+requires:
+  bins:
+  - gws
+cliHelp: gws modelarmor +create-template --help
 ---
 
 # modelarmor +create-template

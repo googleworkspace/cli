@@ -2,12 +2,10 @@
 name: gws-slides
 version: 1.0.0
 description: "Google Slides: Read and write presentations."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws slides --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws slides --help"
 ---
 
 # slides (v1)

@@ -1,14 +1,15 @@
 ---
 name: recipe-log-deal-update
 version: 1.0.0
-description: "Append a deal status update to a Google Sheets sales tracking spreadsheet."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "sales"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-drive"]
+description: Append a deal status update to a Google Sheets sales tracking spreadsheet.
+category: recipe
+domain: sales
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-sheets
+  - gws-drive
 ---
 
 # Log Deal Update to Sheet

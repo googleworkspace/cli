@@ -1,14 +1,15 @@
 ---
 name: recipe-create-doc-from-template
 version: 1.0.0
-description: "Copy a Google Docs template, fill in content, and share with collaborators."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-docs"]
+description: Copy a Google Docs template, fill in content, and share with collaborators.
+category: recipe
+domain: productivity
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-drive
+  - gws-docs
 ---
 
 # Create a Google Doc from a Template

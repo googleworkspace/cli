@@ -1,13 +1,17 @@
 ---
 name: persona-team-lead
 version: 1.0.0
-description: "Lead a team — run standups, coordinate tasks, and communicate."
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-calendar", "gws-gmail", "gws-chat", "gws-drive", "gws-sheets"]
+description: Lead a team — run standups, coordinate tasks, and communicate.
+category: persona
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-calendar
+  - gws-gmail
+  - gws-chat
+  - gws-drive
+  - gws-sheets
 ---
 
 # Team Lead

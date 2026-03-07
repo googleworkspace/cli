@@ -1,14 +1,14 @@
 ---
 name: recipe-schedule-recurring-event
 version: 1.0.0
-description: "Create a recurring Google Calendar event with attendees."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "scheduling"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-calendar"]
+description: Create a recurring Google Calendar event with attendees.
+category: recipe
+domain: scheduling
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-calendar
 ---
 
 # Schedule a Recurring Meeting

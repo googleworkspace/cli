@@ -2,12 +2,10 @@
 name: gws-sheets-append
 version: 1.0.0
 description: "Google Sheets: Append a row to a spreadsheet."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws sheets +append --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws sheets +append --help"
 ---
 
 # sheets +append

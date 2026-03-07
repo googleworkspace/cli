@@ -2,12 +2,10 @@
 name: gws-gmail
 version: 1.0.0
 description: "Gmail: Send, read, and manage email."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws gmail --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws gmail --help"
 ---
 
 # gmail (v1)

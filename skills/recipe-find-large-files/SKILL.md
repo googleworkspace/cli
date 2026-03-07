@@ -1,14 +1,14 @@
 ---
 name: recipe-find-large-files
 version: 1.0.0
-description: "Identify large Google Drive files consuming storage quota."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-drive"]
+description: Identify large Google Drive files consuming storage quota.
+category: recipe
+domain: productivity
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-drive
 ---
 
 # Find Largest Files in Drive

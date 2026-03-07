@@ -2,12 +2,10 @@
 name: gws-workflow-file-announce
 version: 1.0.0
 description: "Google Workflow: Announce a Drive file in a Chat space."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws workflow +file-announce --help"
+category: "productivity"
+requires:
+  bins: ["gws"]
+cliHelp: "gws workflow +file-announce --help"
 ---
 
 # workflow +file-announce

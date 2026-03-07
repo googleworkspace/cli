@@ -1,14 +1,15 @@
 ---
 name: recipe-organize-drive-folder
 version: 1.0.0
-description: "Create a Google Drive folder structure and move files into the right locations."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "productivity"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-drive"]
+description: Create a Google Drive folder structure and move files into the right
+  locations.
+category: recipe
+domain: productivity
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-drive
 ---
 
 # Organize Files into Google Drive Folders

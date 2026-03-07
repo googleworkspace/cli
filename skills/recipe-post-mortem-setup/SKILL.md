@@ -1,14 +1,17 @@
 ---
 name: recipe-post-mortem-setup
 version: 1.0.0
-description: "Create a Google Docs post-mortem, schedule a Google Calendar review, and notify via Chat."
-metadata:
-  openclaw:
-    category: "recipe"
-    domain: "engineering"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-docs", "gws-calendar", "gws-chat"]
+description: Create a Google Docs post-mortem, schedule a Google Calendar review,
+  and notify via Chat.
+category: recipe
+domain: engineering
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-docs
+  - gws-calendar
+  - gws-chat
 ---
 
 # Set Up Post-Mortem

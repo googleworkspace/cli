@@ -1,13 +1,16 @@
 ---
 name: persona-researcher
 version: 1.0.0
-description: "Organize research — manage references, notes, and collaboration."
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-docs", "gws-sheets", "gws-gmail"]
+description: Organize research — manage references, notes, and collaboration.
+category: persona
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-drive
+  - gws-docs
+  - gws-sheets
+  - gws-gmail
 ---
 
 # Researcher

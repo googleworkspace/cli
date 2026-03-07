@@ -1,13 +1,17 @@
 ---
 name: persona-event-coordinator
 version: 1.0.0
-description: "Plan and manage events — scheduling, invitations, and logistics."
-metadata:
-  openclaw:
-    category: "persona"
-    requires:
-      bins: ["gws"]
-      skills: ["gws-calendar", "gws-gmail", "gws-drive", "gws-chat", "gws-sheets"]
+description: Plan and manage events — scheduling, invitations, and logistics.
+category: persona
+requires:
+  bins:
+  - gws
+  skills:
+  - gws-calendar
+  - gws-gmail
+  - gws-drive
+  - gws-chat
+  - gws-sheets
 ---
 
 # Event Coordinator
