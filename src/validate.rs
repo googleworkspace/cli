@@ -238,6 +238,13 @@ pub fn validate_api_identifier(s: &str) -> Result<&str, GwsError> {
             "API identifier contains invalid characters (only alphanumeric, '-', '_', '.' allowed): {s}"
         )));
     }
+    // Reject any empty dot-separated segments, which are invalid in hostnames
+    // and can be used for path traversal (e.g. '..', '.foo', 'foo.').
+    if s.split('.').any(str::is_empty) {
+        return Err(GwsError::Validation(format!(
+            "API identifier contains invalid dot-sequences (e.g. '..', leading/trailing '.', or empty segments): {s}"
+        )));
+    }
     Ok(s)
 }
 

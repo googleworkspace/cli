@@ -371,9 +371,11 @@ pub fn build_create_template_url(config: &CreateTemplateConfig) -> String {
     let project = crate::validate::encode_path_segment(&config.project);
     let location = crate::validate::encode_path_segment(&config.location);
     let parent = format!("projects/{project}/locations/{location}");
+    // template_id is validated in parse_create_template_args; also percent-encode
+    // it here so that any remaining special chars cannot modify the query string.
+    let template_id_encoded = crate::validate::encode_path_segment(&config.template_id);
     format!(
-        "{base}/{parent}/templates?templateId={}",
-        crate::validate::encode_path_segment(&config.template_id)
+        "{base}/{parent}/templates?templateId={template_id_encoded}"
     )
 }
 
@@ -570,6 +572,9 @@ pub fn build_sanitize_request_data(
     text: &str,
     method: &str,
 ) -> Result<(String, String), GwsError> {
+    // Validate template resource name before embedding it in a URL.
+    crate::validate::validate_resource_name(template)?;
+
     let location = extract_location(template).ok_or_else(|| {
         GwsError::Validation(
             "Cannot extract location from --sanitize template. Expected format: projects/PROJECT/locations/LOCATION/templates/TEMPLATE".to_string(),
@@ -678,6 +683,20 @@ mod parsing_tests {
         );
     }
 
+    #[test]
+    fn test_build_create_template_url_encodes_template_id() {
+        // Template IDs with special chars should be percent-encoded in the query string.
+        let config = CreateTemplateConfig {
+            project: "p".to_string(),
+            location: "us-central1".to_string(),
+            template_id: "id with spaces".to_string(),
+            body: "{}".to_string(),
+        };
+        let url = build_create_template_url(&config);
+        assert!(!url.contains(' '), "URL should not contain raw spaces: {url}");
+        assert!(url.contains("templateId="));
+    }
+
     fn make_matches_create(args: &[&str]) -> ArgMatches {
         let cmd = Command::new("test")
             .arg(Arg::new("project").long("project").required(true))
@@ -763,18 +782,53 @@ mod parsing_tests {
     }
 
     #[test]
-    fn test_parse_create_template_args_rejects_traversal() {
+    fn test_parse_create_template_args_rejects_traversal_project() {
         let matches = make_matches_create(&[
             "test",
             "--project",
-            "../etc",
+            "../../evil",
             "--location",
             "us-central1",
             "--template-id",
             "t",
-            "--preset",
-            "jailbreak",
         ]);
-        assert!(parse_create_template_args(&matches).is_err());
+        let result = parse_create_template_args(&matches);
+        assert!(result.is_err(), "Expected Err for traversal in --project");
+    }
+
+    #[test]
+    fn test_parse_create_template_args_rejects_invalid_location() {
+        let matches = make_matches_create(&[
+            "test",
+            "--project",
+            "my-project",
+            "--location",
+            "us??central1",
+            "--template-id",
+            "t",
+        ]);
+        let result = parse_create_template_args(&matches);
+        assert!(result.is_err(), "Expected Err for invalid chars in --location");
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_invalid_template() {
+        // A template name with path traversal should be rejected.
+        let result = build_sanitize_request_data(
+            "projects/../locations/us-central1/templates/t",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err(), "Expected Err for traversal in template name");
+    }
+
+    #[test]
+    fn test_build_sanitize_request_data_rejects_query_injection() {
+        let result = build_sanitize_request_data(
+            "projects/p/locations/us-central1/templates/t?foo=bar",
+            "text",
+            "sanitizeUserPrompt",
+        );
+        assert!(result.is_err(), "Expected Err for query injection in template");
     }
 }
