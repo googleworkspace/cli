@@ -94,9 +94,13 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        if let Err(e) =
-                            tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).await
-                        {
+                        let perms_result = async {
+                            let mut perms = tokio::fs::metadata(parent).await?.permissions();
+                            perms.set_mode(0o700);
+                            tokio::fs::set_permissions(parent, perms).await
+                        }
+                        .await;
+                        if let Err(e) = perms_result {
                             eprintln!(
                                 "Warning: failed to set secure permissions on key directory: {e}"
                             );
@@ -158,8 +162,13 @@ async fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = tokio::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).await
-            {
+            let perms_result = async {
+                let mut perms = tokio::fs::metadata(parent).await?.permissions();
+                perms.set_mode(0o700);
+                tokio::fs::set_permissions(parent, perms).await
+            }
+            .await;
+            if let Err(e) = perms_result {
                 eprintln!("Warning: failed to set secure permissions on key directory: {e}");
             }
         }
