@@ -76,7 +76,7 @@ async fn run() -> Result<(), GwsError> {
 
     if let Some(profile) = global_matches.get_one::<String>("profile") {
         crate::auth_commands::validate_profile_name(profile)?;
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_PROFILE", profile);
+        let _ = crate::auth_commands::OVERRIDE_PROFILE.set(profile.clone());
     }
 
     let first_arg = if let Some((cmd, _)) = global_matches.subcommand() {

@@ -153,7 +153,15 @@ fn is_suspicious_path(path_to_check: &std::path::Path) -> bool {
                 || path_to_check.starts_with("/sbin")))
 }
 
+pub static OVERRIDE_PROFILE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 pub async fn get_active_profile() -> Option<String> {
+    // 1. Check globally injected CLI argument (thread-safe, avoids env data races)
+    if let Some(cli_profile) = OVERRIDE_PROFILE.get().cloned() {
+        return Some(cli_profile);
+    }
+
+    // 2. Fallback to reading the environment variable natively without local mutations
     if let Some(s) = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
         .ok()
         .filter(|s| !s.is_empty())
