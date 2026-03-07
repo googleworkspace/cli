@@ -430,11 +430,11 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     let temp_path = config_dir().await.join("credentials.tmp");
 
     // Always start fresh — delete any stale temp cache from prior login attempts.
-    let _ = std::fs::remove_file(&temp_path);
+    let _ = tokio::fs::remove_file(&temp_path).await;
 
     // Ensure config directory exists
     if let Some(parent) = temp_path.parent() {
-        std::fs::create_dir_all(parent)
+        tokio::fs::create_dir_all(parent).await
             .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
     }
 
@@ -496,7 +496,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
 
         // Clean up temp file
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = tokio::fs::remove_file(&temp_path).await;
 
         let output = json!({
             "status": "success",
@@ -513,7 +513,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         Ok(())
     } else {
         // Clean up temp file on failure
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = tokio::fs::remove_file(&temp_path).await;
         Err(GwsError::Auth(
             "OAuth flow completed but no token was returned.".to_string(),
         ))
@@ -543,7 +543,7 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
 
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
     let enc_path = credential_store::encrypted_credentials_path().await;
-    if !enc_path.exists() {
+    if tokio::fs::metadata(&enc_path).await.is_err() {
         return Err(GwsError::Auth(
             "No encrypted credentials found. Run 'gws auth login' first.".to_string(),
         ));
@@ -1315,8 +1315,8 @@ async fn handle_logout() -> Result<(), GwsError> {
     let mut removed = Vec::new();
 
     for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| {
+        if tokio::fs::metadata(path).await.is_ok() {
+            tokio::fs::remove_file(path).await.map_err(|e| {
                 GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
             })?;
             removed.push(path.display().to_string());
@@ -1653,10 +1653,17 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn token_cache_path_is_in_config_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", temp.path()); }
+        
+        let c_dir = config_dir().await;
         let path = token_cache_path().await;
         assert!(path.ends_with("token_cache.json"));
-        assert!(path.starts_with(config_dir().await));
+        assert!(path.starts_with(&c_dir));
+        
+        unsafe { std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR"); }
     }
 
     #[tokio::test]

@@ -175,7 +175,7 @@ async fn load_credentials_inner(
     // 1. Explicit env var — plaintext file (User or Service Account)
     if let Some(path) = env_file {
         let p = PathBuf::from(path);
-        if p.exists() {
+        if tokio::fs::metadata(&p).await.is_ok() {
             let content = tokio::fs::read_to_string(&p)
                 .await
                 .with_context(|| format!("Failed to read credentials from {path}"))?;
@@ -187,7 +187,7 @@ async fn load_credentials_inner(
     }
 
     // 2. Encrypted credentials (always AuthorizedUser for now)
-    if enc_path.exists() {
+    if tokio::fs::metadata(enc_path).await.is_ok() {
         let json_str = credential_store::load_encrypted_from_path(enc_path)
             .await
             .context("Failed to decrypt credentials")?;
@@ -217,7 +217,7 @@ async fn load_credentials_inner(
     }
 
     // 3. Plaintext credentials at default path (Default to AuthorizedUser)
-    if default_path.exists() {
+    if tokio::fs::metadata(default_path).await.is_ok() {
         return Ok(Credential::AuthorizedUser(
             yup_oauth2::read_authorized_user_secret(default_path)
                 .await
@@ -230,7 +230,7 @@ async fn load_credentials_inner(
     // 4a. GOOGLE_APPLICATION_CREDENTIALS env var (explicit path — hard error if missing)
     if let Ok(adc_env) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
         let adc_path = PathBuf::from(&adc_env);
-        if adc_path.exists() {
+        if tokio::fs::metadata(&adc_path).await.is_ok() {
             let content = tokio::fs::read_to_string(&adc_path)
                 .await
                 .with_context(|| format!("Failed to read ADC from {adc_env}"))?;
@@ -244,7 +244,7 @@ async fn load_credentials_inner(
     // 4b. Well-known ADC path: ~/.config/gcloud/application_default_credentials.json
     // (populated by `gcloud auth application-default login`). Silent if absent.
     if let Some(well_known) = adc_well_known_path() {
-        if well_known.exists() {
+        if tokio::fs::metadata(&well_known).await.is_ok() {
             let content = tokio::fs::read_to_string(&well_known)
                 .await
                 .with_context(|| format!("Failed to read ADC from {}", well_known.display()))?;
