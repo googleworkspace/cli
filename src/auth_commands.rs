@@ -111,7 +111,7 @@ pub fn base_config_dir() -> PathBuf {
         if is_suspicious {
             eprintln!("Warning: GOOGLE_WORKSPACE_CLI_CONFIG_DIR contains a restricted or sensitive path ({}). Using default.", path.display());
         } else {
-            return path;
+            return path_to_check;
         }
     }
 
