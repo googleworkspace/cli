@@ -40,6 +40,8 @@ mod text;
 mod token_storage;
 pub(crate) mod validate;
 
+use std::io::Write;
+
 use error::{print_error_json, GwsError};
 
 #[tokio::main]
@@ -49,7 +51,7 @@ async fn main() {
 
     if let Err(err) = run().await {
         print_error_json(&err);
-        std::process::exit(1);
+        std::process::exit(err.exit_code());
     }
 }
 
@@ -57,7 +59,7 @@ async fn run() -> Result<(), GwsError> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        print_usage();
+        eprint_usage();
         return Err(GwsError::Validation(
             "No service specified. Usage: gws <service> <resource> [sub-resource] <method> [flags]"
                 .to_string(),
@@ -404,31 +406,40 @@ fn resolve_method_from_matches<'a>(
 }
 
 fn print_usage() {
-    println!("gws — Google Workspace CLI");
-    println!();
-    println!("USAGE:");
-    println!("    gws <service> <resource> [sub-resource] <method> [flags]");
-    println!("    gws schema <service.resource.method> [--resolve-refs]");
-    println!();
-    println!("EXAMPLES:");
-    println!("    gws drive files list --params '{{\"pageSize\": 10}}'");
-    println!("    gws drive files get --params '{{\"fileId\": \"abc123\"}}'");
-    println!("    gws sheets spreadsheets get --params '{{\"spreadsheetId\": \"...\"}}'");
-    println!("    gws gmail users messages list --params '{{\"userId\": \"me\"}}'");
-    println!("    gws schema drive.files.list");
-    println!();
-    println!("FLAGS:");
-    println!("    --params <JSON>       URL/Query parameters as JSON");
-    println!("    --json <JSON>         Request body as JSON (POST/PATCH/PUT)");
-    println!("    --upload <PATH>       Local file to upload as media content (multipart)");
-    println!("    --output <PATH>       Output file path for binary responses");
-    println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
-    println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
-    println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
-    println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
-    println!("    --page-delay <MS>     Delay between pages in ms (default: 100)");
-    println!();
-    println!("SERVICES:");
+    write_usage(&mut std::io::stdout());
+}
+
+/// Print usage text to stderr (for error contexts, so stdout stays clean for agents).
+fn eprint_usage() {
+    write_usage(&mut std::io::stderr());
+}
+
+fn write_usage(w: &mut dyn std::io::Write) {
+    let _ = writeln!(w, "gws — Google Workspace CLI");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "USAGE:");
+    let _ = writeln!(w, "    gws <service> <resource> [sub-resource] <method> [flags]");
+    let _ = writeln!(w, "    gws schema <service.resource.method> [--resolve-refs]");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "EXAMPLES:");
+    let _ = writeln!(w, "    gws drive files list --params '{{\"pageSize\": 10}}'");
+    let _ = writeln!(w, "    gws drive files get --params '{{\"fileId\": \"abc123\"}}'");
+    let _ = writeln!(w, "    gws sheets spreadsheets get --params '{{\"spreadsheetId\": \"...\"}}'");
+    let _ = writeln!(w, "    gws gmail users messages list --params '{{\"userId\": \"me\"}}'");
+    let _ = writeln!(w, "    gws schema drive.files.list");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "FLAGS:");
+    let _ = writeln!(w, "    --params <JSON>       URL/Query parameters as JSON");
+    let _ = writeln!(w, "    --json <JSON>         Request body as JSON (POST/PATCH/PUT)");
+    let _ = writeln!(w, "    --upload <PATH>       Local file to upload as media content (multipart)");
+    let _ = writeln!(w, "    --output <PATH>       Output file path for binary responses");
+    let _ = writeln!(w, "    --format <FMT>        Output format: json (default), table, yaml, csv");
+    let _ = writeln!(w, "    --api-version <VER>   Override the API version (e.g., v2, v3)");
+    let _ = writeln!(w, "    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
+    let _ = writeln!(w, "    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
+    let _ = writeln!(w, "    --page-delay <MS>     Delay between pages in ms (default: 100)");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "SERVICES:");
     for entry in services::SERVICES {
         let name = entry.aliases[0];
         let aliases = if entry.aliases.len() > 1 {
@@ -436,34 +447,36 @@ fn print_usage() {
         } else {
             String::new()
         };
-        println!("    {:<20} {}{}", name, entry.description, aliases);
+        let _ = writeln!(w, "    {:<20} {}{}", name, entry.description, aliases);
     }
-    println!();
-    println!("ENVIRONMENT:");
-    println!("    GOOGLE_WORKSPACE_CLI_TOKEN               Pre-obtained OAuth2 access token (highest priority)");
-    println!("    GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE    Path to OAuth credentials JSON file");
-    println!("    GOOGLE_WORKSPACE_CLI_CLIENT_ID           OAuth client ID (for gws auth login)");
-    println!(
-        "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
-    );
-    println!(
-        "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
-    );
-    println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
-    println!(
-        "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block"
-    );
-    println!(
-        "    GOOGLE_WORKSPACE_PROJECT_ID              GCP project ID fallback for helper commands"
-    );
-    println!();
-    println!("COMMUNITY:");
-    println!("    Star the repo: https://github.com/googleworkspace/cli");
-    println!("    Report bugs / request features: https://github.com/googleworkspace/cli/issues");
-    println!("    Please search existing issues first; if one already exists, comment there.");
-    println!();
-    println!("DISCLAIMER:");
-    println!("    This is not an officially supported Google product.");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "ENVIRONMENT:");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_TOKEN               Pre-obtained OAuth2 access token (highest priority)");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE    Path to OAuth credentials JSON file");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_CLIENT_ID           OAuth client ID (for gws auth login)");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block");
+    let _ = writeln!(w, "    GOOGLE_WORKSPACE_PROJECT_ID              GCP project ID fallback for helper commands");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "EXIT CODES:");
+    let _ = writeln!(w, "    0     Success");
+    let _ = writeln!(w, "    1     General failure");
+    let _ = writeln!(w, "    2     Usage error (bad arguments or missing parameters)");
+    let _ = writeln!(w, "    3     Resource not found");
+    let _ = writeln!(w, "    4     Permission denied / authentication failure");
+    let _ = writeln!(w, "    5     Conflict (resource already exists)");
+    let _ = writeln!(w, "    75    Temporary failure (network timeout, rate limit — retry may help)");
+    let _ = writeln!(w, "    78    Configuration error (e.g., unknown service)");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "COMMUNITY:");
+    let _ = writeln!(w, "    Star the repo: https://github.com/googleworkspace/cli");
+    let _ = writeln!(w, "    Report bugs / request features: https://github.com/googleworkspace/cli/issues");
+    let _ = writeln!(w, "    Please search existing issues first; if one already exists, comment there.");
+    let _ = writeln!(w);
+    let _ = writeln!(w, "DISCLAIMER:");
+    let _ = writeln!(w, "    This is not an officially supported Google product.");
 }
 
 fn is_help_flag(arg: &str) -> bool {
