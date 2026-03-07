@@ -146,9 +146,9 @@ pub fn get_active_profile() -> Option<String> {
 }
 
 pub fn validate_profile_name(profile_name: &str) -> Result<(), GwsError> {
-    if profile_name.contains('/') || profile_name.contains('\\') || profile_name == "." || profile_name == ".." {
+    if profile_name.is_empty() || profile_name.contains('/') || profile_name.contains('\\') || profile_name == "." || profile_name == ".." {
         return Err(GwsError::Validation(
-            "Invalid profile name. It cannot contain path separators or be '.' or '..'".to_string(),
+            "Invalid profile name. It cannot be empty, contain path separators, or be '.' or '..'".to_string(),
         ));
     }
     Ok(())
