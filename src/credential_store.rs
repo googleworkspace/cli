@@ -52,14 +52,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         .filter(|s| !s.is_empty())
         .or_else(|| {
             // Attempt to read from the base config dir's active_profile
-            let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-                PathBuf::from(dir)
-            } else {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".config")
-                    .join("gws")
-            };
+            let base_dir = crate::auth_commands::base_config_dir();
             std::fs::read_to_string(base_dir.join("active_profile"))
                 .ok()
                 .map(|s| s.trim().to_string())

@@ -91,8 +91,8 @@ const READONLY_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/tasks.readonly",
 ];
 
-pub fn config_dir() -> PathBuf {
-    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+pub fn base_config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
         PathBuf::from(dir)
     } else {
         // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
@@ -115,7 +115,11 @@ pub fn config_dir() -> PathBuf {
                 primary
             }
         }
-    };
+    }
+}
+
+pub fn config_dir() -> PathBuf {
+    let base_dir = base_config_dir();
 
     // Determine the active profile
     let mut profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE").ok().filter(|s| !s.is_empty());
@@ -199,21 +203,7 @@ fn handle_switch(args: &[String]) -> Result<(), GwsError> {
     let profile_name = &args[0];
 
     // Read the base directory without applying the current active profile
-    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-        PathBuf::from(dir)
-    } else {
-        let primary = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config")
-            .join("gws");
-        if primary.exists() {
-            primary
-        } else {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("gws")
-        }
-    };
+    let base_dir = base_config_dir();
 
     if !base_dir.exists() {
         std::fs::create_dir_all(&base_dir).map_err(|e| {
@@ -1217,21 +1207,7 @@ async fn handle_status() -> Result<(), GwsError> {
     );
 
     // Determine the active profile
-    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-        PathBuf::from(dir)
-    } else {
-        let primary = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config")
-            .join("gws");
-        if primary.exists() {
-            primary
-        } else {
-            dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("gws")
-        }
-    };
+    let base_dir = base_config_dir();
     
     let profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
         .ok()

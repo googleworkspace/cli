@@ -64,42 +64,39 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg (skip --api-version, --profile and their values)
-    let mut first_arg: Option<String> = None;
     let mut filtered_args = vec![args[0].clone()];
-    {
-        let mut skip_next = false;
-        for a in args.iter().skip(1) {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if a == "--api-version" {
-                filtered_args.push(a.clone());
-                skip_next = true;
-                continue;
-            }
-            if a.starts_with("--api-version=") {
-                filtered_args.push(a.clone());
-                continue;
-            }
-            if a == "--profile" {
-                skip_next = true;
-                continue;
-            }
-            if a.starts_with("--profile=") {
-                continue;
-            }
-            filtered_args.push(a.clone());
-
-            if first_arg.is_none()
-                && !a.starts_with("--")
-                && a.as_str() != "--help"
-                && a.as_str() != "--version"
-            {
-                first_arg = Some(a.clone());
-            }
+    let mut first_arg: Option<String> = None;
+    let mut i = 1;
+    while i < args.len() {
+        let a = &args[i];
+        
+        if a == "--profile" {
+            i += 2; // Skip --profile and its value
+            continue;
         }
+        if a.starts_with("--profile=") {
+            i += 1;
+            continue;
+        }
+
+        filtered_args.push(a.clone());
+        
+        if a == "--api-version" {
+            if i + 1 < args.len() {
+                filtered_args.push(args[i+1].clone());
+            }
+            i += 2; // Skip both the flag and the value
+            continue;
+        }
+        if a.starts_with("--api-version=") {
+            i += 1;
+            continue;
+        }
+        
+        if first_arg.is_none() && !a.starts_with("--") && a != "--help" && a != "--version" {
+            first_arg = Some(a.clone());
+        }
+        i += 1;
     }
 
     // Extract profile early to set environment variable
