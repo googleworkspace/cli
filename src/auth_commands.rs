@@ -92,29 +92,49 @@ const READONLY_SCOPES: &[&str] = &[
 ];
 
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
-        return PathBuf::from(dir);
+    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+        PathBuf::from(dir)
+    } else {
+        // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
+        let primary = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config")
+            .join("gws");
+        
+        if primary.exists() {
+            primary
+        } else {
+            // Backward compat: fall back to OS-specific config dir for existing installs
+            // (e.g. ~/Library/Application Support/gws on macOS, %APPDATA%\gws on Windows).
+            let legacy = dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("gws");
+            if legacy.exists() {
+                legacy
+            } else {
+                primary
+            }
+        }
+    };
+
+    // Determine the active profile
+    let mut profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE").ok().filter(|s| !s.is_empty());
+    
+    // Fall back to reading active_profile file
+    if profile.is_none() {
+        let active_profile_path = base_dir.join("active_profile");
+        if let Ok(content) = std::fs::read_to_string(active_profile_path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                profile = Some(trimmed.to_string());
+            }
+        }
     }
 
-    // Use ~/.config/gws on all platforms for a consistent, user-friendly path.
-    let primary = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config")
-        .join("gws");
-    if primary.exists() {
-        return primary;
+    match profile.as_deref() {
+        Some("default") | None => base_dir,
+        Some(name) => base_dir.join("profiles").join(name),
     }
-
-    // Backward compat: fall back to OS-specific config dir for existing installs
-    // (e.g. ~/Library/Application Support/gws on macOS, %APPDATA%\gws on Windows).
-    let legacy = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("gws");
-    if legacy.exists() {
-        return legacy;
-    }
-
-    primary
 }
 
 fn plain_credentials_path() -> PathBuf {
@@ -131,7 +151,7 @@ fn token_cache_path() -> PathBuf {
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     const USAGE: &str = concat!(
-        "Usage: gws auth <login|setup|status|export|logout> [options]\n\n",
+        "Usage: gws auth <login|setup|status|switch|export|logout> [options]\n\n",
         "  login    Authenticate via OAuth2 (opens browser)\n",
         "           --readonly       Request read-only scopes\n",
         "           --full           Request all scopes incl. pubsub + cloud-platform\n",
@@ -142,6 +162,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "  status   Show current authentication state\n",
+        "  switch   <profile> Switch the active configuration profile\n",
         "  export   Print decrypted credentials to stdout\n",
         "  logout   Clear saved credentials and token cache",
     );
@@ -156,16 +177,65 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "login" => handle_login(&args[1..]).await,
         "setup" => crate::setup::run_setup(&args[1..]).await,
         "status" => handle_status().await,
+        "switch" => handle_switch(&args[1..]),
         "export" => {
             let unmasked = args.len() > 1 && args[1] == "--unmasked";
             handle_export(unmasked).await
         }
         "logout" => handle_logout(),
         other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
+            "Unknown auth subcommand: '{other}'. Use: login, setup, status, switch, export, logout"
         ))),
     }
 }
+
+fn handle_switch(args: &[String]) -> Result<(), GwsError> {
+    if args.is_empty() {
+        return Err(GwsError::Validation(
+            "Missing profile name. Usage: gws auth switch <profile_name>".to_string(),
+        ));
+    }
+
+    let profile_name = &args[0];
+
+    // Read the base directory without applying the current active profile
+    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let primary = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config")
+            .join("gws");
+        if primary.exists() {
+            primary
+        } else {
+            dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("gws")
+        }
+    };
+
+    if !base_dir.exists() {
+        std::fs::create_dir_all(&base_dir).map_err(|e| {
+            GwsError::Validation(format!("Failed to create base config dir: {e}"))
+        })?;
+    }
+
+    let active_profile_path = base_dir.join("active_profile");
+
+    if profile_name == "default" {
+        let _ = std::fs::remove_file(active_profile_path);
+        println!("Switched to default profile.");
+    } else {
+        std::fs::write(&active_profile_path, profile_name).map_err(|e| {
+            GwsError::Validation(format!("Failed to write active_profile: {e}"))
+        })?;
+        println!("Switched to profile: {profile_name}");
+    }
+
+    Ok(())
+}
+
 /// Custom delegate that prints the OAuth URL on its own line for easy copying.
 /// Optionally includes `login_hint` in the URL for account pre-selection.
 struct CliFlowDelegate {
@@ -1145,6 +1215,37 @@ async fn handle_status() -> Result<(), GwsError> {
         "{}",
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
+
+    // Determine the active profile
+    let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let primary = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config")
+            .join("gws");
+        if primary.exists() {
+            primary
+        } else {
+            dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("gws")
+        }
+    };
+    
+    let profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::fs::read_to_string(base_dir.join("active_profile"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "default".to_string());
+        
+    println!("\nActive Profile: {profile}");
+
     Ok(())
 }
 

@@ -47,7 +47,31 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
 
     let key_file = crate::auth_commands::config_dir().join(".encryption_key");
 
-    let entry = Entry::new("gws-cli", &username);
+    let profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Attempt to read from the base config dir's active_profile
+            let base_dir = if let Ok(dir) = std::env::var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR") {
+                PathBuf::from(dir)
+            } else {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".config")
+                    .join("gws")
+            };
+            std::fs::read_to_string(base_dir.join("active_profile"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+
+    let service_name = match profile.as_deref() {
+        Some("default") | None => "gws-cli".to_string(),
+        Some(name) => format!("gws-cli-{}", name),
+    };
+
+    let entry = Entry::new(&service_name, &username);
 
     if let Ok(entry) = entry {
         match entry.get_password() {

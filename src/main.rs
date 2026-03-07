@@ -64,8 +64,9 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg (skip --api-version and its value)
+    // Find the first non-flag arg (skip --api-version, --profile and their values)
     let mut first_arg: Option<String> = None;
+    let mut filtered_args = vec![args[0].clone()];
     {
         let mut skip_next = false;
         for a in args.iter().skip(1) {
@@ -74,18 +75,52 @@ async fn run() -> Result<(), GwsError> {
                 continue;
             }
             if a == "--api-version" {
+                filtered_args.push(a.clone());
                 skip_next = true;
                 continue;
             }
             if a.starts_with("--api-version=") {
+                filtered_args.push(a.clone());
                 continue;
             }
-            if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
+            if a == "--profile" {
+                skip_next = true;
+                continue;
+            }
+            if a.starts_with("--profile=") {
+                continue;
+            }
+            filtered_args.push(a.clone());
+
+            if first_arg.is_none()
+                && !a.starts_with("--")
+                && a.as_str() != "--help"
+                && a.as_str() != "--version"
+            {
                 first_arg = Some(a.clone());
-                break;
             }
         }
     }
+
+    // Extract profile early to set environment variable
+    let mut profile_name = None;
+    for i in 1..args.len() {
+        if args[i] == "--profile" && i + 1 < args.len() {
+            profile_name = Some(args[i + 1].clone());
+            break;
+        } else if let Some(stripped) = args[i].strip_prefix("--profile=") {
+            profile_name = Some(stripped.to_string());
+            break;
+        }
+    }
+
+    if let Some(profile) = profile_name {
+        std::env::set_var("GOOGLE_WORKSPACE_CLI_PROFILE", profile);
+    }
+
+    // Use filtered_args for the rest of path resolution (helps `filter_args_for_subcommand`)
+    let args = filtered_args;
+
     let first_arg = first_arg.ok_or_else(|| {
         GwsError::Validation(
             "No service specified. Usage: gws <service> <resource> [sub-resource] <method> [flags]"
@@ -423,6 +458,7 @@ fn print_usage() {
     println!("    --upload <PATH>       Local file to upload as media content (multipart)");
     println!("    --output <PATH>       Output file path for binary responses");
     println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
+    println!("    --profile <NAME>      Use a specific configuration profile");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
     println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
@@ -449,6 +485,7 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
     );
+    println!("    GOOGLE_WORKSPACE_CLI_PROFILE             Configuration profile to use (e.g., 'work', 'personal')");
     println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
     println!(
         "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block"
