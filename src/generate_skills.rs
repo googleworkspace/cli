@@ -380,8 +380,8 @@ fn render_service_skill(
     // Frontmatter
     out.push_str(&format!(
         r#"---
-name: gws-{alias}
-version: 1.0.0
+name: "gws-{alias}"
+version: "1.0.0"
 description: "{trigger_desc}"
 category: "productivity"
 requires:
@@ -514,8 +514,8 @@ fn render_helper_skill(
     // Frontmatter
     out.push_str(&format!(
         r#"---
-name: gws-{alias}-{short}
-version: 1.0.0
+name: "gws-{alias}-{short}"
+version: "1.0.0"
 description: "{trigger_desc}"
 category: "{category}"
 requires:
@@ -659,8 +659,8 @@ cliHelp: "gws {alias} {cmd_name} --help"
 
 fn generate_shared_skill(base: &Path) -> Result<(), GwsError> {
     let content = r#"---
-name: gws-shared
-version: 1.0.0
+name: "gws-shared"
+version: "1.0.0"
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 category: "productivity"
 requires:
@@ -742,8 +742,8 @@ fn render_persona_skill(persona: &PersonaEntry) -> String {
 
     out.push_str(&format!(
         r#"---
-name: persona-{name}
-version: 1.0.0
+name: "persona-{name}"
+version: "1.0.0"
 description: "{trigger_desc}"
 category: "persona"
 requires:
@@ -810,8 +810,8 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
 
     out.push_str(&format!(
         r#"---
-name: recipe-{name}
-version: 1.0.0
+name: "recipe-{name}"
+version: "1.0.0"
 description: "{trigger_desc}"
 category: "recipe"
 domain: "{category}"
