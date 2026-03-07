@@ -1,12 +1,11 @@
 ---
 name: gws-modelarmor-create-template
 version: 1.0.0
-description: 'Google Model Armor: Create a new Model Armor template.'
-category: security
+description: "Google Model Armor: Create a new Model Armor template."
+category: "security"
 requires:
-  bins:
-  - gws
-cliHelp: gws modelarmor +create-template --help
+  bins: ["gws"]
+cliHelp: "gws modelarmor +create-template --help"
 ---
 
 # modelarmor +create-template
