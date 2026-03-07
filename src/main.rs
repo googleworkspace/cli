@@ -72,14 +72,17 @@ async fn run() -> Result<(), GwsError> {
         let a = &args[i];
         
         if a == "--profile" {
-            if i + 1 < args.len() {
-                if profile_name.is_none() {
-                    profile_name = Some(args[i + 1].clone());
+            if let Some(val) = args.get(i + 1) {
+                if !val.starts_with('-') {
+                    if profile_name.is_none() {
+                        profile_name = Some(val.clone());
+                    }
+                    i += 2; // Skip --profile and its value
+                    continue;
                 }
-                i += 2; // Skip --profile and its value
-            } else {
-                i += 1; // Skip dangling --profile flag
             }
+            // Dangling --profile or followed by another flag.
+            i += 1;
             continue;
         }
         if let Some(stripped) = a.strip_prefix("--profile=") {
