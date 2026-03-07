@@ -94,11 +94,28 @@ async fn run() -> Result<(), GwsError> {
         }
 
         filtered_args.push(a.clone());
-        
-        if first_arg.is_none() && (!a.starts_with("--") || a == "--help" || a == "--version") {
-            first_arg = Some(a.clone());
-        }
         i += 1;
+    }
+
+    // Now find the first non-flag argument from the filtered list, skipping over --api-version.
+    {
+        let mut skip_next = false;
+        for a in filtered_args.iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if a == "--api-version" {
+                skip_next = true;
+                continue;
+            }
+            if a.starts_with("--api-version=") {
+                continue;
+            }
+            if first_arg.is_none() && (!a.starts_with("--") || a == "--help" || a == "--version") {
+                first_arg = Some(a.clone());
+            }
+        }
     }
 
     if let Some(profile) = profile_name {
