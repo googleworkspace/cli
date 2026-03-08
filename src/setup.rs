@@ -1431,8 +1431,25 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
     Ok(SetupStage::Finish)
 }
 
+const SETUP_USAGE: &str = concat!(
+    "Usage: gws auth setup [options]\n\n",
+    "Options:\n",
+    "  --project <PROJECT_ID>    Use a specific GCP project\n",
+    "  --dry-run                 Preview setup actions without making changes\n",
+    "  -h, --help                Show this help message\n",
+);
+
+fn is_help_requested(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--help" || arg == "-h")
+}
+
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
+    if is_help_requested(args) {
+        println!("{SETUP_USAGE}");
+        return Ok(());
+    }
+
     let opts = parse_setup_args(args);
     let dry_run = opts.dry_run;
     let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin()) && !dry_run;
@@ -1676,6 +1693,24 @@ mod tests {
         let opts = parse_setup_args(&args);
         assert!(opts.dry_run);
         assert_eq!(opts.project.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn test_is_help_requested_true_for_long_flag() {
+        let args: Vec<String> = vec!["--help".into()];
+        assert!(is_help_requested(&args));
+    }
+
+    #[test]
+    fn test_is_help_requested_true_for_short_flag() {
+        let args: Vec<String> = vec!["--project".into(), "my-project".into(), "-h".into()];
+        assert!(is_help_requested(&args));
+    }
+
+    #[test]
+    fn test_is_help_requested_false_without_help_flags() {
+        let args: Vec<String> = vec!["--project".into(), "my-project".into()];
+        assert!(!is_help_requested(&args));
     }
 
     // ── Account selection → gcloud action ───────────────────────
