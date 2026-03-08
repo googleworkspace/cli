@@ -21,6 +21,7 @@
 
 mod auth;
 pub(crate) mod auth_commands;
+mod cache_commands;
 mod client;
 mod commands;
 pub(crate) mod credential_store;
@@ -132,6 +133,12 @@ async fn run() -> Result<(), GwsError> {
         return auth_commands::handle_auth_command(&auth_args).await;
     }
 
+    // Handle the `cache` command
+    if first_arg == "cache" {
+        let cache_args: Vec<String> = args.iter().skip(2).cloned().collect();
+        return cache_commands::handle_cache_command(&cache_args).await;
+    }
+
     // Parse service name and optional version override
     let (api_name, version) = parse_service_and_version(&args, &first_arg)?;
 
@@ -174,7 +181,7 @@ async fn run() -> Result<(), GwsError> {
             Ok(fmt) => fmt,
             Err(unknown) => {
                 eprintln!(
-                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
+                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv, tsv)"
                 );
                 formatter::OutputFormat::Json
             }
@@ -409,6 +416,7 @@ fn print_usage() {
     println!("USAGE:");
     println!("    gws <service> <resource> [sub-resource] <method> [flags]");
     println!("    gws schema <service.resource.method> [--resolve-refs]");
+    println!("    gws cache clear");
     println!();
     println!("EXAMPLES:");
     println!("    gws drive files list --params '{{\"pageSize\": 10}}'");
@@ -422,7 +430,7 @@ fn print_usage() {
     println!("    --json <JSON>         Request body as JSON (POST/PATCH/PUT)");
     println!("    --upload <PATH>       Local file to upload as media content (multipart)");
     println!("    --output <PATH>       Output file path for binary responses");
-    println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
+    println!("    --format <FMT>        Output format: json (default), table, yaml, csv, tsv");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
     println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");

@@ -31,6 +31,8 @@ pub enum OutputFormat {
     Yaml,
     /// Comma-separated values.
     Csv,
+    /// Tab-separated values.
+    Tsv,
 }
 
 impl OutputFormat {
@@ -45,6 +47,7 @@ impl OutputFormat {
             "table" => Ok(Self::Table),
             "yaml" | "yml" => Ok(Self::Yaml),
             "csv" => Ok(Self::Csv),
+            "tsv" => Ok(Self::Tsv),
             other => Err(other.to_string()),
         }
     }
@@ -64,6 +67,7 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
         OutputFormat::Table => format_table(value),
         OutputFormat::Yaml => format_yaml(value),
         OutputFormat::Csv => format_csv(value),
+        OutputFormat::Tsv => format_tsv(value),
     }
 }
 
@@ -80,6 +84,7 @@ pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_pag
     match format {
         OutputFormat::Json => serde_json::to_string(value).unwrap_or_default(),
         OutputFormat::Csv => format_csv_page(value, is_first_page),
+        OutputFormat::Tsv => format_tsv_page(value, is_first_page),
         OutputFormat::Table => format_table_page(value, is_first_page),
         // Prefix every page with a YAML document separator so that the
         // concatenated stream is parseable as a multi-document YAML file.
@@ -401,6 +406,68 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
+fn format_tsv(value: &Value) -> String {
+    format_tsv_page(value, true)
+}
+
+/// Format as TSV, optionally omitting the header row.
+fn format_tsv_page(value: &Value, emit_header: bool) -> String {
+    let items = extract_items(value);
+
+    let arr = if let Some((_key, arr)) = items {
+        arr.as_slice()
+    } else if let Value::Array(arr) = value {
+        arr.as_slice()
+    } else {
+        // Single value — just output it
+        return value_to_cell(value);
+    };
+
+    if arr.is_empty() {
+        return String::new();
+    }
+
+    // Collect columns
+    let mut columns: Vec<String> = Vec::new();
+    for item in arr {
+        if let Value::Object(obj) = item {
+            for key in obj.keys() {
+                if !columns.contains(key) {
+                    columns.push(key.clone());
+                }
+            }
+        }
+    }
+
+    let mut output = String::new();
+
+    // Header (omitted on continuation pages)
+    if emit_header {
+        let _ = writeln!(output, "{}", columns.join("\t"));
+    }
+
+    // Rows
+    for item in arr {
+        let cells: Vec<String> = columns
+            .iter()
+            .map(|col| {
+                if let Value::Object(obj) = item {
+                    tsv_escape(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        let _ = writeln!(output, "{}", cells.join("\t"));
+    }
+
+    output
+}
+
+fn tsv_escape(s: &str) -> String {
+    s.replace('\n', " ").replace('\t', " ").replace('\r', "")
+}
+
 fn value_to_cell(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
@@ -427,6 +494,7 @@ mod tests {
         assert_eq!(OutputFormat::from_str("yaml"), OutputFormat::Yaml);
         assert_eq!(OutputFormat::from_str("yml"), OutputFormat::Yaml);
         assert_eq!(OutputFormat::from_str("csv"), OutputFormat::Csv);
+        assert_eq!(OutputFormat::from_str("tsv"), OutputFormat::Tsv);
         assert_eq!(OutputFormat::from_str("unknown"), OutputFormat::Json);
     }
 
@@ -437,6 +505,7 @@ mod tests {
         assert_eq!(OutputFormat::parse("yaml"), Ok(OutputFormat::Yaml));
         assert_eq!(OutputFormat::parse("yml"), Ok(OutputFormat::Yaml));
         assert_eq!(OutputFormat::parse("csv"), Ok(OutputFormat::Csv));
+        assert_eq!(OutputFormat::parse("tsv"), Ok(OutputFormat::Tsv));
         // Case-insensitive
         assert_eq!(OutputFormat::parse("JSON"), Ok(OutputFormat::Json));
         assert_eq!(OutputFormat::parse("TABLE"), Ok(OutputFormat::Table));
@@ -577,6 +646,28 @@ mod tests {
         let output = format_value(&val, &OutputFormat::Yaml);
         assert!(output.contains("name: \"test\""));
         assert!(output.contains("count: 42"));
+    }
+
+    #[test]
+    fn test_format_tsv() {
+        let val = json!({
+            "files": [
+                {"id": "1", "name": "hello\nworld"},
+                {"id": "2", "name": "foo\tbar"}
+            ]
+        });
+        let output = format_value(&val, &OutputFormat::Tsv);
+        assert!(output.contains("id\tname"));
+        assert!(output.contains("1\thello world"));
+        assert!(output.contains("2\tfoo bar"));
+    }
+
+    #[test]
+    fn test_format_tsv_escape() {
+        assert_eq!(tsv_escape("simple"), "simple");
+        assert_eq!(tsv_escape("has\nnewline"), "has newline");
+        assert_eq!(tsv_escape("has\ttab"), "has tab");
+        assert_eq!(tsv_escape("has\r\ncrlf"), "has crlf");
     }
 
     #[test]

@@ -44,6 +44,16 @@ pub fn get_quota_project() -> Option<String> {
 /// Note: `dirs::config_dir()` returns `~/Library/Application Support` on macOS, which is
 /// wrong for gcloud. The Google Cloud SDK always uses `~/.config/gcloud` regardless of OS.
 fn adc_well_known_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(
+            PathBuf::from(home)
+                .join(".config")
+                .join("gcloud")
+                .join("application_default_credentials.json"),
+        );
+    }
+
     dirs::home_dir().map(|d| {
         d.join(".config")
             .join("gcloud")
@@ -635,6 +645,7 @@ mod tests {
         .unwrap();
 
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _profile_guard = EnvVarGuard::set("USERPROFILE", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
         assert_eq!(get_quota_project(), Some("my-project-123".to_string()));
     }
