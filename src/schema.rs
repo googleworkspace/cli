@@ -210,6 +210,9 @@ fn param_to_json(param: &MethodParameter) -> Value {
     if let Some(ref vals) = param.enum_values {
         p["enum"] = json!(vals);
     }
+    if param.repeated {
+        p["repeated"] = json!(true);
+    }
     if param.deprecated {
         p["deprecated"] = json!(true);
     }
@@ -330,7 +333,7 @@ mod tests {
             default: Some("0".to_string()),
             enum_values: Some(vec!["0".to_string(), "1".to_string()]),
             enum_descriptions: None,
-            repeated: false,
+            repeated: true,
             minimum: None,
             maximum: None,
             deprecated: true,
@@ -344,6 +347,7 @@ mod tests {
         assert_eq!(json["format"], "int32");
         assert_eq!(json["default"], "0");
         assert!(json["enum"].is_array());
+        assert_eq!(json["repeated"], true);
         assert_eq!(json["deprecated"], true);
     }
 

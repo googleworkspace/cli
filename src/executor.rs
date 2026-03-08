@@ -65,7 +65,7 @@ struct ExecutionInput {
     params: Map<String, Value>,
     body: Option<Value>,
     full_url: String,
-    query_params: HashMap<String, String>,
+    query_params: Vec<(String, String)>,
     is_upload: bool,
 }
 
@@ -484,7 +484,7 @@ fn build_url(
     method: &RestMethod,
     params: &Map<String, Value>,
     is_upload: bool,
-) -> Result<(String, HashMap<String, String>), GwsError> {
+) -> Result<(String, Vec<(String, String)>), GwsError> {
     // Build URL base and path
 
     // Actually we need to construct base URL properly if not present
@@ -521,7 +521,7 @@ fn build_url(
 
     // Substitute path parameters and separate query parameters
     let path_parameters = extract_template_path_parameters(path_template);
-    let mut query_params: HashMap<String, String> = HashMap::new();
+    let mut query_params: Vec<(String, String)> = Vec::new();
 
     for (key, value) in params {
         let val_str = match value {
@@ -547,7 +547,25 @@ fn build_url(
         }
 
         // It's a query parameter
-        query_params.insert(key.clone(), val_str);
+        if method
+            .parameters
+            .get(key)
+            .map(|p| p.repeated)
+            .unwrap_or(false)
+        {
+            if let Value::Array(values) = value {
+                for item in values {
+                    let item_str = match item {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    query_params.push((key.clone(), item_str));
+                }
+                continue;
+            }
+        }
+
+        query_params.push((key.clone(), val_str));
     }
 
     let url_path = render_path_template(path_template, params)?;
@@ -1269,7 +1287,52 @@ mod tests {
 
         let (url, query) = build_url(&doc, &method, &params, false).unwrap();
         assert_eq!(url, "https://api.example.com/files");
-        assert_eq!(query.get("q").unwrap(), "search term");
+        assert_eq!(query, vec![("q".to_string(), "search term".to_string())]);
+    }
+
+    #[test]
+    fn test_build_url_repeated_query_params_from_array() {
+        let doc = RestDescription {
+            base_url: Some("https://api.example.com/".to_string()),
+            ..Default::default()
+        };
+
+        let mut parameters = HashMap::new();
+        parameters.insert(
+            "metadataHeaders".to_string(),
+            crate::discovery::MethodParameter {
+                location: Some("query".to_string()),
+                repeated: true,
+                ..Default::default()
+            },
+        );
+
+        let method = RestMethod {
+            path: "gmail/v1/users/me/messages/123".to_string(),
+            flat_path: Some("gmail/v1/users/me/messages/123".to_string()),
+            parameters,
+            ..Default::default()
+        };
+
+        let mut params = Map::new();
+        params.insert(
+            "metadataHeaders".to_string(),
+            json!(["Subject", "Date", "From"]),
+        );
+
+        let (url, query) = build_url(&doc, &method, &params, false).unwrap();
+        assert_eq!(
+            url,
+            "https://api.example.com/gmail/v1/users/me/messages/123"
+        );
+        assert_eq!(
+            query,
+            vec![
+                ("metadataHeaders".to_string(), "Subject".to_string()),
+                ("metadataHeaders".to_string(), "Date".to_string()),
+                ("metadataHeaders".to_string(), "From".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1875,7 +1938,7 @@ async fn test_post_without_body_sets_content_length_zero() {
         full_url: "https://example.com/messages/trash".to_string(),
         body: None,
         params: Map::new(),
-        query_params: HashMap::new(),
+        query_params: Vec::new(),
         is_upload: false,
     };
 
@@ -1915,7 +1978,7 @@ async fn test_post_with_body_does_not_add_content_length_zero() {
         full_url: "https://example.com/files".to_string(),
         body: Some(json!({"name": "test"})),
         params: Map::new(),
-        query_params: HashMap::new(),
+        query_params: Vec::new(),
         is_upload: false,
     };
 
@@ -1953,7 +2016,7 @@ async fn test_get_does_not_set_content_length_zero() {
         full_url: "https://example.com/files".to_string(),
         body: None,
         params: Map::new(),
-        query_params: HashMap::new(),
+        query_params: Vec::new(),
         is_upload: false,
     };
 
