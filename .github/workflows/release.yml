@@ -212,6 +212,22 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+      - name: Patch npm binary.js for libc detection
+        shell: bash
+        run: |
+          # Fix null libcVersion crash on Android/Termux (bionic libc)
+          # See: https://github.com/googleworkspace/cli/issues/271
+          NPM_TARBALL=$(find target/distrib -name '*-npm-package.tar.gz' | head -1)
+          if [ -n "$NPM_TARBALL" ]; then
+            WORK_DIR=$(mktemp -d)
+            tar xzf "$NPM_TARBALL" -C "$WORK_DIR"
+            cp npm/binary.js "$WORK_DIR/package/binary.js"
+            tar czf "$NPM_TARBALL" -C "$WORK_DIR" package
+            rm -rf "$WORK_DIR"
+            echo "Patched npm binary.js in $NPM_TARBALL"
+          else
+            echo "No npm tarball found, skipping patch"
+          fi
       - name: "Upload artifacts"
         uses: actions/upload-artifact@v6
         with:
