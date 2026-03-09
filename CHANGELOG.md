@@ -1,5 +1,29 @@
 # @googleworkspace/cli
 
+## 0.9.0
+
+### Minor Changes
+
+- 7d15365: feat(gmail): add +reply, +reply-all, and +forward helpers
+
+  Adds three new Gmail helper commands:
+
+  - `+reply` -- reply to a message with automatic threading
+  - `+reply-all` -- reply to all recipients with --remove/--cc support
+  - `+forward` -- forward a message to new recipients
+
+### Patch Changes
+
+- 08716f8: Fix garbled non-ASCII email subjects in `gmail +send` by RFC 2047 encoding the Subject header and adding MIME-Version/Content-Type headers.
+- f083eb9: Improve `gws auth setup` project creation failures in step 3:
+  - Detect Google Cloud Terms of Service precondition failures and show actionable guidance (`gcloud auth list`, account verification, Console ToS URL).
+  - Detect invalid project ID format / already-in-use errors and show clearer guidance.
+  - In interactive setup, keep the wizard open and re-prompt for a new project ID instead of exiting immediately on create failures.
+- 789e7f1: Switch reqwest TLS from bundled Mozilla roots to native OS certificate store
+
+  This allows the CLI to trust custom or corporate CA certificates installed
+  in the system trust store, fixing TLS errors in enterprise environments.
+
 ## 0.8.1
 
 ### Patch Changes
