@@ -59,9 +59,23 @@ pub(super) async fn handle_send(
     Ok(())
 }
 
+/// RFC 2047 encode a header value if it contains non-ASCII characters.
+fn encode_header_value(value: &str) -> String {
+    if value.is_ascii() {
+        value.to_string()
+    } else {
+        format!("=?UTF-8?B?{}?=", URL_SAFE.encode(value.as_bytes()))
+    }
+}
+
 /// Helper to create a raw MIME email string.
 fn create_raw_message(to: &str, subject: &str, body: &str) -> String {
-    format!("To: {}\r\nSubject: {}\r\n\r\n{}", to, subject, body)
+    format!(
+        "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nTo: {}\r\nSubject: {}\r\n\r\n{}",
+        to,
+        encode_header_value(subject),
+        body
+    )
 }
 
 /// Creates a JSON body for sending an email.
@@ -91,9 +105,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_raw_message() {
+    fn test_create_raw_message_ascii() {
         let msg = create_raw_message("test@example.com", "Hello", "World");
-        assert_eq!(msg, "To: test@example.com\r\nSubject: Hello\r\n\r\nWorld");
+        assert_eq!(
+            msg,
+            "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nTo: test@example.com\r\nSubject: Hello\r\n\r\nWorld"
+        );
+    }
+
+    #[test]
+    fn test_create_raw_message_non_ascii_subject() {
+        let msg = create_raw_message("test@example.com", "Solar — Quote Request", "Body");
+        assert!(msg.contains("=?UTF-8?B?"));
+        assert!(!msg.contains("Solar — Quote Request"));
+    }
+
+    #[test]
+    fn test_encode_header_value_ascii() {
+        assert_eq!(encode_header_value("Hello World"), "Hello World");
+    }
+
+    #[test]
+    fn test_encode_header_value_non_ascii() {
+        let encoded = encode_header_value("Solar — Quote");
+        assert!(encoded.starts_with("=?UTF-8?B?"));
+        assert!(encoded.ends_with("?="));
     }
 
     #[test]
