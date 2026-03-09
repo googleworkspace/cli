@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.9.1
+
+### Patch Changes
+
+- 5872dbe: Stop persisting encryption key to `.encryption_key` file when OS keyring is available. Existing file-based keys are migrated into the keyring and the file is removed on next CLI invocation.
+
 ## 0.9.0
 
 ### Minor Changes
