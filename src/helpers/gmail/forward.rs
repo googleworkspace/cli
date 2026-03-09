@@ -46,7 +46,14 @@ pub(super) async fn handle_forward(
         &original,
     );
 
-    super::send_raw_email(doc, matches, &raw, None, token.as_deref()).await
+    super::send_raw_email(
+        doc,
+        matches,
+        &raw,
+        Some(&original.thread_id),
+        token.as_deref(),
+    )
+    .await
 }
 
 pub(super) struct ForwardConfig {
@@ -73,9 +80,16 @@ fn create_forward_raw_message(
     body: Option<&str>,
     original: &OriginalMessage,
 ) -> String {
+    let references = if original.references.is_empty() {
+        original.message_id_header.clone()
+    } else {
+        format!("{} {}", original.references, original.message_id_header)
+    };
+
     let mut headers = format!(
-        "To: {}\r\nSubject: {}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
-        to, subject
+        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}\r\n\
+         MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
+        to, subject, original.message_id_header, references
     );
 
     if let Some(from) = from {
@@ -101,8 +115,8 @@ fn format_forwarded_message(original: &OriginalMessage) -> String {
          Date: {}\r\n\
          Subject: {}\r\n\
          To: {}\r\n\
-         {}{}\r\n\
-         ----------",
+         {}\r\n\
+         {}",
         original.from,
         original.date,
         original.subject,
@@ -171,9 +185,14 @@ mod tests {
 
         assert!(raw.contains("To: dave@example.com"));
         assert!(raw.contains("Subject: Fwd: Hello"));
+        assert!(raw.contains("In-Reply-To: <abc@example.com>"));
+        assert!(raw.contains("References: <abc@example.com>"));
         assert!(raw.contains("---------- Forwarded message ---------"));
         assert!(raw.contains("From: alice@example.com"));
-        assert!(raw.contains("Original content"));
+        // Blank line separates metadata block from body
+        assert!(raw.contains("To: bob@example.com\r\n\r\nOriginal content"));
+        // No closing ---------- delimiter
+        assert!(!raw.ends_with("----------"));
     }
 
     #[test]
@@ -203,6 +222,36 @@ mod tests {
         assert!(raw.contains("Cc: eve@example.com"));
         assert!(raw.contains("FYI see below"));
         assert!(raw.contains("Cc: carol@example.com"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_references_chain() {
+        let original = super::super::OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<msg-2@example.com>".to_string(),
+            references: "<msg-0@example.com> <msg-1@example.com>".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original content".to_string(),
+        };
+
+        let raw = create_forward_raw_message(
+            "dave@example.com",
+            None,
+            None,
+            "Fwd: Hello",
+            None,
+            &original,
+        );
+
+        assert!(raw.contains("In-Reply-To: <msg-2@example.com>"));
+        assert!(
+            raw.contains("References: <msg-0@example.com> <msg-1@example.com> <msg-2@example.com>")
+        );
     }
 
     fn make_forward_matches(args: &[&str]) -> ArgMatches {
