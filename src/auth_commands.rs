@@ -1590,7 +1590,12 @@ fn extract_scopes_from_doc(
     doc: &crate::discovery::RestDescription,
     readonly_only: bool,
 ) -> Vec<String> {
-    let scopes = match doc.auth.as_ref().and_then(|a| a.oauth2.as_ref()).and_then(|o| o.scopes.as_ref()) {
+    let scopes = match doc
+        .auth
+        .as_ref()
+        .and_then(|a| a.oauth2.as_ref())
+        .and_then(|o| o.scopes.as_ref())
+    {
         Some(s) => s,
         None => return Vec::new(),
     };
@@ -1643,7 +1648,11 @@ async fn augment_with_dynamic_scopes(
         let missing = find_unmatched_services(result, services);
         if !missing.is_empty() {
             let dynamic = fetch_scopes_for_unmatched_services(&missing, readonly_only).await;
-            result.extend(dynamic);
+            for scope in dynamic {
+                if !result.contains(&scope) {
+                    result.push(scope);
+                }
+            }
         }
     }
 }
