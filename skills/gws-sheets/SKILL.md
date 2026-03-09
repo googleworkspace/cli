@@ -1,7 +1,7 @@
 ---
 name: gws-sheets
 version: 1.0.0
-description: "Google Sheets: Read and write spreadsheets."
+description: "Google Sheets API skill for reading, writing, and managing spreadsheets via the `gws` CLI. Use when the user mentions Google Sheets, gsheets, Google spreadsheet, or needs to create sheets, read or update cells, append rows, batch update ranges, manage tabs, work with formulas, or interact with the Sheets API. Covers core spreadsheet operations including spreadsheets.get, spreadsheets.create, spreadsheets.batchUpdate, and values sub-resources."
 metadata:
   openclaw:
     category: "productivity"
@@ -51,3 +51,29 @@ gws schema sheets.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+### Workflow: schema inspection → command execution
+
+```bash
+# 1. Inspect the method to learn required params and body shape
+gws schema sheets.spreadsheets.get
+
+# 2. Execute with the params identified above
+gws sheets spreadsheets get --params '{"spreadsheetId": "abc123"}'
+
+# 3. Include grid data by adding a query flag
+gws sheets spreadsheets get --params '{"spreadsheetId": "abc123", "includeGridData": true}'
+```
+
+### Batch update a spreadsheet
+
+```bash
+# Inspect first
+gws schema sheets.spreadsheets.batchUpdate
+
+# Apply one or more update requests
+gws sheets spreadsheets batchUpdate \
+  --params '{"spreadsheetId": "abc123"}' \
+  --json '{"requests": [{"updateSpreadsheetProperties": {"properties": {"title": "New Title"}, "fields": "title"}}]}'
+```

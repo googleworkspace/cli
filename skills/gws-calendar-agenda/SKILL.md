@@ -1,7 +1,7 @@
 ---
 name: gws-calendar-agenda
 version: 1.0.0
-description: "Google Calendar: Show upcoming events across all calendars."
+description: "Google Calendar agenda viewer: lists upcoming events, meetings, and appointments across all calendars using the gws CLI. Use when the user wants to check their schedule, see what's on their calendar, view today's or tomorrow's events, browse this week's agenda, or ask 'what do I have today?', 'what meetings are coming up?', or 'show my appointments'. Supports filtering by calendar name/ID and adjustable day ranges. Read-only — never creates or modifies events."
 metadata:
   openclaw:
     category: "productivity"

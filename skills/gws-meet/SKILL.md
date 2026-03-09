@@ -1,7 +1,7 @@
 ---
 name: gws-meet
 version: 1.0.0
-description: "Manage Google Meet conferences."
+description: "Creates and manages Google Meet video conferences, meeting spaces, participants, recordings, and transcripts via the gws CLI. Use when a user wants to schedule a virtual meeting, generate a Meet link, create or update a meeting space, list or retrieve conference records, manage meeting participants, or access Google Meet recordings and transcripts. Trigger terms: 'Google Meet', 'video call', 'meeting link', 'Meet link', 'virtual meeting', 'schedule a Meet', 'video conference', 'conference record'."
 metadata:
   openclaw:
     category: "productivity"
@@ -49,3 +49,34 @@ gws schema meet.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Example Workflows
+
+### Create a meeting space
+
+1. Inspect the schema to identify available fields:
+   ```bash
+   gws schema meet.spaces.create
+   ```
+2. Create the space (no required params; optionally configure settings via `--json`):
+   ```bash
+   gws meet spaces create --json '{"config": {"accessType": "OPEN"}}'
+   ```
+   The response includes the `meetingUri` (the shareable Meet link) and the space `name` (e.g. `spaces/SPACE_ID`) for future operations.
+3. Verify the space was created successfully by fetching it with the returned `name`:
+   ```bash
+   gws meet spaces get --params 'name=spaces/SPACE_ID'
+   ```
+   If the `get` call returns the space details, creation succeeded. If the create step returned an error (e.g. permission denied or invalid config), check auth setup in the shared skill and re-inspect the schema before retrying.
+
+### List recent conference records
+
+1. Inspect the schema for supported filters and pagination options:
+   ```bash
+   gws schema meet.conferenceRecords.list
+   ```
+2. List records, filtering by a specific space:
+   ```bash
+   gws meet conferenceRecords list --params 'filter=space.name="spaces/SPACE_ID"'
+   ```
+   Results are ordered by start time descending by default.
+3. If the list is empty and records are expected, confirm the `SPACE_ID` is correct by running `gws meet spaces get --params 'name=spaces/SPACE_ID'` first. If the command itself fails, verify credentials and filters with `gws schema meet.conferenceRecords.list`.

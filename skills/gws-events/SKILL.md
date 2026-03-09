@@ -1,7 +1,7 @@
 ---
 name: gws-events
 version: 1.0.0
-description: "Subscribe to Google Workspace events."
+description: "Manages Google Workspace Events subscriptions and notifications via the `gws events` CLI. Handles creating, listing, updating, deleting, and reactivating webhook/push-notification subscriptions that monitor changes to Gmail messages, Calendar events, Drive file changes, and other Workspace resources. Also supports streaming task updates and managing long-running operations. Use when the user wants to watch for changes, set up webhooks or push notifications, monitor Gmail/Calendar/Drive activity, subscribe to Workspace events, manage notification channels, or stream real-time event callbacks from Google Workspace products."
 metadata:
   openclaw:
     category: "productivity"
@@ -65,3 +65,49 @@ gws schema events.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Quick-Start Workflow
+
+Typical sequence for setting up and verifying a Workspace event subscription:
+
+**1. Discover** — inspect the method schema before building params:
+```bash
+gws schema events.subscriptions.create
+```
+
+**2. Create** — create a subscription (e.g. watch for Gmail new-message events):
+```bash
+gws events subscriptions create \
+  --json '{
+    "targetResource": "//mail.googleapis.com/users/me/messages",
+    "eventTypes": ["google.workspace.gmail.message.v1.created"],
+    "notificationEndpoint": {
+      "pubsubTopic": "projects/my-project/topics/my-topic"
+    },
+    "ttl": "86400s"
+  }'
+```
+
+> **If creation fails:** Check that the `pubsubTopic` exists and that the Workspace Events service account has Pub/Sub Publisher permission on it. Permission errors typically surface as `PERMISSION_DENIED`; missing topics appear as `NOT_FOUND`.
+
+**3. Verify** — confirm the subscription is active:
+```bash
+gws events subscriptions get --params '{"name": "subscriptions/SUBSCRIPTION_ID"}'
+```
+
+> **If the subscription is `SUSPENDED`:** Inspect the `suspensionReason` field in the response, fix the underlying issue (e.g. expired credentials, revoked Pub/Sub access), then reactivate with `gws events subscriptions reactivate`.
+
+**4. Stream events** — attach to a live task stream for real-time updates:
+```bash
+gws events tasks subscribe --params '{"name": "tasks/TASK_ID"}'
+```
+
+Use the [`+subscribe`](../gws-events-subscribe/SKILL.md) helper for a higher-level streaming workflow that outputs NDJSON.
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Resolution |
+|---------|--------------|------------|
+| `PERMISSION_DENIED` on create | Service account lacks Pub/Sub Publisher role on the target topic | Grant the role in GCP IAM, then retry |
+| Subscription state is `SUSPENDED` | Credentials expired or endpoint unreachable | Fix the root cause, then call `subscriptions reactivate` |
+| `NOT_FOUND` on get/delete | Wrong subscription ID or it was already deleted | Run `subscriptions list` to confirm existing IDs |
+| Stream closes immediately | Task already in terminal state | Use `tasks get` to retrieve the final task state instead |

@@ -1,7 +1,7 @@
 ---
 name: gws-gmail-send
 version: 1.0.0
-description: "Gmail: Send an email."
+description: "Composes and sends an email via Gmail using the gws CLI. Use when the user wants to send an email, write an email, compose a message, mail someone, or email a Gmail or @gmail.com address. Handles RFC 2822 formatting and base64 encoding automatically; for advanced use cases (HTML body, attachments, CC/BCC), falls back to the raw Gmail API."
 metadata:
   openclaw:
     category: "productivity"

@@ -1,7 +1,7 @@
 ---
 name: gws-drive
 version: 1.0.0
-description: "Google Drive: Manage files, folders, and shared drives."
+description: "Google Drive (gdrive): Upload, download, share, search, and organize files, folders, and shared drives via the Drive v3 API. Use when the user mentions Google Drive, gdrive, cloud storage, uploading to Drive, downloading from Drive, sharing a Google Doc or file, searching Drive, managing permissions, listing files, handling comments, or accessing Drive metadata."
 metadata:
   openclaw:
     category: "productivity"
@@ -135,3 +135,49 @@ gws schema drive.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+### List files (excluding trashed)
+
+```bash
+# Inspect params first
+gws schema drive.files.list
+
+# List non-trashed files, returning name and id
+gws drive files list \
+  --params '{"q":"trashed=false","fields":"files(id,name,mimeType)","pageSize":20}'
+```
+
+### Download a file by ID
+
+```bash
+# Inspect params first
+gws schema drive.files.get
+
+# Download file content to stdout (binary files stored in Drive)
+gws drive files get \
+  --params '{"fileId":"FILE_ID","alt":"media"}'
+
+# Export a Google Doc as plain text (Docs, Sheets, Slides)
+gws drive files export \
+  --params '{"fileId":"FILE_ID","mimeType":"text/plain"}'
+```
+
+### Share a file with a user (upload + share workflow)
+
+```bash
+# Step 1 — Upload the file (see +upload helper for full metadata support)
+gws drive files create \
+  --params '{"fields":"id,name"}' \
+  --json '{"name":"report.pdf"}' \
+  --upload report.pdf
+
+# Step 2 — Confirm the returned file ID, then grant reader access
+gws drive permissions create \
+  --params '{"fileId":"FILE_ID","fields":"id,role,emailAddress"}' \
+  --json '{"type":"user","role":"reader","emailAddress":"colleague@example.com"}'
+
+# Step 3 — Verify the permission was applied
+gws drive permissions list \
+  --params '{"fileId":"FILE_ID","fields":"permissions(id,role,emailAddress)"}'
+```

@@ -1,7 +1,7 @@
 ---
 name: gws-chat
 version: 1.0.0
-description: "Google Chat: Manage Chat spaces and messages."
+description: "Google Chat: Create and configure Chat spaces, send and read messages, list space members, manage custom emojis, upload attachments, and search conversations in Google Workspace. Use when the user mentions Google Chat, gchat, Google Workspace Chat, chat rooms, DMs, group messages, or needs to create/delete spaces, send messages, list members, or find direct message threads."
 metadata:
   openclaw:
     category: "productivity"
@@ -28,10 +28,12 @@ gws chat <resource> <method> [flags]
 
 ### customEmojis
 
-  - `create` — Creates a custom emoji. Custom emojis are only available for Google Workspace accounts, and the administrator must turn custom emojis on for the organization. For more information, see [Learn about custom emojis in Google Chat](https://support.google.com/chat/answer/12800149) and [Manage custom emoji permissions](https://support.google.com/a/answer/12850085).
-  - `delete` — Deletes a custom emoji. By default, users can only delete custom emoji they created. [Emoji managers](https://support.google.com/a/answer/12850085) assigned by the administrator can delete any custom emoji in the organization. See [Learn about custom emojis in Google Chat](https://support.google.com/chat/answer/12800149). Custom emojis are only available for Google Workspace accounts, and the administrator must turn custom emojis on for the organization.
-  - `get` — Returns details about a custom emoji. Custom emojis are only available for Google Workspace accounts, and the administrator must turn custom emojis on for the organization. For more information, see [Learn about custom emojis in Google Chat](https://support.google.com/chat/answer/12800149) and [Manage custom emoji permissions](https://support.google.com/a/answer/12850085).
-  - `list` — Lists custom emojis visible to the authenticated user. Custom emojis are only available for Google Workspace accounts, and the administrator must turn custom emojis on for the organization. For more information, see [Learn about custom emojis in Google Chat](https://support.google.com/chat/answer/12800149) and [Manage custom emoji permissions](https://support.google.com/a/answer/12850085).
+> **Note:** Custom emojis are only available for Google Workspace accounts, and the administrator must turn custom emojis on for the organization. See [Learn about custom emojis](https://support.google.com/chat/answer/12800149) and [Manage custom emoji permissions](https://support.google.com/a/answer/12850085).
+
+  - `create` — Creates a custom emoji.
+  - `delete` — Deletes a custom emoji. By default, users can only delete custom emoji they created. [Emoji managers](https://support.google.com/a/answer/12850085) assigned by the administrator can delete any custom emoji in the organization.
+  - `get` — Returns details about a custom emoji.
+  - `list` — Lists custom emojis visible to the authenticated user.
 
 ### media
 
@@ -69,5 +71,38 @@ gws chat --help
 gws schema chat.<resource>.<method>
 ```
 
-Use `gws schema` output to build your `--params` and `--json` flags.
+Use `gws schema` output to build your `--params` and `--json` flags. For example:
 
+```bash
+# 1. Inspect the schema for listing spaces
+gws schema chat.spaces.list
+# Output shows available params: pageSize, filter, etc.
+
+# 2. Build the command from the schema output
+gws chat spaces list --params '{"pageSize": 10}'
+
+# 3. Get details about a specific space
+gws chat spaces get --params '{"name": "spaces/SPACE_ID"}'
+```
+
+## Common Usage Examples
+
+```bash
+# List all Chat spaces you are a member of
+gws chat spaces list --params '{"pageSize": 25}'
+
+# Create a new named space
+gws chat spaces create --json '{"displayName": "Project Alpha", "spaceType": "SPACE"}'
+
+# Set up a space and invite members by email
+gws chat spaces setup --json '{
+  "space": {"displayName": "Team Standup"},
+  "memberships": [
+    {"member": {"name": "users/alice@example.com", "type": "HUMAN"}},
+    {"member": {"name": "users/bob@example.com", "type": "HUMAN"}}
+  ]
+}'
+
+# Find an existing direct message thread with a user
+gws chat spaces findDirectMessage --params '{"name": "users/alice@example.com"}'
+```

@@ -1,7 +1,7 @@
 ---
 name: gws-classroom
 version: 1.0.0
-description: "Google Classroom: Manage classes, rosters, and coursework."
+description: "Google Classroom skill for the gws CLI. Manages courses, student rosters, assignments, course materials, announcements, grades, topics, and invitations via the Classroom API. Use when the user mentions Google Classroom, creating or managing courses, enrolling or removing students, creating assignments or course materials, posting announcements, managing grading periods, or interacting with the classroom API or LMS."
 metadata:
   openclaw:
     category: "productivity"
@@ -22,17 +22,17 @@ gws classroom <resource> <method> [flags]
 
 ### courses
 
-  - `create` — Creates a course. The user specified in `ownerId` is the owner of the created course and added as a teacher. A non-admin requesting user can only create a course with themselves as the owner. Domain admins can create courses owned by any user within their domain. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to create courses or for access errors. * `NOT_FOUND` if the primary teacher is not a valid user.
-  - `delete` — Deletes a course. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to delete the requested course or for access errors. * `NOT_FOUND` if no course exists with the requested ID.
-  - `get` — Returns a course. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to access the requested course or for access errors. * `NOT_FOUND` if no course exists with the requested ID.
-  - `getGradingPeriodSettings` — Returns the grading period settings in a course. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user isn't permitted to access the grading period settings in the requested course or for access errors. * `NOT_FOUND` if the requested course does not exist.
-  - `list` — Returns a list of courses that the requesting user is permitted to view, restricted to those that match the request. Returned courses are ordered by creation time, with the most recently created coming first. This method returns the following error codes: * `PERMISSION_DENIED` for access errors. * `INVALID_ARGUMENT` if the query argument is malformed. * `NOT_FOUND` if any users specified in the query arguments do not exist.
-  - `patch` — Updates one or more fields in a course. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to modify the requested course or for access errors. * `NOT_FOUND` if no course exists with the requested ID. * `INVALID_ARGUMENT` if invalid fields are specified in the update mask or if no update mask is supplied.
-  - `update` — Updates a course. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to modify the requested course or for access errors. * `NOT_FOUND` if no course exists with the requested ID. * `FAILED_PRECONDITION` for the following request errors: * CourseNotModifiable * CourseTitleCannotContainUrl
-  - `updateGradingPeriodSettings` — Updates grading period settings of a course. Individual grading periods can be added, removed, or modified using this method. The requesting user and course owner must be eligible to modify Grading Periods. For details, see [licensing requirements](https://developers.google.com/workspace/classroom/grading-periods/manage-grading-periods#licensing_requirements).
+  - `create` — Creates a course. The `ownerId` user becomes the owner and is added as a teacher. Non-admin users can only create courses they own; domain admins can assign any owner.
+  - `delete` — Deletes a course by ID.
+  - `get` — Returns a single course by ID.
+  - `getGradingPeriodSettings` — Returns grading period settings for a course.
+  - `list` — Returns courses the requesting user can view, ordered by creation time (newest first).
+  - `patch` — Updates one or more fields in a course.
+  - `update` — Fully updates a course.
+  - `updateGradingPeriodSettings` — Adds, removes, or modifies individual grading periods. Requires eligibility; see [licensing requirements](https://developers.google.com/workspace/classroom/grading-periods/manage-grading-periods#licensing_requirements).
   - `aliases` — Operations on the 'aliases' resource
   - `announcements` — Operations on the 'announcements' resource
-  - `courseWork` — Operations on the 'courseWork' resource
+  - `courseWork` — Operations on the 'courseWork' resource (assignments, quizzes)
   - `courseWorkMaterials` — Operations on the 'courseWorkMaterials' resource
   - `posts` — Operations on the 'posts' resource
   - `studentGroups` — Operations on the 'studentGroups' resource
@@ -42,20 +42,20 @@ gws classroom <resource> <method> [flags]
 
 ### invitations
 
-  - `accept` — Accepts an invitation, removing it and adding the invited user to the teachers or students (as appropriate) of the specified course. Only the invited user may accept an invitation. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to accept the requested invitation or for access errors.
-  - `create` — Creates an invitation. Only one invitation for a user and course may exist at a time. Delete and re-create an invitation to make changes. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to create invitations for this course or for access errors. * `NOT_FOUND` if the course or the user does not exist. * `FAILED_PRECONDITION`: * if the requested user's account is disabled.
-  - `delete` — Deletes an invitation. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to delete the requested invitation or for access errors. * `NOT_FOUND` if no invitation exists with the requested ID.
-  - `get` — Returns an invitation. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to view the requested invitation or for access errors. * `NOT_FOUND` if no invitation exists with the requested ID.
-  - `list` — Returns a list of invitations that the requesting user is permitted to view, restricted to those that match the list request. *Note:* At least one of `user_id` or `course_id` must be supplied. Both fields can be supplied. This method returns the following error codes: * `PERMISSION_DENIED` for access errors.
+  - `accept` — Accepts an invitation; adds the invited user as teacher or student. Only the invited user may accept.
+  - `create` — Creates an invitation. Only one invitation per user/course may exist at a time; delete and recreate to change it.
+  - `delete` — Deletes an invitation by ID.
+  - `get` — Returns an invitation by ID.
+  - `list` — Returns invitations the user may view. At least one of `user_id` or `course_id` must be supplied.
 
 ### registrations
 
-  - `create` — Creates a `Registration`, causing Classroom to start sending notifications from the provided `feed` to the destination provided in `cloudPubSubTopic`. Returns the created `Registration`. Currently, this will be the same as the argument, but with server-assigned fields such as `expiry_time` and `id` filled in. Note that any value specified for the `expiry_time` or `id` fields will be ignored.
-  - `delete` — Deletes a `Registration`, causing Classroom to stop sending notifications for that `Registration`.
+  - `create` — Creates a `Registration`, causing Classroom to start sending notifications from the provided feed to a Cloud Pub/Sub topic.
+  - `delete` — Deletes a `Registration`, stopping notifications for that registration.
 
 ### userProfiles
 
-  - `get` — Returns a user profile. This method returns the following error codes: * `PERMISSION_DENIED` if the requesting user is not permitted to access this user profile, if no profile exists with the requested ID, or for access errors.
+  - `get` — Returns a user profile by ID.
   - `guardianInvitations` — Operations on the 'guardianInvitations' resource
   - `guardians` — Operations on the 'guardians' resource
 
@@ -73,3 +73,72 @@ gws schema classroom.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+```bash
+# Create a new course owned by a specific teacher
+gws classroom courses create --json '{"name":"Biology 101","ownerId":"teacher@school.edu","courseState":"ACTIVE"}'
+
+# List all courses for the authenticated user
+gws classroom courses list
+
+# Enroll a student in a course
+gws classroom courses students create --params 'courseId=abc123' --json '{"userId":"student@school.edu"}'
+
+# Create an assignment in a course
+gws classroom courses courseWork create --params 'courseId=abc123' \
+  --json '{"title":"Chapter 5 Essay","workType":"ASSIGNMENT","state":"PUBLISHED","dueDate":{"year":2025,"month":6,"day":30}}'
+
+# Post an announcement to a course
+gws classroom courses announcements create --params 'courseId=abc123' \
+  --json '{"text":"Class is cancelled Friday.","state":"PUBLISHED"}'
+
+# Invite a teacher to a course
+gws classroom invitations create --json '{"courseId":"abc123","userId":"newteacher@school.edu","role":"TEACHER"}'
+```
+
+## Common Workflows
+
+### Set Up a New Class with Students and an Assignment
+
+```bash
+# 1. Create the course
+gws classroom courses create \
+  --json '{"name":"History 201","ownerId":"teacher@school.edu","courseState":"ACTIVE"}'
+# → note the returned course `id` (e.g. "xyz789")
+
+# 2. Verify the course was created successfully before proceeding
+gws classroom courses get --params 'courseId=xyz789'
+# → confirm `courseState` is "ACTIVE" and `name` is correct
+
+# 3. Enroll students (repeat per student)
+gws classroom courses students create --params 'courseId=xyz789' \
+  --json '{"userId":"student1@school.edu"}'
+
+# 4. Verify student enrollment succeeded
+gws classroom courses students get --params 'courseId=xyz789&userId=student1@school.edu'
+# → confirm the student profile is returned before continuing with additional enrollments
+
+# 5. Create a topic to organise work
+gws classroom courses topics create --params 'courseId=xyz789' \
+  --json '{"name":"Unit 1: Foundations"}'
+
+# 6. Create an assignment under that topic
+gws classroom courses courseWork create --params 'courseId=xyz789' \
+  --json '{"title":"Unit 1 Essay","workType":"ASSIGNMENT","state":"PUBLISHED","topicId":"<topicId>"}'
+```
+
+### Add a Teacher via Invitation
+
+```bash
+# 1. Create the invitation
+gws classroom invitations create \
+  --json '{"courseId":"xyz789","userId":"coteacher@school.edu","role":"TEACHER"}'
+# → note the returned invitation `id`
+
+# 2. Verify the invitation exists before asking the user to accept
+gws classroom invitations get --params 'id=<invitationId>'
+
+# 3. The invited user accepts (must be authenticated as that user)
+gws classroom invitations accept --params 'id=<invitationId>'
+```

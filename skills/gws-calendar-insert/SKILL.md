@@ -1,7 +1,7 @@
 ---
 name: gws-calendar-insert
 version: 1.0.0
-description: "Google Calendar: Create a new event."
+description: "Google Calendar: Creates a new calendar event using the gws CLI. Use when a user wants to schedule a meeting, add an appointment, book time, block off time, set up a call, or add something to their Google Calendar (gcal). Supports setting an event title/summary, start and end times (ISO 8601/RFC3339), location, description, and one or more attendees. Common trigger phrases include 'schedule a meeting', 'create an event', 'add to my calendar', 'book time with', or 'set up an appointment'."
 metadata:
   openclaw:
     category: "productivity"

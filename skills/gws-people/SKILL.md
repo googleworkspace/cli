@@ -1,7 +1,7 @@
 ---
 name: gws-people
 version: 1.0.0
-description: "Google People: Manage contacts and profiles."
+description: "Google People API skill for managing Google Contacts, address books, and user profiles via the `gws` CLI. Use when a user wants to create, search, update, or delete contacts or contact groups; look up phone numbers or email addresses in their Google address book; manage their contact list or directory; sync contacts; retrieve profile photos; or copy contacts between groups. Supports contact groups (create, list, update, delete, manage members), other contacts (list, search, copy to My Contacts), and people/connections (batch create/update, search contacts, list directory people, update photos)."
 metadata:
   openclaw:
     category: "productivity"
@@ -65,3 +65,66 @@ gws schema people.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+### Example: inspect then construct a command
+
+```bash
+# 1. Check what fields createContact requires
+gws schema people.people.createContact
+
+# 2. Build the command from the schema output
+gws people people createContact \
+  --json '{"names":[{"givenName":"Jane","familyName":"Doe"}],"emailAddresses":[{"value":"jane.doe@example.com"}]}'
+```
+
+## Common Usage Examples
+
+### List all contact groups
+
+```bash
+gws people contactGroups list
+```
+
+### Create a new contact group
+
+```bash
+gws people contactGroups create \
+  --json '{"contactGroup":{"name":"Team Alpha"}}'
+```
+
+### Create a single contact
+
+```bash
+gws people people createContact \
+  --json '{"names":[{"givenName":"Jane","familyName":"Doe"}],"emailAddresses":[{"value":"jane.doe@example.com"}],"phoneNumbers":[{"value":"+1-555-0100","type":"mobile"}]}'
+```
+
+### Search contacts by name or email
+
+```bash
+# Warmup request first (required before searching)
+gws people people searchContacts --params 'query=&readMask=names,emailAddresses'
+
+# Then perform the actual search
+gws people people searchContacts --params 'query=Jane&readMask=names,emailAddresses,phoneNumbers'
+```
+
+### Get authenticated user's own profile
+
+```bash
+gws people people get \
+  --params 'resourceName=people/me&personFields=names,emailAddresses,phoneNumbers'
+```
+
+## Mutate Operation Workflow
+
+Many write operations (create, update, delete, batch operations) carry this warning: **mutate requests for the same user must be sent sequentially** to avoid increased latency and failures.
+
+Follow this pattern for mutate operations:
+
+1. **Inspect the schema** before building the request body.
+2. **Send one mutate request at a time** per user — do not parallelize creates/updates/deletes.
+3. **Handle common errors**:
+   - `400` — Missing required fields (e.g., `personFields` not specified, or singleton fields duplicated). Re-inspect with `gws schema` and correct the request body.
+   - `409` — Duplicate contact group name. Choose a unique name before retrying.
+   - `EXPIRED_SYNC_TOKEN` — Sync token is older than 7 days. Discard the token and perform a full sync (omit `sync_token` from the request).
+4. **Verify the result** by running a `get` or `list` command after a successful mutate.

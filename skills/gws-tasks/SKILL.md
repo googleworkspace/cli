@@ -1,7 +1,7 @@
 ---
 name: gws-tasks
 version: 1.0.0
-description: "Google Tasks: Manage task lists and tasks."
+description: "Manages Google Tasks task lists and individual tasks via the gws CLI. Use when the user wants to create tasks, add items to a to-do list, set due dates, mark tasks complete, check off items, clear completed tasks, move or reorganize tasks, delete tasks, or manage Google Tasks task lists (insert, update, list, delete). Trigger terms: Google Tasks, todo, to-do, checklist, task reminder, add task, task list, pending items."
 metadata:
   openclaw:
     category: "productivity"
@@ -54,3 +54,43 @@ gws schema tasks.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+**Create a new task list:**
+```bash
+gws tasks tasklists insert --json '{"title": "Shopping List"}'
+```
+
+**Add a task with a due date to a task list:**
+```bash
+gws tasks tasks insert --params 'tasklist=<tasklistId>' \
+  --json '{"title": "Buy groceries", "due": "2024-12-31T00:00:00.000Z"}'
+```
+
+**List all tasks in a task list:**
+```bash
+gws tasks tasks list --params 'tasklist=<tasklistId>'
+```
+
+## ⚠️ Destructive Operations
+
+The following operations permanently affect tasks and cannot be undone — confirm intent before proceeding:
+
+- **`tasks clear`** — Permanently hides all completed tasks from the specified list; they will no longer appear in default listings.
+- **`tasks delete`** — Permanently deletes the specified task. If the task is assigned (from Docs or Chat Spaces), the original task in the assignment surface is also deleted.
+- **`tasklists delete`** — Permanently deletes the entire task list and all assigned tasks within it.
+
+**Verify before executing** — always fetch the resource first to confirm the correct IDs:
+
+```bash
+# Confirm the correct task before deleting
+gws tasks tasks get --params 'tasklist=<tasklistId>,task=<taskId>'
+
+# Confirm the correct task list before deleting
+gws tasks tasklists get --params 'tasklist=<tasklistId>'
+
+# Review completed tasks before clearing
+gws tasks tasks list --params 'tasklist=<tasklistId>,showCompleted=true,showHidden=false'
+```
+
+Only proceed with the destructive command once the returned resource matches the user's intent.

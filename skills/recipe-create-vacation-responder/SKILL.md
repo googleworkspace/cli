@@ -1,7 +1,7 @@
 ---
 name: recipe-create-vacation-responder
 version: 1.0.0
-description: "Enable a Gmail out-of-office auto-reply with a custom message and date range."
+description: "Enables a Gmail out-of-office vacation responder with a custom message and date range, including verification and disabling steps. Use when the user wants to set up a vacation responder, enable an OOO or away message, configure an automatic reply, or activate vacation mode in Gmail."
 metadata:
   openclaw:
     category: "recipe"
@@ -22,4 +22,3 @@ Enable a Gmail out-of-office auto-reply with a custom message and date range.
 1. Enable vacation responder: `gws gmail users settings updateVacation --params '{"userId": "me"}' --json '{"enableAutoReply": true, "responseSubject": "Out of Office", "responseBodyPlainText": "I am out of the office until Jan 20. For urgent matters, contact backup@company.com.", "restrictToContacts": false, "restrictToDomain": false}'`
 2. Verify settings: `gws gmail users settings getVacation --params '{"userId": "me"}'`
 3. Disable when back: `gws gmail users settings updateVacation --params '{"userId": "me"}' --json '{"enableAutoReply": false}'`
-

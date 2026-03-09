@@ -1,7 +1,7 @@
 ---
 name: gws-drive-upload
 version: 1.0.0
-description: "Google Drive: Upload a file with automatic metadata."
+description: "Uploads a local file to Google Drive with automatic MIME-type detection and metadata. Use when the user wants to upload to Drive, save a file to Google Drive, send documents, spreadsheets, images, PDFs, or CSVs to cloud storage, or share a file via Drive. Supports custom target filenames and destination folder selection."
 metadata:
   openclaw:
     category: "productivity"

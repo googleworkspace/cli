@@ -1,7 +1,7 @@
 ---
 name: gws-events-subscribe
 version: 1.0.0
-description: "Google Workspace Events: Subscribe to Workspace events and stream them as NDJSON."
+description: "Google Workspace Events: Subscribe to Workspace events and stream them as NDJSON. Supports calendar event changes, Gmail/email activity, Chat message notifications, and Drive file updates via Pub/Sub. Use when the user wants to monitor Google Workspace activity in real time, track calendar changes, receive Gmail or Chat alerts, set up Workspace webhooks, watch Drive file changes, or stream live Google Workspace event updates to a file or terminal."
 metadata:
   openclaw:
     category: "productivity"
@@ -45,9 +45,20 @@ gws events +subscribe --subscription projects/p/subscriptions/my-sub --once
 gws events +subscribe ... --cleanup --output-dir ./events
 ```
 
+## Workflow
+
+1. **Pre-flight: verify target URI** — Confirm the `--target` resource URI follows the expected format (e.g., `//chat.googleapis.com/spaces/SPACE_ID`) before executing.
+2. **Pre-flight: verify permissions** — Run with `--once` first to confirm the authenticated account has the required Pub/Sub and Workspace permissions (see `gws-shared`) before committing to resource creation or a long-running stream.
+3. Run the subscribe command with the desired `--target` and `--event-types`.
+4. Confirm NDJSON events begin streaming to stdout (or files in `--output-dir`).
+5. If no messages appear, verify the target resource URI is correct and the Pub/Sub subscription exists in the specified `--project`.
+6. If the command fails on setup, check that the authenticated account has the required Pub/Sub and Workspace permissions (see `gws-shared`).
+7. Press Ctrl-C to stop gracefully; use `--cleanup` to remove created Pub/Sub resources automatically on exit.
+
 ## Tips
 
-- Without --cleanup, Pub/Sub resources persist for reconnection.
+- Without `--cleanup`, Pub/Sub resources persist for reconnection.
+- Use `--once` to do a single pull and verify events are flowing before committing to a long-running stream.
 - Press Ctrl-C to stop gracefully.
 
 > [!CAUTION]

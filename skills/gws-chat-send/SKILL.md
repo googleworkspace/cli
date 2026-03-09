@@ -1,7 +1,7 @@
 ---
 name: gws-chat-send
 version: 1.0.0
-description: "Google Chat: Send a message to a space."
+description: "Google Chat: Send a plain-text message to a Google Chat space. Use when the user wants to send a message, post to a chat space, notify a team in Google Chat, or write to a gchat room. Supports plain-text messages only; for cards or threaded replies use the raw API."
 metadata:
   openclaw:
     category: "productivity"

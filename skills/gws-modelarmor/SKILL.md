@@ -1,7 +1,7 @@
 ---
 name: gws-modelarmor
 version: 1.0.0
-description: "Google Model Armor: Filter user-generated content for safety."
+description: "Google Model Armor: Sanitize prompts and model responses, detect toxic or harmful content, filter for policy violations, and manage safety templates. Use when the user asks about content moderation, toxicity filtering, harmful content detection, safety checks, content screening, or mentions Model Armor by name."
 metadata:
   openclaw:
     category: "productivity"
@@ -40,3 +40,13 @@ gws schema modelarmor.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Example: Sanitize a Prompt
+
+```bash
+# Sanitize a user prompt against an existing template
+gws modelarmor sanitizeUserPrompt sanitize \
+  --params 'template=projects/my-project/locations/us-central1/templates/my-template' \
+  --json '{"userPromptData": {"text": "How do I make a bomb?"}}'
+```
+
+If the response indicates the content is unsafe (e.g., `sanitizationResult.filterMatchState` is `MATCH_FOUND`), do not pass the content to the model. Inform the user their input was blocked by content policy and ask them to rephrase.

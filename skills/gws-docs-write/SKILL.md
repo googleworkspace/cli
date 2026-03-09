@@ -1,7 +1,7 @@
 ---
 name: gws-docs-write
 version: 1.0.0
-description: "Google Docs: Append text to a document."
+description: "Google Docs: Append text to an existing Google Docs document using the gws CLI. Use when the user wants to add text, insert content, append paragraphs, or write to a gdoc — e.g. 'add text to my Google Doc', 'append content to a Google document', 'update a gdoc', or 'write to a doc by ID'."
 metadata:
   openclaw:
     category: "productivity"

@@ -1,7 +1,7 @@
 ---
 name: gws-forms
 version: 1.0.0
-description: "Read and write Google Forms."
+description: "Manages Google Forms (surveys, questionnaires) via the gws CLI: create forms, add or modify questions, retrieve and analyse form responses, update publish settings, and manage response watches. Use when the user wants to create a Google Form or survey, build a questionnaire, fetch form responses, modify form settings or items, set up response notifications, or work with forms.google.com links. Trigger terms: 'Google Forms', 'survey', 'questionnaire', 'form responses', 'Google survey', 'create a form', 'gform'."
 metadata:
   openclaw:
     category: "productivity"
@@ -43,3 +43,68 @@ gws schema forms.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Workflows
+
+### Two-Step Form Creation (Create + Add Items)
+
+Creating a form with questions requires two calls: first create the empty form, then batch-add items.
+
+**Step 1 — Create the empty form:**
+
+```bash
+gws forms forms create \
+  --json '{"info": {"title": "Customer Satisfaction Survey", "document_title": "Customer Satisfaction Survey"}}'
+# Note the returned `formId` for step 2.
+```
+
+**Step 1 validation — Confirm `formId` was returned before proceeding:**
+
+If the response does not include a `formId`, do not proceed to step 2. Use `gws forms forms get` to verify the form exists:
+
+```bash
+gws forms forms get \
+  --params 'formId=<formId-from-step-1>'
+```
+
+A successful response will include the form's `info` and `formId`. If the form is not found or the call errors, check for an invalid or missing `formId`, malformed JSON in step 1, or auth issues (see the shared SKILL.md).
+
+**Step 2 — Add questions via batchUpdate:**
+
+```bash
+gws forms forms batchUpdate \
+  --params 'formId=<formId-from-step-1>' \
+  --json '{
+    "requests": [
+      {
+        "createItem": {
+          "item": {
+            "title": "How satisfied are you?",
+            "questionItem": {
+              "question": {
+                "required": true,
+                "choiceQuestion": {
+                  "type": "RADIO",
+                  "options": [
+                    {"value": "Very satisfied"},
+                    {"value": "Satisfied"},
+                    {"value": "Unsatisfied"}
+                  ]
+                }
+              }
+            }
+          },
+          "location": {"index": 0}
+        }
+      }
+    ]
+  }'
+```
+
+If `batchUpdate` fails, common causes are: an invalid or stale `formId`, malformed JSON in the request body, or missing required fields (e.g. `location`). Re-inspect the method schema with `gws schema forms.forms.batchUpdate` and verify the `formId` with `forms get` before retrying.
+
+### Retrieve Form Responses
+
+```bash
+gws forms responses list \
+  --params 'formId=<formId>'
+```

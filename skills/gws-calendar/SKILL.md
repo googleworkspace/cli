@@ -1,7 +1,7 @@
 ---
 name: gws-calendar
 version: 1.0.0
-description: "Google Calendar: Manage calendars and events."
+description: "Google Calendar CLI skill via the `gws` tool. Manages calendars and events: create events, check availability, schedule meetings, view upcoming appointments, set reminders, manage access control, and query free/busy time across calendars. Use when asked to schedule a meeting, book time, create a calendar invite, check gcal, view appointments, check availability, manage a calendar, or interact with Google Calendar in any way."
 metadata:
   openclaw:
     category: "productivity"
@@ -106,3 +106,51 @@ gws schema calendar.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Example Workflows
+
+### List upcoming events on the primary calendar
+
+```bash
+# 1. Inspect the method to learn required params and available flags
+gws schema calendar.events.list
+
+# 2. List events from now, ordered by start time
+gws calendar events list \
+  --params calendarId=primary \
+  --params timeMin=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --params orderBy=startTime \
+  --params singleEvents=true \
+  --params maxResults=10
+```
+
+### Create a new event
+
+```bash
+# 1. Inspect the insert method for required fields
+gws schema calendar.events.insert
+
+# 2. Create the event with a JSON body
+gws calendar events insert \
+  --params calendarId=primary \
+  --json '{
+    "summary": "Team standup",
+    "start": {"dateTime": "2024-06-10T09:00:00-07:00"},
+    "end":   {"dateTime": "2024-06-10T09:30:00-07:00"},
+    "attendees": [{"email": "colleague@example.com"}]
+  }'
+```
+
+### Query free/busy availability
+
+```bash
+# 1. Inspect the freebusy.query method
+gws schema calendar.freebusy.query
+
+# 2. Check availability for a calendar over a time window
+gws calendar freebusy query \
+  --json '{
+    "timeMin": "2024-06-10T00:00:00Z",
+    "timeMax": "2024-06-10T23:59:59Z",
+    "items":   [{"id": "primary"}]
+  }'
+```

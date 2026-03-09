@@ -1,7 +1,7 @@
 ---
 name: recipe-forward-labeled-emails
 version: 1.0.0
-description: "Find Gmail messages with a specific label and forward them to another address."
+description: "Finds Gmail messages with a specific label and forwards them to another email address. Use when the user wants to forward labeled Gmail emails, auto-forward filtered messages, send labeled emails to another address, or set up a filter-and-forward workflow using Gmail labels."
 metadata:
   openclaw:
     category: "recipe"
@@ -25,3 +25,5 @@ Find Gmail messages with a specific label and forward them to another address.
 
 [Original Message Body]'`
 
+4. **Multiple messages:** If step 1 returns more than one result, repeat steps 2–3 for each message ID in the list, iterating through all returned `MSG_ID` values before moving on.
+5. **Validate:** Confirm the forward was sent successfully by checking the response status from step 3, or verify the message appears in the sent folder: `gws gmail users messages list --params '{"userId": "me", "q": "in:sent subject:FW:"}' --format table`

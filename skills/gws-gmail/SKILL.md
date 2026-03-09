@@ -1,7 +1,7 @@
 ---
 name: gws-gmail
 version: 1.0.0
-description: "Gmail: Send, read, and manage email."
+description: "Manages Gmail via the gws CLI — send emails, check inbox, search messages, organize with labels, delete messages, handle drafts, manage threads, and work with attachments. Use when asked to send an email, compose a message, write an email, check mail, read inbox, reply to email, search Gmail, list messages, manage labels, handle drafts, or perform any Gmail-related operation."
 metadata:
   openclaw:
     category: "productivity"
@@ -54,3 +54,24 @@ gws schema gmail.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+### Schema → Command Workflow
+
+```bash
+# 1. Inspect the method to learn required params and types
+gws schema gmail.users.messages.list
+
+# 2. Construct the command from schema output
+gws gmail users messages list --params '{"userId":"me","q":"is:unread in:inbox","maxResults":10}'
+```
+
+### Common Operations
+
+```bash
+# List unread messages in inbox
+gws gmail users messages list --params '{"userId":"me","q":"is:unread in:inbox","maxResults":10}'
+
+# Get a specific message (full format includes headers and body)
+gws gmail users messages get --params '{"userId":"me","id":"MESSAGE_ID","format":"full"}'
+```

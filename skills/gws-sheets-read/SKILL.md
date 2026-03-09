@@ -1,7 +1,7 @@
 ---
 name: gws-sheets-read
 version: 1.0.0
-description: "Google Sheets: Read values from a spreadsheet."
+description: "Reads cell values and ranges from Google Sheets spreadsheets using the gws CLI. Use when the user asks to read, fetch, retrieve, or access data from Google Sheets, a gsheet, or a Google spreadsheet — including requests to get cell contents, sheet data, named ranges, or spreadsheet values from a specific range (e.g. 'Sheet1!A1:D10'). Covers common phrasings like 'read from Google Sheets', 'get spreadsheet values', 'fetch cell data', or 'pull data from a gsheet'."
 metadata:
   openclaw:
     category: "productivity"

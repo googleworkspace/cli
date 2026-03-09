@@ -1,7 +1,7 @@
 ---
 name: gws-slides
 version: 1.0.0
-description: "Google Slides: Read and write presentations."
+description: "Google Slides: Creates, reads, and edits Google Slides presentations (slide decks, slideshows, Google presentations). Use when the user mentions Google Slides, a slide deck, or needs to create slides, add speaker notes, modify layouts, insert images or charts, apply batch updates, or read presentation content in Google Workspace."
 metadata:
   openclaw:
     category: "productivity"
@@ -41,3 +41,42 @@ gws schema slides.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+### Get a presentation
+
+```bash
+gws slides presentations get --params 'presentationId=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms'
+```
+
+### Create a new presentation
+
+```bash
+gws slides presentations create --json '{"title": "Q3 Roadmap"}'
+```
+
+### Batch update — add a new slide with a title
+
+```bash
+gws slides presentations batchUpdate \
+  --params 'presentationId=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' \
+  --json '{
+    "requests": [
+      {
+        "insertText": {
+          "objectId": "SLIDE_OBJECT_ID",
+          "insertionIndex": 0,
+          "text": "My New Slide Title"
+        }
+      }
+    ]
+  }'
+```
+
+> **Safety note:** `batchUpdate` is atomic — if any single request in the batch is invalid, the entire update fails and no changes are applied. Inspect available request types and their schemas with `gws schema slides.presentations.batchUpdate` before building complex update payloads.
+
+> **Verification:** After a successful `batchUpdate`, confirm the changes took effect by fetching the presentation:
+> ```bash
+> gws slides presentations get --params 'presentationId=PRESENTATION_ID'
+> ```
+> If the update failed, review the error message to identify which request was invalid, correct the payload, and retry the full batch.

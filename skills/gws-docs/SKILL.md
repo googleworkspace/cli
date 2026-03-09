@@ -1,7 +1,7 @@
 ---
 name: gws-docs
 version: 1.0.0
-description: "Read and write Google Docs."
+description: "Manages Google Docs documents via the gws CLI, supporting create, get, and batchUpdate operations to build, read, and modify document content and formatting. Use when a user wants to create a Google Doc, edit or format a Google document, read a gdocs file, retrieve document content from a docs.google.com link, or apply structured changes to a Google Drive document programmatically."
 metadata:
   openclaw:
     category: "productivity"
@@ -46,3 +46,63 @@ gws schema docs.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+### Create a document
+
+```bash
+gws docs documents create --json '{"title": "My New Document"}'
+```
+
+### Get a document
+
+```bash
+gws docs documents get --params '{"documentId": "YOUR_DOCUMENT_ID"}'
+```
+
+### batchUpdate — insert text at a location
+
+```bash
+gws docs documents batchUpdate \
+  --params '{"documentId": "YOUR_DOCUMENT_ID"}' \
+  --json '{
+    "requests": [
+      {
+        "insertText": {
+          "location": { "index": 1 },
+          "text": "Hello, world!\n"
+        }
+      }
+    ]
+  }'
+```
+
+### batchUpdate — apply bold formatting to a range
+
+```bash
+gws docs documents batchUpdate \
+  --params '{"documentId": "YOUR_DOCUMENT_ID"}' \
+  --json '{
+    "requests": [
+      {
+        "updateTextStyle": {
+          "range": { "startIndex": 1, "endIndex": 14 },
+          "textStyle": { "bold": true },
+          "fields": "bold"
+        }
+      }
+    ]
+  }'
+```
+
+## Validation Notes
+
+For `batchUpdate`, each request in the batch is validated individually before any are applied — if a single request is invalid, the entire batch is rejected. To minimise failures:
+1. Run `gws schema docs.documents.batchUpdate` to confirm required fields and types for each request kind.
+2. Build and verify your request payload structure before submitting.
+3. Group related changes together, but keep unrelated changes in separate `batchUpdate` calls to limit blast radius if validation fails.
+
+**If a `batchUpdate` call fails:**
+1. Check the error message for the invalid request index (e.g. `requests[2]`).
+2. Fix the specific request — verify required fields, index ranges, and types against `gws schema docs.documents.batchUpdate`.
+3. Retry the entire batch once corrected (no partial state is left to clean up, since nothing was applied).

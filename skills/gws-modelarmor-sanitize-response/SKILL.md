@@ -1,7 +1,7 @@
 ---
 name: gws-modelarmor-sanitize-response
 version: 1.0.0
-description: "Google Model Armor: Sanitize a model response through a Model Armor template."
+description: "Google Model Armor: Sanitize and filter a model response through a Model Armor template for outbound content safety. Use when the user needs to filter AI-generated output, apply response moderation, run safety checks on model responses, clean up AI output, or detect harmful content using Google's Model Armor service. Supports text input or full JSON request body via a named template resource."
 metadata:
   openclaw:
     category: "security"

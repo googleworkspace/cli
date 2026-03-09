@@ -1,7 +1,7 @@
 ---
 name: gws-keep
 version: 1.0.0
-description: "Manage Google Keep notes."
+description: "Create, read, delete, list, and manage Google Keep notes and their permissions via the gws CLI. Use when the user mentions Google Keep, Keep notes, note-taking, checklists, reminders, or wants to create, retrieve, delete, share, or paginate through notes and attachments."
 metadata:
   openclaw:
     category: "productivity"
@@ -46,3 +46,46 @@ gws schema keep.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Examples
+
+**Create a new note:**
+```bash
+gws keep notes create --json '{"title": "Shopping List", "body": {"text": {"text": "Milk, Eggs, Bread"}}}'
+```
+
+**List notes (first page):**
+```bash
+gws keep notes list --params 'page_size=10'
+```
+
+**List notes (subsequent page using next_page_token):**
+```bash
+# Copy next_page_token from the previous response into page_token
+gws keep notes list --params 'page_size=10&page_token=<next_page_token>'
+```
+
+**Get a specific note:**
+```bash
+gws keep notes get --params 'name=notes/<note_id>'
+```
+
+**Delete a note:**
+
+> ⚠️ **Irreversible.** Deletion removes the note immediately and permanently — it cannot be undone and all collaborators instantly lose access. Always confirm the correct `note_id` with the user before proceeding. When in doubt, fetch the note first with `notes get` and display its title/content for user confirmation.
+
+```bash
+# Verify before deleting
+gws keep notes get --params 'name=notes/<note_id>'
+
+# Then delete only after confirmation
+gws keep notes delete --params 'name=notes/<note_id>'
+```
+
+## Error Handling
+
+| Situation | Likely cause | Action |
+|---|---|---|
+| `400 Bad Request` on media download | Attachment not available in requested MIME type | Check supported MIME types via `gws schema keep.media.download` |
+| `403 Forbidden` on delete | Caller does not have `OWNER` role on the note | Inform the user they lack ownership; do not retry |
+| `404 Not Found` | Note ID is invalid or already deleted | Verify the ID with `notes list` before retrying |
+| Paginated list returns no `next_page_token` | Final page of results reached | Stop pagination; all results have been returned |
