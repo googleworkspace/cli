@@ -72,10 +72,22 @@ fn encode_header_value(value: &str) -> String {
     // Max raw length of 45 bytes -> 60 encoded chars. 60 + len("=?UTF-8?B??=") = 72, < 75.
     const MAX_RAW_LEN: usize = 45;
 
-    let encoded_words: Vec<String> = value
-        .as_bytes()
-        .chunks(MAX_RAW_LEN)
-        .map(|chunk| format!("=?UTF-8?B?{}?=", STANDARD.encode(chunk)))
+    // Chunk at character boundaries to avoid splitting multi-byte UTF-8 sequences.
+    let mut chunks: Vec<&str> = Vec::new();
+    let mut start = 0;
+    for (i, ch) in value.char_indices() {
+        if i + ch.len_utf8() - start > MAX_RAW_LEN && i > start {
+            chunks.push(&value[start..i]);
+            start = i;
+        }
+    }
+    if start < value.len() {
+        chunks.push(&value[start..]);
+    }
+
+    let encoded_words: Vec<String> = chunks
+        .iter()
+        .map(|chunk| format!("=?UTF-8?B?{}?=", STANDARD.encode(chunk.as_bytes())))
         .collect();
 
     // Join with CRLF and a space for folding.
@@ -158,6 +170,20 @@ mod tests {
             assert!(part.starts_with("=?UTF-8?B?"));
             assert!(part.ends_with("?="));
             assert!(part.len() <= 75, "Part too long: {} chars", part.len());
+        }
+    }
+
+    #[test]
+    fn test_encode_header_value_multibyte_boundary() {
+        // Build a subject where a multi-byte char (€ = 3 bytes) falls near the chunk boundary.
+        // Each chunk must decode to valid UTF-8 — no split multi-byte sequences.
+        use base64::engine::general_purpose::STANDARD;
+        let subject = format!("{}€€€", "A".repeat(43)); // 43 ASCII + 9 bytes of €s = 52 bytes
+        let encoded = encode_header_value(&subject);
+        for part in encoded.split("\r\n ") {
+            let b64 = part.trim_start_matches("=?UTF-8?B?").trim_end_matches("?=");
+            let decoded = STANDARD.decode(b64).expect("valid base64");
+            String::from_utf8(decoded).expect("each chunk must be valid UTF-8");
         }
     }
 
