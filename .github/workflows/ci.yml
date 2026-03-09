@@ -73,7 +73,13 @@ jobs:
 
       - name: Enable sccache
         if: steps.sccache.outcome == 'success'
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        shell: bash
+        run: |
+          if sccache --start-server 2>/dev/null; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server failed to start, building without cache"
+          fi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
@@ -119,7 +125,13 @@ jobs:
 
       - name: Enable sccache
         if: steps.sccache.outcome == 'success'
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        shell: bash
+        run: |
+          if sccache --start-server 2>/dev/null; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server failed to start, building without cache"
+          fi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
@@ -155,7 +167,13 @@ jobs:
 
       - name: Enable sccache
         if: steps.sccache.outcome == 'success'
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        shell: bash
+        run: |
+          if sccache --start-server 2>/dev/null; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server failed to start, building without cache"
+          fi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
@@ -204,7 +222,13 @@ jobs:
 
       - name: Enable sccache
         if: steps.sccache.outcome == 'success'
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        shell: bash
+        run: |
+          if sccache --start-server 2>/dev/null; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server failed to start, building without cache"
+          fi
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2

@@ -21,6 +21,38 @@ use keyring::Entry;
 use rand::RngCore;
 use std::sync::OnceLock;
 
+/// Persist the base64-encoded encryption key to a local file with restrictive
+/// permissions (0600 file, 0700 directory). Used only as a fallback when the OS
+/// keyring is unavailable.
+fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            {
+                eprintln!("Warning: failed to set secure permissions on key directory: {e}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
+        let mut file = options.open(path)?;
+        file.write_all(b64_key.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, b64_key)?;
+    }
+    Ok(())
+}
+
 /// Returns the encryption key derived from the OS keyring, or falls back to a local file.
 /// Generates a random 256-bit key and stores it securely if it doesn't exist.
 fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
@@ -57,6 +89,11 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
+                        // Keyring is authoritative — remove redundant file copy
+                        // if it exists (migrates existing installs on upgrade).
+                        if key_file.exists() {
+                            let _ = std::fs::remove_file(&key_file);
+                        }
                         return Ok(cache_key(arr));
                     }
                 }
@@ -71,51 +108,30 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                             if decoded.len() == 32 {
                                 let mut arr = [0u8; 32];
                                 arr.copy_from_slice(&decoded);
-                                // Best effort: repopulate keyring for future runs.
-                                let _ = entry.set_password(&b64_key);
+                                // Migrate file key into keyring; remove the
+                                // file if the keyring store succeeds.
+                                if entry.set_password(b64_key.trim()).is_ok() {
+                                    let _ = std::fs::remove_file(&key_file);
+                                }
                                 return Ok(cache_key(arr));
                             }
                         }
                     }
                 }
 
-                // Generate a random 32-byte key and persist it locally as a stable fallback.
+                // Generate a new random 256-bit key.
                 let mut key = [0u8; 32];
                 rand::thread_rng().fill_bytes(&mut key);
                 let b64_key = STANDARD.encode(key);
 
-                if let Some(parent) = key_file.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        if let Err(e) =
-                            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-                        {
-                            eprintln!(
-                                "Warning: failed to set secure permissions on key directory: {e}"
-                            );
-                        }
-                    }
+                // Try keyring first; only fall back to file storage
+                // if the keyring is unavailable.
+                if entry.set_password(&b64_key).is_ok() {
+                    return Ok(cache_key(key));
                 }
 
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    let mut options = std::fs::OpenOptions::new();
-                    options.write(true).create(true).truncate(true).mode(0o600);
-                    if let Ok(mut file) = options.open(&key_file) {
-                        use std::io::Write;
-                        let _ = file.write_all(b64_key.as_bytes());
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = std::fs::write(&key_file, &b64_key);
-                }
-
-                // Best effort: also store in keyring when available.
-                let _ = entry.set_password(&b64_key);
+                // Keyring store failed — persist to local file as fallback.
+                save_key_file(&key_file, &b64_key)?;
 
                 return Ok(cache_key(key));
             }
@@ -147,32 +163,7 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     let b64_key = STANDARD.encode(key);
 
-    if let Some(parent) = key_file.parent() {
-        let _ = std::fs::create_dir_all(parent);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
-            {
-                eprintln!("Warning: failed to set secure permissions on key directory: {e}");
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true).mode(0o600);
-        if let Ok(mut file) = options.open(&key_file) {
-            use std::io::Write;
-            let _ = file.write_all(b64_key.as_bytes());
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = std::fs::write(&key_file, b64_key);
-    }
+    save_key_file(&key_file, &b64_key)?;
 
     Ok(cache_key(key))
 }
