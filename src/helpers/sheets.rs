@@ -222,7 +222,7 @@ fn build_append_request(
     // This allows us to easily create nested objects without defining explicit structs
     // for every API request body.
     let body = json!({
-        "values": [config.values]
+        "values": config.values
     });
 
     // Map `&String` scope URLs to owned `String`s for the return value
@@ -263,8 +263,8 @@ fn build_read_request(
 pub struct AppendConfig {
     /// The ID of the spreadsheet to append to.
     pub spreadsheet_id: String,
-    /// The values to append, as a vector of strings.
-    pub values: Vec<String>,
+    /// The values to append, as a 2D array of strings (one inner vec per row).
+    pub values: Vec<Vec<String>>,
 }
 
 /// Parses arguments for the `+append` command.
@@ -274,13 +274,15 @@ pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
     let values = if let Some(json_str) = matches.get_one::<String>("json-values") {
         // Parse JSON array of rows
         if let Ok(parsed) = serde_json::from_str::<Vec<Vec<String>>>(json_str) {
-            parsed.into_iter().flatten().collect()
+            parsed
         } else {
             // Treat as single row JSON array
-            serde_json::from_str::<Vec<String>>(json_str).unwrap_or_default()
+            serde_json::from_str::<Vec<String>>(json_str)
+                .map(|row| vec![row])
+                .unwrap_or_default()
         }
     } else if let Some(values_str) = matches.get_one::<String>("values") {
-        values_str.split(',').map(|s| s.to_string()).collect()
+        vec![values_str.split(',').map(|s| s.to_string()).collect()]
     } else {
         Vec::new()
     };
@@ -365,14 +367,18 @@ mod tests {
         let doc = make_mock_doc();
         let config = AppendConfig {
             spreadsheet_id: "123".to_string(),
-            values: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            values: vec![vec!["a".to_string(), "b".to_string(), "c".to_string()]],
         };
         let (params, body, scopes) = build_append_request(&config, &doc).unwrap();
 
         assert!(params.contains("123"));
         assert!(params.contains("USER_ENTERED"));
-        assert!(body.contains("a"));
-        assert!(body.contains("b"));
+
+        let body_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            body_json,
+            serde_json::json!({"values": [["a", "b", "c"]]})
+        );
         assert_eq!(scopes[0], "https://scope");
     }
 
@@ -395,7 +401,24 @@ mod tests {
         let matches = make_matches_append(&["test", "--spreadsheet", "123", "--values", "a,b,c"]);
         let config = parse_append_args(&matches);
         assert_eq!(config.spreadsheet_id, "123");
-        assert_eq!(config.values, vec!["a", "b", "c"]);
+        assert_eq!(config.values, vec![vec!["a", "b", "c"]]);
+    }
+
+    #[test]
+    fn test_parse_append_args_json_multirow() {
+        let matches = make_matches_append(&[
+            "test",
+            "--spreadsheet",
+            "123",
+            "--json-values",
+            r#"[["Alice","100"],["Bob","200"]]"#,
+        ]);
+        let config = parse_append_args(&matches);
+        assert_eq!(config.spreadsheet_id, "123");
+        assert_eq!(
+            config.values,
+            vec![vec!["Alice", "100"], vec!["Bob", "200"]]
+        );
     }
 
     #[test]
