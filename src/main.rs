@@ -306,9 +306,21 @@ pub fn parse_service_and_version(
         }
     }
 
-    let (api_name, default_version) = services::resolve_service(service_arg)?;
-    let version = version_override.unwrap_or(default_version);
-    Ok((api_name, version))
+    match services::resolve_service(service_arg) {
+        Ok((api_name, default_version)) => {
+            let version = version_override.unwrap_or(default_version);
+            Ok((api_name, version))
+        }
+        Err(e) => {
+            // If user explicitly provided a version via "api:version" or --api-version,
+            // treat the service arg as a raw API name and let Discovery validation decide.
+            if let Some(ver) = version_override {
+                Ok((service_arg.to_string(), ver))
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
@@ -687,5 +699,27 @@ mod tests {
     fn test_select_scope_empty() {
         let scopes: Vec<String> = vec![];
         assert_eq!(select_scope(&scopes), None);
+    }
+
+    #[test]
+    fn test_parse_service_with_colon_known_service() {
+        let args = vec!["gws".to_string(), "drive:v2".to_string()];
+        let (api, ver) = parse_service_and_version(&args, "drive:v2").unwrap();
+        assert_eq!(api, "drive");
+        assert_eq!(ver, "v2");
+    }
+
+    #[test]
+    fn test_parse_service_with_colon_unknown_service() {
+        let args = vec!["gws".to_string(), "searchconsole:v1".to_string()];
+        let (api, ver) = parse_service_and_version(&args, "searchconsole:v1").unwrap();
+        assert_eq!(api, "searchconsole");
+        assert_eq!(ver, "v1");
+    }
+
+    #[test]
+    fn test_parse_service_unknown_without_version_still_errors() {
+        let args = vec!["gws".to_string(), "searchconsole".to_string()];
+        assert!(parse_service_and_version(&args, "searchconsole").is_err());
     }
 }
