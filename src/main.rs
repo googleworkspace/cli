@@ -718,6 +718,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_service_unknown_with_api_version_flag() {
+        let args = vec![
+            "gws".to_string(),
+            "searchconsole".to_string(),
+            "--api-version".to_string(),
+            "v1".to_string(),
+        ];
+        let (api, ver) = parse_service_and_version(&args, "searchconsole").unwrap();
+        assert_eq!(api, "searchconsole");
+        assert_eq!(ver, "v1");
+    }
+
+    #[test]
     fn test_parse_service_unknown_without_version_still_errors() {
         let args = vec!["gws".to_string(), "searchconsole".to_string()];
         assert!(parse_service_and_version(&args, "searchconsole").is_err());
