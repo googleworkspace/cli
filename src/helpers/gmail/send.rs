@@ -60,12 +60,26 @@ pub(super) async fn handle_send(
 }
 
 /// RFC 2047 encode a header value if it contains non-ASCII characters.
+/// Uses standard Base64 (RFC 2045) and folds at 75-char encoded-word limit.
 fn encode_header_value(value: &str) -> String {
     if value.is_ascii() {
-        value.to_string()
-    } else {
-        format!("=?UTF-8?B?{}?=", URL_SAFE.encode(value.as_bytes()))
+        return value.to_string();
     }
+
+    use base64::engine::general_purpose::STANDARD;
+
+    // RFC 2047 specifies a 75-character limit for encoded-words.
+    // Max raw length of 45 bytes -> 60 encoded chars. 60 + len("=?UTF-8?B??=") = 72, < 75.
+    const MAX_RAW_LEN: usize = 45;
+
+    let encoded_words: Vec<String> = value
+        .as_bytes()
+        .chunks(MAX_RAW_LEN)
+        .map(|chunk| format!("=?UTF-8?B?{}?=", STANDARD.encode(chunk)))
+        .collect();
+
+    // Join with CRLF and a space for folding.
+    encoded_words.join("\r\n ")
 }
 
 /// Helper to create a raw MIME email string.
@@ -126,10 +140,25 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_header_value_non_ascii() {
+    fn test_encode_header_value_non_ascii_short() {
         let encoded = encode_header_value("Solar — Quote");
-        assert!(encoded.starts_with("=?UTF-8?B?"));
-        assert!(encoded.ends_with("?="));
+        // Single encoded-word, no folding needed
+        assert_eq!(encoded, "=?UTF-8?B?U29sYXIg4oCUIFF1b3Rl?=");
+    }
+
+    #[test]
+    fn test_encode_header_value_non_ascii_long_folds() {
+        let long_subject = "This is a very long subject line that contains non-ASCII characters like — and it must be folded to respect the 75-character line limit of RFC 2047.";
+        let encoded = encode_header_value(long_subject);
+
+        assert!(encoded.contains("\r\n "), "Encoded string should be folded");
+        let parts: Vec<&str> = encoded.split("\r\n ").collect();
+        assert!(parts.len() > 1, "Should be multiple parts");
+        for part in &parts {
+            assert!(part.starts_with("=?UTF-8?B?"));
+            assert!(part.ends_with("?="));
+            assert!(part.len() <= 75, "Part too long: {} chars", part.len());
+        }
     }
 
     #[test]
