@@ -121,6 +121,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         description: "Filter user-generated content for safety",
     },
     ServiceEntry {
+        aliases: &["searchconsole"],
+        api_name: "searchconsole",
+        version: "v1",
+        description: "Search performance, URL inspection, and sitemaps",
+    },
+    ServiceEntry {
         aliases: &["workflow", "wf"],
         api_name: "workflow",
         version: "v1",
@@ -164,6 +170,13 @@ mod tests {
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
         );
+    }
+
+    #[test]
+    fn test_resolve_service_searchconsole() {
+        let (api_name, version) = resolve_service("searchconsole").unwrap();
+        assert_eq!(api_name, "searchconsole");
+        assert_eq!(version, "v1");
     }
 
     #[test]

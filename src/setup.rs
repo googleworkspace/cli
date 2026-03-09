@@ -170,6 +170,12 @@ const WORKSPACE_APIS: &[ApiEntry] = &[
         discovery: "pubsub",
         version: "v1",
     },
+    ApiEntry {
+        id: "searchconsole.googleapis.com",
+        name: "Search Console",
+        discovery: "searchconsole",
+        version: "v1",
+    },
 ];
 
 const RESTRICTED_SCOPES: &[&str] = &[
