@@ -6,7 +6,13 @@ pub(super) async fn handle_send(
 ) -> Result<(), GwsError> {
     let config = parse_send_args(matches);
 
-    let message = create_raw_message(&config.to, &config.subject, &config.body_text);
+    let message = create_raw_message(
+        &config.to,
+        &config.subject,
+        &config.body_text,
+        config.cc.as_deref(),
+        config.bcc.as_deref(),
+    );
     let body = create_send_body(&message);
     let body_str = body.to_string();
 
@@ -84,13 +90,29 @@ fn encode_header_value(value: &str) -> String {
 }
 
 /// Helper to create a raw MIME email string.
-fn create_raw_message(to: &str, subject: &str, body: &str) -> String {
-    format!(
-        "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nTo: {}\r\nSubject: {}\r\n\r\n{}",
+fn create_raw_message(
+    to: &str,
+    subject: &str,
+    body: &str,
+    cc: Option<&str>,
+    bcc: Option<&str>,
+) -> String {
+    let mut headers = format!(
+        "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nTo: {}\r\nSubject: {}",
         to,
         encode_header_value(subject),
-        body
-    )
+    );
+
+    if let Some(cc) = cc {
+        headers.push_str(&format!("\r\nCc: {}", cc));
+    }
+
+    // Gmail API strips the Bcc header from the delivered message.
+    if let Some(bcc) = bcc {
+        headers.push_str(&format!("\r\nBcc: {}", bcc));
+    }
+
+    format!("{}\r\n\r\n{}", headers, body)
 }
 
 /// Creates a JSON body for sending an email.
@@ -101,10 +123,12 @@ fn create_send_body(raw_msg: &str) -> serde_json::Value {
     })
 }
 
-pub struct SendConfig {
+pub(super) struct SendConfig {
     pub to: String,
     pub subject: String,
     pub body_text: String,
+    pub cc: Option<String>,
+    pub bcc: Option<String>,
 }
 
 fn parse_send_args(matches: &ArgMatches) -> SendConfig {
@@ -112,6 +136,14 @@ fn parse_send_args(matches: &ArgMatches) -> SendConfig {
         to: matches.get_one::<String>("to").unwrap().to_string(),
         subject: matches.get_one::<String>("subject").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
+        cc: matches
+            .get_one::<String>("cc")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        bcc: matches
+            .get_one::<String>("bcc")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     }
 }
 
@@ -121,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_create_raw_message_ascii() {
-        let msg = create_raw_message("test@example.com", "Hello", "World");
+        let msg = create_raw_message("test@example.com", "Hello", "World", None, None);
         assert_eq!(
             msg,
             "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nTo: test@example.com\r\nSubject: Hello\r\n\r\nWorld"
@@ -130,9 +162,28 @@ mod tests {
 
     #[test]
     fn test_create_raw_message_non_ascii_subject() {
-        let msg = create_raw_message("test@example.com", "Solar — Quote Request", "Body");
+        let msg = create_raw_message(
+            "test@example.com",
+            "Solar — Quote Request",
+            "Body",
+            None,
+            None,
+        );
         assert!(msg.contains("=?UTF-8?B?"));
         assert!(!msg.contains("Solar — Quote Request"));
+    }
+
+    #[test]
+    fn test_create_raw_message_with_cc_and_bcc() {
+        let msg = create_raw_message(
+            "test@example.com",
+            "Hello",
+            "World",
+            Some("carol@example.com"),
+            Some("secret@example.com"),
+        );
+        assert!(msg.contains("Cc: carol@example.com"));
+        assert!(msg.contains("Bcc: secret@example.com"));
     }
 
     #[test]
@@ -192,7 +243,9 @@ mod tests {
         let cmd = Command::new("test")
             .arg(Arg::new("to").long("to"))
             .arg(Arg::new("subject").long("subject"))
-            .arg(Arg::new("body").long("body"));
+            .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("cc").long("cc"))
+            .arg(Arg::new("bcc").long("bcc"));
         cmd.try_get_matches_from(args).unwrap()
     }
 
@@ -211,5 +264,45 @@ mod tests {
         assert_eq!(config.to, "me@example.com");
         assert_eq!(config.subject, "Hi");
         assert_eq!(config.body_text, "Body");
+        assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
+    }
+
+    #[test]
+    fn test_parse_send_args_with_cc_and_bcc() {
+        let matches = make_matches_send(&[
+            "test",
+            "--to",
+            "me@example.com",
+            "--subject",
+            "Hi",
+            "--body",
+            "Body",
+            "--cc",
+            "carol@example.com",
+            "--bcc",
+            "secret@example.com",
+        ]);
+        let config = parse_send_args(&matches);
+        assert_eq!(config.cc.unwrap(), "carol@example.com");
+        assert_eq!(config.bcc.unwrap(), "secret@example.com");
+
+        // Whitespace-only values become None
+        let matches = make_matches_send(&[
+            "test",
+            "--to",
+            "me@example.com",
+            "--subject",
+            "Hi",
+            "--body",
+            "Body",
+            "--cc",
+            "  ",
+            "--bcc",
+            "",
+        ]);
+        let config = parse_send_args(&matches);
+        assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
     }
 }

@@ -328,9 +328,9 @@ impl Helper for GmailHelper {
                 .arg(
                     Arg::new("to")
                         .long("to")
-                        .help("Recipient email address")
+                        .help("Recipient email address(es), comma-separated")
                         .required(true)
-                        .value_name("EMAIL"),
+                        .value_name("EMAILS"),
                 )
                 .arg(
                     Arg::new("subject")
@@ -347,6 +347,18 @@ impl Helper for GmailHelper {
                         .value_name("TEXT"),
                 )
                 .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("dry-run")
                         .long("dry-run")
                         .help("Show the request that would be sent without executing it")
@@ -356,11 +368,12 @@ impl Helper for GmailHelper {
                     "\
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
 
 TIPS:
   Handles RFC 2822 formatting and base64 encoding automatically.
-  For HTML bodies, attachments, or CC/BCC, use the raw API instead:
-    gws gmail users messages send --json '...' ",
+  For HTML bodies or attachments, use the raw API instead: gws gmail users messages send --json '...'",
                 ),
         );
 
@@ -424,9 +437,21 @@ TIPS:
                         .value_name("EMAIL"),
                 )
                 .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Additional To email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("Additional CC recipients (comma-separated)")
+                        .help("Additional CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -440,10 +465,13 @@ TIPS:
 EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
   Quotes the original message in the reply body.
+  --to adds extra recipients to the To field.
   For reply-all, use +reply-all instead.",
                 ),
         );
@@ -472,9 +500,21 @@ TIPS:
                         .value_name("EMAIL"),
                 )
                 .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Additional To email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("Additional CC recipients (comma-separated)")
+                        .help("Additional CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -495,12 +535,16 @@ EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
+  Use --to to add extra recipients to the To field.
+  Use --cc to add new CC recipients.
+  Use --bcc for recipients who should not be visible to others.
   Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
-  The command fails if exclusions leave no reply target.
-  Use --cc to add new recipients.",
+  The command fails if no To recipient remains after exclusions and --to additions.",
                 ),
         );
 
@@ -530,7 +574,13 @@ TIPS:
                 .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("CC recipients (comma-separated)")
+                        .help("CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -551,10 +601,10 @@ EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
 
 TIPS:
-  Includes the original message with sender, date, subject, and recipients.
-  Sends the forward as a new message rather than forcing it into the original thread.",
+  Includes the original message with sender, date, subject, and recipients.",
                 ),
         );
 

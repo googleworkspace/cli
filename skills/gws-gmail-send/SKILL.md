@@ -24,24 +24,27 @@ gws gmail +send --to <EMAIL> --subject <SUBJECT> --body <TEXT>
 
 ## Flags
 
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `--to` | ✓ | — | Recipient email address |
-| `--subject` | ✓ | — | Email subject |
-| `--body` | ✓ | — | Email body (plain text) |
-| `--dry-run` | — | — | Show the request that would be sent without executing it |
+| Flag        | Required | Default | Description                                              |
+| ----------- | -------- | ------- | -------------------------------------------------------- |
+| `--to`      | ✓        | —       | Recipient email address(es), comma-separated             |
+| `--subject` | ✓        | —       | Email subject                                            |
+| `--body`    | ✓        | —       | Email body (plain text)                                  |
+| `--cc`      | —        | —       | CC email address(es), comma-separated                    |
+| `--bcc`     | —        | —       | BCC email address(es), comma-separated                   |
+| `--dry-run` | —        | —       | Show the request that would be sent without executing it |
 
 ## Examples
 
 ```bash
 gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
+gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
+gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
 ```
 
 ## Tips
 
 - Handles RFC 2822 formatting and base64 encoding automatically.
-- For HTML bodies, attachments, or CC/BCC, use the raw API instead:
-- gws gmail users messages send --json '...'
+- For HTML bodies or attachments, use the raw API instead: `gws gmail users messages send --json '...'`
 
 > [!CAUTION]
 > This is a **write** command — confirm with the user before executing.

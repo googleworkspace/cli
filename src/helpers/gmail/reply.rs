@@ -45,7 +45,7 @@ pub(super) async fn handle_reply(
     let self_email = token.as_ref().and_then(|(_, e)| e.as_deref());
 
     // Build reply headers
-    let reply_to = if reply_all {
+    let mut reply_to = if reply_all {
         build_reply_all_recipients(
             &original,
             config.cc.as_deref(),
@@ -60,13 +60,33 @@ pub(super) async fn handle_reply(
         })
     }?;
 
+    // Append extra --to recipients
+    if let Some(extra_to) = &config.to {
+        if reply_to.to.is_empty() {
+            reply_to.to = extra_to.clone();
+        } else {
+            reply_to.to = format!("{}, {}", reply_to.to, extra_to);
+        }
+    }
+
+    // Dedup across To/CC/BCC (priority: To > CC > BCC)
+    let (to, cc, bcc) =
+        dedup_recipients(&reply_to.to, reply_to.cc.as_deref(), config.bcc.as_deref());
+
+    if to.is_empty() {
+        return Err(GwsError::Validation(
+            "No To recipient remains after exclusions and --to additions".to_string(),
+        ));
+    }
+
     let subject = build_reply_subject(&original.subject);
     let in_reply_to = original.message_id_header.clone();
     let references = build_references(&original.references, &original.message_id_header);
 
     let envelope = ReplyEnvelope {
-        to: &reply_to.to,
-        cc: reply_to.cc.as_deref(),
+        to: &to,
+        cc: cc.as_deref(),
+        bcc: bcc.as_deref(),
         from: config.from.as_deref(),
         subject: &subject,
         in_reply_to: &in_reply_to,
@@ -91,6 +111,7 @@ struct ReplyRecipients {
 struct ReplyEnvelope<'a> {
     to: &'a str,
     cc: Option<&'a str>,
+    bcc: Option<&'a str>,
     from: Option<&'a str>,
     subject: &'a str,
     in_reply_to: &'a str,
@@ -102,7 +123,9 @@ pub(super) struct ReplyConfig {
     pub message_id: String,
     pub body_text: String,
     pub from: Option<String>,
+    pub to: Option<String>,
     pub cc: Option<String>,
+    pub bcc: Option<String>,
     pub remove: Option<String>,
 }
 
@@ -217,12 +240,6 @@ fn build_reply_all_recipients(
         })
         .collect();
 
-    if to_addrs.is_empty() {
-        return Err(GwsError::Validation(
-            "No reply target remains after applying recipient exclusions".to_string(),
-        ));
-    }
-
     // Combine original To and Cc for the CC field (excluding the reply-to recipients)
     let mut cc_addrs: Vec<&str> = Vec::new();
 
@@ -262,6 +279,68 @@ fn build_reply_all_recipients(
         to: to_addrs.join(", "),
         cc,
     })
+}
+
+/// Deduplicate recipients across To, CC, and BCC fields.
+///
+/// Priority: To > CC > BCC. If an email appears in multiple fields,
+/// it is kept only in the highest-priority field.
+fn dedup_recipients(
+    to: &str,
+    cc: Option<&str>,
+    bcc: Option<&str>,
+) -> (String, Option<String>, Option<String>) {
+    use std::collections::HashSet;
+
+    // Collect To emails into a set
+    let mut seen = HashSet::new();
+    let to_addrs: Vec<&str> = split_mailbox_list(to)
+        .into_iter()
+        .filter(|addr| {
+            let email = extract_email(addr).to_lowercase();
+            !email.is_empty() && seen.insert(email)
+        })
+        .collect();
+
+    // Filter CC: remove anything already in To
+    let cc_addrs: Vec<&str> = cc
+        .map(|cc| {
+            split_mailbox_list(cc)
+                .into_iter()
+                .filter(|addr| {
+                    let email = extract_email(addr).to_lowercase();
+                    !email.is_empty() && seen.insert(email)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Filter BCC: remove anything already in To or CC
+    let bcc_addrs: Vec<&str> = bcc
+        .map(|bcc| {
+            split_mailbox_list(bcc)
+                .into_iter()
+                .filter(|addr| {
+                    let email = extract_email(addr).to_lowercase();
+                    !email.is_empty() && seen.insert(email)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let to_out = to_addrs.join(", ");
+    let cc_out = if cc_addrs.is_empty() {
+        None
+    } else {
+        Some(cc_addrs.join(", "))
+    };
+    let bcc_out = if bcc_addrs.is_empty() {
+        None
+    } else {
+        Some(bcc_addrs.join(", "))
+    };
+
+    (to_out, cc_out, bcc_out)
 }
 
 fn collect_excluded_emails(
@@ -329,6 +408,11 @@ fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage
         headers.push_str(&format!("\r\nCc: {}", cc));
     }
 
+    // Gmail API strips the Bcc header from the delivered message.
+    if let Some(bcc) = envelope.bcc {
+        headers.push_str(&format!("\r\nBcc: {}", bcc));
+    }
+
     let quoted = format_quoted_original(original);
 
     format!("{}\r\n\r\n{}\r\n\r\n{}", headers, envelope.body, quoted)
@@ -355,7 +439,18 @@ fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
         from: matches.get_one::<String>("from").map(|s| s.to_string()),
-        cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
+        to: matches
+            .get_one::<String>("to")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        cc: matches
+            .get_one::<String>("cc")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        bcc: matches
+            .get_one::<String>("bcc")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         remove: matches
             .try_get_one::<String>("remove")
             .ok()
@@ -418,6 +513,7 @@ mod tests {
         let envelope = ReplyEnvelope {
             to: "alice@example.com",
             cc: None,
+            bcc: None,
             from: None,
             subject: "Re: Hello",
             in_reply_to: "<abc@example.com>",
@@ -438,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_reply_raw_message_with_cc() {
+    fn test_create_reply_raw_message_with_all_optional_headers() {
         let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
@@ -455,15 +551,18 @@ mod tests {
         let envelope = ReplyEnvelope {
             to: "alice@example.com",
             cc: Some("carol@example.com"),
-            from: None,
+            bcc: Some("secret@example.com"),
+            from: Some("alias@example.com"),
             subject: "Re: Hello",
             in_reply_to: "<abc@example.com>",
             references: "<abc@example.com>",
-            body: "Reply with CC",
+            body: "Reply with all headers",
         };
         let raw = create_reply_raw_message(&envelope, &original);
 
         assert!(raw.contains("Cc: carol@example.com"));
+        assert!(raw.contains("Bcc: secret@example.com"));
+        assert!(raw.contains("From: alias@example.com"));
     }
 
     #[test]
@@ -515,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reply_all_remove_rejects_primary_reply_target() {
+    fn test_build_reply_all_remove_primary_returns_empty_to() {
         let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
@@ -529,13 +628,10 @@ mod tests {
             body_text: "".to_string(),
         };
 
-        let err =
+        let recipients =
             build_reply_all_recipients(&original, None, Some("alice@example.com"), None, None)
-                .unwrap_err();
-        assert!(matches!(err, GwsError::Validation(_)));
-        assert!(err
-            .to_string()
-            .contains("No reply target remains after applying recipient exclusions"));
+                .unwrap();
+        assert!(recipients.to.is_empty());
     }
 
     #[test]
@@ -569,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reply_all_from_alias_rejects_primary_reply_target() {
+    fn test_build_reply_all_from_alias_removes_primary_returns_empty_to() {
         let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
@@ -583,18 +679,15 @@ mod tests {
             body_text: "".to_string(),
         };
 
-        let err = build_reply_all_recipients(
+        let recipients = build_reply_all_recipients(
             &original,
             None,
             None,
             Some("me@example.com"),
             Some("sales@example.com"),
         )
-        .unwrap_err();
-        assert!(matches!(err, GwsError::Validation(_)));
-        assert!(err
-            .to_string()
-            .contains("No reply target remains after applying recipient exclusions"));
+        .unwrap();
+        assert!(recipients.to.is_empty());
     }
 
     fn make_reply_matches(args: &[&str]) -> ArgMatches {
@@ -602,7 +695,9 @@ mod tests {
             .arg(Arg::new("message-id").long("message-id"))
             .arg(Arg::new("body").long("body"))
             .arg(Arg::new("from").long("from"))
+            .arg(Arg::new("to").long("to"))
             .arg(Arg::new("cc").long("cc"))
+            .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("remove").long("remove"))
             .arg(
                 Arg::new("dry-run")
@@ -618,26 +713,53 @@ mod tests {
         let config = parse_reply_args(&matches);
         assert_eq!(config.message_id, "abc123");
         assert_eq!(config.body_text, "My reply");
+        assert!(config.to.is_none());
         assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
         assert!(config.remove.is_none());
     }
 
     #[test]
-    fn test_parse_reply_args_with_cc_and_remove() {
+    fn test_parse_reply_args_with_all_options() {
         let matches = make_reply_matches(&[
             "test",
             "--message-id",
             "abc123",
             "--body",
             "Reply",
+            "--to",
+            "dave@example.com",
             "--cc",
             "extra@example.com",
+            "--bcc",
+            "secret@example.com",
             "--remove",
             "unwanted@example.com",
         ]);
         let config = parse_reply_args(&matches);
+        assert_eq!(config.to.unwrap(), "dave@example.com");
         assert_eq!(config.cc.unwrap(), "extra@example.com");
+        assert_eq!(config.bcc.unwrap(), "secret@example.com");
         assert_eq!(config.remove.unwrap(), "unwanted@example.com");
+
+        // Whitespace-only values become None
+        let matches = make_reply_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--body",
+            "Reply",
+            "--to",
+            "  ",
+            "--cc",
+            "",
+            "--bcc",
+            "  ",
+        ]);
+        let config = parse_reply_args(&matches);
+        assert!(config.to.is_none());
+        assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
     }
 
     #[test]
@@ -1032,6 +1154,210 @@ mod tests {
         let cc = recipients.cc.unwrap();
         assert_eq!(cc.matches("bob@example.com").count(), 1);
         assert!(cc.contains("carol@example.com"));
+    }
+
+    // --- dedup_recipients tests ---
+
+    #[test]
+    fn test_dedup_no_overlap() {
+        let (to, cc, bcc) = dedup_recipients(
+            "alice@example.com",
+            Some("bob@example.com"),
+            Some("carol@example.com"),
+        );
+        assert_eq!(to, "alice@example.com");
+        assert_eq!(cc.unwrap(), "bob@example.com");
+        assert_eq!(bcc.unwrap(), "carol@example.com");
+    }
+
+    #[test]
+    fn test_dedup_to_wins_over_cc() {
+        let (to, cc, _) = dedup_recipients(
+            "alice@example.com",
+            Some("alice@example.com, bob@example.com"),
+            None,
+        );
+        assert_eq!(to, "alice@example.com");
+        assert_eq!(cc.unwrap(), "bob@example.com");
+    }
+
+    #[test]
+    fn test_dedup_to_wins_over_bcc() {
+        let (to, _, bcc) = dedup_recipients(
+            "alice@example.com",
+            None,
+            Some("alice@example.com, carol@example.com"),
+        );
+        assert_eq!(to, "alice@example.com");
+        assert_eq!(bcc.unwrap(), "carol@example.com");
+    }
+
+    #[test]
+    fn test_dedup_cc_wins_over_bcc() {
+        let (_, cc, bcc) = dedup_recipients(
+            "alice@example.com",
+            Some("bob@example.com"),
+            Some("bob@example.com, carol@example.com"),
+        );
+        assert_eq!(cc.unwrap(), "bob@example.com");
+        assert_eq!(bcc.unwrap(), "carol@example.com");
+    }
+
+    #[test]
+    fn test_dedup_all_three_overlap() {
+        let (to, cc, bcc) = dedup_recipients(
+            "alice@example.com",
+            Some("alice@example.com, bob@example.com"),
+            Some("alice@example.com, bob@example.com, carol@example.com"),
+        );
+        assert_eq!(to, "alice@example.com");
+        assert_eq!(cc.unwrap(), "bob@example.com");
+        assert_eq!(bcc.unwrap(), "carol@example.com");
+    }
+
+    #[test]
+    fn test_dedup_case_insensitive() {
+        let (to, cc, _) = dedup_recipients(
+            "Alice@Example.COM",
+            Some("alice@example.com, bob@example.com"),
+            None,
+        );
+        assert_eq!(to, "Alice@Example.COM");
+        assert_eq!(cc.unwrap(), "bob@example.com");
+    }
+
+    #[test]
+    fn test_dedup_bcc_fully_overlaps_returns_none() {
+        let (_, _, bcc) = dedup_recipients(
+            "alice@example.com",
+            Some("bob@example.com"),
+            Some("alice@example.com, bob@example.com"),
+        );
+        assert!(bcc.is_none());
+    }
+
+    #[test]
+    fn test_dedup_with_display_names() {
+        // Display-name format in To should still dedup against bare email in CC
+        let (to, cc, _) = dedup_recipients(
+            "Alice <alice@example.com>",
+            Some("alice@example.com, bob@example.com"),
+            None,
+        );
+        assert_eq!(to, "Alice <alice@example.com>");
+        assert_eq!(cc.unwrap(), "bob@example.com");
+    }
+
+    #[test]
+    fn test_dedup_intro_pattern() {
+        // Intro pattern: remove sender from To, add them to BCC, put CC'd person in To.
+        // After build_reply_all_recipients with --remove alice, To is empty, CC has bob.
+        // Then --to bob is appended, --bcc alice is set.
+        // Dedup should: keep bob in To, remove bob from CC, keep alice in BCC.
+        let (to, cc, bcc) = dedup_recipients(
+            "bob@example.com",
+            Some("bob@example.com"),
+            Some("alice@example.com"),
+        );
+        assert_eq!(to, "bob@example.com");
+        assert!(cc.is_none());
+        assert_eq!(bcc.unwrap(), "alice@example.com");
+    }
+
+    // --- end-to-end --to behavioral tests ---
+
+    #[test]
+    fn test_extra_to_appears_in_raw_message() {
+        // Simulate +reply with --to dave: reply target is alice, extra To is dave.
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "me@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original".to_string(),
+        };
+
+        let mut to = extract_reply_to_address(&original);
+        let extra_to = "dave@example.com";
+        to = format!("{}, {}", to, extra_to);
+
+        let (to, cc, bcc) = dedup_recipients(&to, None, None);
+
+        let envelope = ReplyEnvelope {
+            to: &to,
+            cc: cc.as_deref(),
+            bcc: bcc.as_deref(),
+            from: None,
+            subject: "Re: Hello",
+            in_reply_to: "<abc@example.com>",
+            references: "<abc@example.com>",
+            body: "Adding Dave",
+        };
+        let raw = create_reply_raw_message(&envelope, &original);
+
+        assert!(raw.contains("To: alice@example.com, dave@example.com"));
+        assert!(!raw.contains("Cc:"));
+        assert!(!raw.contains("Bcc:"));
+    }
+
+    #[test]
+    fn test_intro_pattern_raw_message() {
+        // Alice sends to me, CC bob. I reply-all removing alice, adding alice to BCC,
+        // and bob to To. Bob should be in To only (deduped from CC), alice in BCC.
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "me@example.com".to_string(),
+            cc: "bob@example.com".to_string(),
+            subject: "Intro".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Meet Bob".to_string(),
+        };
+
+        // build_reply_all_recipients with --remove alice, self=me
+        let recipients = build_reply_all_recipients(
+            &original,
+            None,
+            Some("alice@example.com"),
+            Some("me@example.com"),
+            None,
+        )
+        .unwrap();
+
+        // To is empty (alice removed), CC has bob (me excluded)
+        assert!(recipients.to.is_empty());
+
+        // Append --to bob
+        let to = "bob@example.com".to_string();
+
+        // Dedup with --bcc alice
+        let (to, cc, bcc) =
+            dedup_recipients(&to, recipients.cc.as_deref(), Some("alice@example.com"));
+
+        let envelope = ReplyEnvelope {
+            to: &to,
+            cc: cc.as_deref(),
+            bcc: bcc.as_deref(),
+            from: None,
+            subject: "Re: Intro",
+            in_reply_to: "<abc@example.com>",
+            references: "<abc@example.com>",
+            body: "Hi Bob, nice to meet you!",
+        };
+        let raw = create_reply_raw_message(&envelope, &original);
+
+        assert!(raw.contains("To: bob@example.com"));
+        assert!(!raw.contains("Cc:"));
+        assert!(raw.contains("Bcc: alice@example.com"));
+        assert!(raw.contains("Hi Bob, nice to meet you!"));
     }
 
     #[test]
