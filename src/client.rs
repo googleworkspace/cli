@@ -20,6 +20,17 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
 }
 
 const MAX_RETRIES: u32 = 3;
+const MAX_RETRY_AFTER_SECS: u64 = 30;
+
+fn retry_delay_secs(headers: &reqwest::header::HeaderMap, attempt: u32) -> u64 {
+    let from_header = headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+
+    let backoff = 1u64 << attempt; // 1, 2, 4 seconds
+    from_header.unwrap_or(backoff).min(MAX_RETRY_AFTER_SECS)
+}
 
 /// Send an HTTP request with automatic retry on 429 (rate limit) responses.
 /// Respects the `Retry-After` header; falls back to exponential backoff (1s, 2s, 4s).
@@ -33,13 +44,9 @@ pub async fn send_with_retry(
             return Ok(resp);
         }
 
-        // Parse Retry-After header (seconds), fall back to exponential backoff
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1 << attempt); // 1, 2, 4 seconds
+        // Parse Retry-After (seconds), fall back to exponential backoff.
+        // Clamp to avoid unbounded server-controlled sleep.
+        let retry_after = retry_delay_secs(resp.headers(), attempt);
 
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
@@ -74,12 +81,7 @@ pub async fn send_builder_with_retry(
             return Ok(resp);
         }
 
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1 << attempt); // 1, 2, 4 seconds
+        let retry_after = retry_delay_secs(resp.headers(), attempt);
 
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
@@ -153,6 +155,21 @@ mod tests {
     #[test]
     fn build_client_succeeds() {
         assert!(build_client().is_ok());
+    }
+
+    #[test]
+    fn retry_delay_secs_clamps_large_retry_after() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("retry-after", HeaderValue::from_static("9999"));
+        assert_eq!(retry_delay_secs(&headers, 0), MAX_RETRY_AFTER_SECS);
+    }
+
+    #[test]
+    fn retry_delay_secs_uses_exponential_fallback() {
+        let headers = reqwest::header::HeaderMap::new();
+        assert_eq!(retry_delay_secs(&headers, 0), 1);
+        assert_eq!(retry_delay_secs(&headers, 1), 2);
+        assert_eq!(retry_delay_secs(&headers, 2), 4);
     }
 
     #[tokio::test]

@@ -347,6 +347,10 @@ async fn handle_binary_response(
     Ok(None)
 }
 
+fn is_retry_safe_method(http_method: &str) -> bool {
+    matches!(http_method, "GET" | "HEAD" | "OPTIONS" | "PUT" | "DELETE")
+}
+
 /// Executes an API method call.
 ///
 /// This is the core function of the CLI that handles:
@@ -413,9 +417,13 @@ pub async fn execute_method(
         )
         .await?;
 
-        let response = crate::client::send_builder_with_retry(request)
-            .await
-            .context("HTTP request failed")?;
+        let response = if is_retry_safe_method(method.http_method.as_str()) {
+            crate::client::send_builder_with_retry(request)
+                .await
+                .context("HTTP request failed")?
+        } else {
+            request.send().await.context("HTTP request failed")?
+        };
 
         let status = response.status();
         let content_type = response
@@ -1823,6 +1831,44 @@ async fn test_execute_method_retries_on_429_in_generic_path() {
 
     assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true));
+    handle.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn test_execute_method_post_does_not_retry_on_429() {
+    let (base, hits, handle) = tests::spawn_response_server(vec![(429, Some(0), "{}")]).await;
+
+    let doc = RestDescription {
+        base_url: Some(base),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "files".to_string(),
+        flat_path: Some("files".to_string()),
+        ..Default::default()
+    };
+
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        None,
+        None,
+        false,
+        &PaginationConfig::default(),
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        true,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     handle.await.unwrap().unwrap();
 }
 
