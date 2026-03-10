@@ -24,15 +24,15 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 
 ## Flags
 
-| Flag           | Required | Default | Description                                                     |
-| -------------- | -------- | ------- | --------------------------------------------------------------- |
-| `--message-id` | ✓        | —       | Gmail message ID to forward                                     |
-| `--to`         | ✓        | —       | Recipient email address(es), comma-separated                    |
-| `--from`       | —        | —       | Sender address (for send-as/alias; omit to use account default) |
-| `--cc`         | —        | —       | CC email address(es), comma-separated                           |
-| `--bcc`        | —        | —       | BCC email address(es), comma-separated                          |
-| `--body`       | —        | —       | Optional note to include above the forwarded message            |
-| `--dry-run`    | —        | —       | Show the request that would be sent without executing it        |
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--message-id` | ✓ | — | Gmail message ID to forward |
+| `--to` | ✓ | — | Recipient email address(es), comma-separated |
+| `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
+| `--cc` | — | — | CC email address(es), comma-separated |
+| `--bcc` | — | — | BCC email address(es), comma-separated |
+| `--body` | — | — | Optional note to include above the forwarded message |
+| `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
 
@@ -46,10 +46,6 @@ gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@e
 ## Tips
 
 - Includes the original message with sender, date, subject, and recipients.
-- Sends the forward as a new message rather than forcing it into the original thread.
-
-> [!CAUTION]
-> This is a **write** command — confirm with the user before executing.
 
 ## See Also
 

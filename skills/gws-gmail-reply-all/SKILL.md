@@ -24,16 +24,16 @@ gws gmail +reply-all --message-id <ID> --body <TEXT>
 
 ## Flags
 
-| Flag           | Required | Default | Description                                                         |
-| -------------- | -------- | ------- | ------------------------------------------------------------------- |
-| `--message-id` | ✓        | —       | Gmail message ID to reply to                                        |
-| `--body`       | ✓        | —       | Reply body (plain text)                                             |
-| `--from`       | —        | —       | Sender address (for send-as/alias; omit to use account default)     |
-| `--to`         | —        | —       | Additional To email address(es), comma-separated                    |
-| `--cc`         | —        | —       | Additional CC email address(es), comma-separated                    |
-| `--bcc`        | —        | —       | BCC email address(es), comma-separated                              |
-| `--remove`     | —        | —       | Exclude recipients from the outgoing reply, comma-separated emails  |
-| `--dry-run`    | —        | —       | Show the request that would be sent without executing it            |
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--message-id` | ✓ | — | Gmail message ID to reply to |
+| `--body` | ✓ | — | Reply body (plain text) |
+| `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
+| `--to` | — | — | Additional To email address(es), comma-separated |
+| `--cc` | — | — | Additional CC email address(es), comma-separated |
+| `--bcc` | — | — | BCC email address(es), comma-separated |
+| `--remove` | — | — | Exclude recipients from the outgoing reply (comma-separated emails) |
+| `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
 
@@ -53,9 +53,6 @@ gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@exampl
 - Use --bcc for recipients who should not be visible to others.
 - Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
 - The command fails if no To recipient remains after exclusions and --to additions.
-
-> [!CAUTION]
-> This is a **write** command — confirm with the user before executing.
 
 ## See Also
 
