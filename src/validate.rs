@@ -118,6 +118,116 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
     Ok(canonical)
 }
 
+/// Validates that `path` is a safe file path for reading user-provided content
+/// (e.g. `--upload`).
+///
+/// The path must be relative to CWD, resolve under CWD after following
+/// symlinks, and point to an existing regular file.
+pub fn validate_safe_upload_file_path(path: &str) -> Result<PathBuf, GwsError> {
+    validate_safe_read_file_path(path, "--upload")
+}
+
+/// Validates that `path` is a safe file path for writing output
+/// (e.g. `--output`).
+///
+/// The path must be relative to CWD and resolve under CWD after following
+/// symlinks. Existing directory targets are rejected.
+pub fn validate_safe_output_file_path(path: &str) -> Result<PathBuf, GwsError> {
+    validate_safe_write_file_path(path, "--output")
+}
+
+fn validate_safe_read_file_path(path: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
+    reject_control_chars(path, flag_name)?;
+
+    let input_path = Path::new(path);
+    if input_path.is_absolute() {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} must be a relative path, got absolute path '{}'",
+            path
+        )));
+    }
+
+    let cwd = std::env::current_dir()
+        .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
+    let resolved = cwd.join(input_path);
+
+    let canonical = resolved.canonicalize().map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to resolve {flag_name} path '{}': {e}",
+            path
+        ))
+    })?;
+
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+    })?;
+
+    if !canonical.starts_with(&canonical_cwd) {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' resolves to '{}' which is outside the current directory",
+            path,
+            canonical.display()
+        )));
+    }
+
+    if !canonical.is_file() {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' must point to an existing file",
+            path
+        )));
+    }
+
+    Ok(canonical)
+}
+
+fn validate_safe_write_file_path(path: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
+    reject_control_chars(path, flag_name)?;
+
+    let output_path = Path::new(path);
+    if output_path.is_absolute() {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} must be a relative path, got absolute path '{}'",
+            path
+        )));
+    }
+
+    let cwd = std::env::current_dir()
+        .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
+    let resolved = cwd.join(output_path);
+
+    let canonical = if resolved.exists() {
+        resolved.canonicalize().map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to resolve {flag_name} path '{}': {e}",
+                path
+            ))
+        })?
+    } else {
+        normalize_non_existing(&resolved)?
+    };
+
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+    })?;
+
+    if !canonical.starts_with(&canonical_cwd) {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' resolves to '{}' which is outside the current directory",
+            path,
+            canonical.display()
+        )));
+    }
+
+    if canonical.exists() && canonical.is_dir() {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' points to a directory; provide a file path",
+            path
+        )));
+    }
+
+    Ok(canonical)
+}
+
 /// Rejects strings containing null bytes or ASCII control characters
 /// (including DEL, 0x7F).
 fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
@@ -370,6 +480,151 @@ mod tests {
     #[test]
     fn test_dir_path_rejects_absolute() {
         assert!(validate_safe_dir_path("/usr/local").is_err());
+    }
+
+    // --- validate_safe_upload_file_path ---
+
+    #[test]
+    #[serial]
+    fn test_upload_path_accepts_relative_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let file = canonical_dir.join("input.txt");
+        fs::write(&file, "data").unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_upload_file_path("input.txt");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    #[test]
+    fn test_upload_path_rejects_absolute() {
+        assert!(validate_safe_upload_file_path("/tmp/secret.txt").is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_path_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_upload_file_path("../../.ssh/id_rsa");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_path_rejects_symlink_escape() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        #[cfg(unix)]
+        {
+            let sneaky = canonical_dir.join("sneaky.txt");
+            std::os::unix::fs::symlink("/etc/hosts", &sneaky).unwrap();
+
+            let saved_cwd = std::env::current_dir().unwrap();
+            std::env::set_current_dir(&canonical_dir).unwrap();
+
+            let result = validate_safe_upload_file_path("sneaky.txt");
+            std::env::set_current_dir(&saved_cwd).unwrap();
+
+            assert!(result.is_err());
+            return;
+        }
+
+        #[cfg(windows)]
+        {
+            // Skip on Windows due to symlink privilege requirements.
+        }
+    }
+
+    // --- validate_safe_output_file_path ---
+
+    #[test]
+    #[serial]
+    fn test_output_file_path_accepts_non_existing_relative_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_output_file_path("downloads/out.bin");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    #[test]
+    fn test_output_file_path_rejects_absolute() {
+        assert!(validate_safe_output_file_path("/tmp/out.bin").is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_output_file_path_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_output_file_path("../../tmp/out.bin");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_output_file_path_rejects_directory_target() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let output_dir = canonical_dir.join("already-dir");
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_output_file_path("already-dir");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_output_file_path_rejects_symlink_escape() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        #[cfg(unix)]
+        {
+            let sneaky = canonical_dir.join("sneaky");
+            std::os::unix::fs::symlink("/tmp", &sneaky).unwrap();
+
+            let saved_cwd = std::env::current_dir().unwrap();
+            std::env::set_current_dir(&canonical_dir).unwrap();
+
+            let result = validate_safe_output_file_path("sneaky/file.bin");
+            std::env::set_current_dir(&saved_cwd).unwrap();
+
+            assert!(result.is_err());
+            return;
+        }
+
+        #[cfg(windows)]
+        {
+            // Skip on Windows due to symlink privilege requirements.
+        }
     }
 
     // --- reject_control_chars ---

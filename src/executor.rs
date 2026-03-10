@@ -374,7 +374,24 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
+    // Validate untrusted filesystem paths before any network or file I/O.
+    let safe_output_path = output_path
+        .map(crate::validate::validate_safe_output_file_path)
+        .transpose()?
+        .map(|p| p.to_string_lossy().into_owned());
+
+    let safe_upload_path = upload_path
+        .map(crate::validate::validate_safe_upload_file_path)
+        .transpose()?
+        .map(|p| p.to_string_lossy().into_owned());
+
+    let input = parse_and_validate_inputs(
+        doc,
+        method,
+        params_json,
+        body_json,
+        safe_upload_path.as_deref(),
+    )?;
 
     if dry_run {
         let dry_run_info = json!({
@@ -409,7 +426,7 @@ pub async fn execute_method(
             &auth_method,
             page_token.as_deref(),
             pages_fetched,
-            upload_path,
+            safe_upload_path.as_deref(),
         )
         .await?;
 
@@ -456,7 +473,7 @@ pub async fn execute_method(
         } else if let Some(res) = handle_binary_response(
             response,
             &content_type,
-            output_path,
+            safe_output_path.as_deref(),
             output_format,
             capture_output,
         )
@@ -1725,6 +1742,70 @@ async fn test_execute_method_missing_path_param() {
         .unwrap_err()
         .to_string()
         .contains("Required path parameter"));
+}
+
+#[tokio::test]
+async fn test_execute_method_rejects_unsafe_upload_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        flat_path: Some("files".to_string()),
+        ..Default::default()
+    };
+
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        None,
+        Some("bad\0path"),
+        true,
+        &PaginationConfig::default(),
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("--upload"));
+}
+
+#[tokio::test]
+async fn test_execute_method_rejects_unsafe_output_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        flat_path: Some("files".to_string()),
+        ..Default::default()
+    };
+
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        Some("bad\0path"),
+        None,
+        true,
+        &PaginationConfig::default(),
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("--output"));
 }
 
 #[test]
