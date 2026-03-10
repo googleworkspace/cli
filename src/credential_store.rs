@@ -207,6 +207,9 @@ fn resolve_key(
                     Ok(()) => return Ok(key),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                         if let Some(winner) = read_key_file(key_file) {
+                            // Sync the winner's key into the keyring so both
+                            // backends stay consistent after the race.
+                            let _ = provider.set_password(&STANDARD.encode(winner));
                             return Ok(winner);
                         }
                         // File exists but is unreadable/corrupt — overwrite.
