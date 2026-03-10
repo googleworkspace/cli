@@ -197,7 +197,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let output_format = matches
         .get_one::<String>("format")
-        .map(|s| crate::formatter::OutputFormat::from_str(s))
+        .map(|s| crate::formatter::OutputFormat::from_str_lossy(s))
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
     // Determine time range

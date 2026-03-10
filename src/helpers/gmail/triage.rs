@@ -29,7 +29,7 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
     let show_labels = matches.get_flag("labels");
     let output_format = matches
         .get_one::<String>("format")
-        .map(|s| crate::formatter::OutputFormat::from_str(s))
+        .map(|s| crate::formatter::OutputFormat::from_str_lossy(s))
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
     // Authenticate — use gmail.readonly instead of gmail.modify because triage

@@ -261,7 +261,7 @@ async fn get_json(
 fn format_and_print(value: &Value, matches: &ArgMatches) {
     let fmt = matches
         .get_one::<String>("format")
-        .map(|s| crate::formatter::OutputFormat::from_str(s))
+        .map(|s| crate::formatter::OutputFormat::from_str_lossy(s))
         .unwrap_or_default();
     println!("{}", crate::formatter::format_value(value, &fmt));
 }

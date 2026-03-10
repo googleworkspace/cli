@@ -52,7 +52,7 @@ impl OutputFormat {
     /// Parse from a string argument, falling back to JSON for unknown values.
     ///
     /// Prefer `parse()` at call sites where you want to surface a warning.
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str_lossy(s: &str) -> Self {
         Self::parse(s).unwrap_or(Self::Json)
     }
 }
@@ -422,12 +422,12 @@ mod tests {
 
     #[test]
     fn test_output_format_from_str() {
-        assert_eq!(OutputFormat::from_str("json"), OutputFormat::Json);
-        assert_eq!(OutputFormat::from_str("table"), OutputFormat::Table);
-        assert_eq!(OutputFormat::from_str("yaml"), OutputFormat::Yaml);
-        assert_eq!(OutputFormat::from_str("yml"), OutputFormat::Yaml);
-        assert_eq!(OutputFormat::from_str("csv"), OutputFormat::Csv);
-        assert_eq!(OutputFormat::from_str("unknown"), OutputFormat::Json);
+        assert_eq!(OutputFormat::from_str_lossy("json"), OutputFormat::Json);
+        assert_eq!(OutputFormat::from_str_lossy("table"), OutputFormat::Table);
+        assert_eq!(OutputFormat::from_str_lossy("yaml"), OutputFormat::Yaml);
+        assert_eq!(OutputFormat::from_str_lossy("yml"), OutputFormat::Yaml);
+        assert_eq!(OutputFormat::from_str_lossy("csv"), OutputFormat::Csv);
+        assert_eq!(OutputFormat::from_str_lossy("unknown"), OutputFormat::Json);
     }
 
     #[test]
