@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.11.1
+
+### Patch Changes
+
+- adbca87: Fix `--format csv` for array-of-arrays responses (e.g. Sheets values API)
+
 ## 0.11.0
 
 ### Minor Changes
