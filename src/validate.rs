@@ -195,7 +195,7 @@ fn validate_safe_write_file_path(path: &str, flag_name: &str) -> Result<PathBuf,
         .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
     let resolved = cwd.join(output_path);
 
-    let canonical = if resolved.exists() {
+    let canonical = if std::fs::symlink_metadata(&resolved).is_ok() {
         resolved.canonicalize().map_err(|e| {
             GwsError::Validation(format!(
                 "Failed to resolve {flag_name} path '{}': {e}",
@@ -239,8 +239,13 @@ fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
     Ok(())
 }
 
-/// Resolves a path that may not exist yet by canonicalizing the existing
-/// prefix and appending remaining components.
+/// Resolves a path that may not exist yet by canonicalizing the longest
+/// existing prefix (including symlinks) and appending remaining components.
+///
+/// Uses `symlink_metadata` while walking upward so broken symlinks are treated
+/// as existing filesystem entries. This prevents bypasses where `Path::exists()`
+/// returns false for broken symlinks and the symlink component is mistakenly
+/// treated as a regular non-existing segment.
 fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
     let mut resolved = PathBuf::new();
     let mut remaining = Vec::new();
@@ -248,10 +253,13 @@ fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
     // Walk backwards until we find a component that exists
     let mut current = path.to_path_buf();
     loop {
-        if current.exists() {
-            resolved = current
-                .canonicalize()
-                .map_err(|e| GwsError::Validation(format!("Failed to canonicalize path: {e}")))?;
+        if std::fs::symlink_metadata(&current).is_ok() {
+            resolved = current.canonicalize().map_err(|e| {
+                GwsError::Validation(format!(
+                    "Failed to canonicalize path '{}': {e}",
+                    current.display()
+                ))
+            })?;
             break;
         }
         if let Some(name) = current.file_name() {
@@ -615,6 +623,33 @@ mod tests {
             std::env::set_current_dir(&canonical_dir).unwrap();
 
             let result = validate_safe_output_file_path("sneaky/file.bin");
+            std::env::set_current_dir(&saved_cwd).unwrap();
+
+            assert!(result.is_err());
+            return;
+        }
+
+        #[cfg(windows)]
+        {
+            // Skip on Windows due to symlink privilege requirements.
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_output_file_path_rejects_broken_symlink_prefix() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        #[cfg(unix)]
+        {
+            let broken = canonical_dir.join("broken_link");
+            std::os::unix::fs::symlink("/tmp/definitely-missing-target", &broken).unwrap();
+
+            let saved_cwd = std::env::current_dir().unwrap();
+            std::env::set_current_dir(&canonical_dir).unwrap();
+
+            let result = validate_safe_output_file_path("broken_link/out.bin");
             std::env::set_current_dir(&saved_cwd).unwrap();
 
             assert!(result.is_err());

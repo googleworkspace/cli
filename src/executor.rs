@@ -375,15 +375,29 @@ pub async fn execute_method(
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
     // Validate untrusted filesystem paths before any network or file I/O.
-    let safe_output_path = output_path
-        .map(crate::validate::validate_safe_output_file_path)
-        .transpose()?
-        .map(|p| p.to_string_lossy().into_owned());
+    let safe_output_path = if let Some(path) = output_path {
+        let path_owned = path.to_string();
+        let validated = tokio::task::spawn_blocking(move || {
+            crate::validate::validate_safe_output_file_path(&path_owned)
+        })
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Path validation task failed: {e}")))??;
+        Some(validated.to_string_lossy().into_owned())
+    } else {
+        None
+    };
 
-    let safe_upload_path = upload_path
-        .map(crate::validate::validate_safe_upload_file_path)
-        .transpose()?
-        .map(|p| p.to_string_lossy().into_owned());
+    let safe_upload_path = if let Some(path) = upload_path {
+        let path_owned = path.to_string();
+        let validated = tokio::task::spawn_blocking(move || {
+            crate::validate::validate_safe_upload_file_path(&path_owned)
+        })
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Path validation task failed: {e}")))??;
+        Some(validated.to_string_lossy().into_owned())
+    } else {
+        None
+    };
 
     let input = parse_and_validate_inputs(
         doc,
