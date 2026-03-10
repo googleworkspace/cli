@@ -22,8 +22,13 @@ use rand::RngCore;
 use std::sync::OnceLock;
 
 /// Persist the base64-encoded encryption key to a local file with restrictive
-/// permissions (0600 file, 0700 directory). Used only as a fallback when the OS
-/// keyring is unavailable.
+/// permissions (0600 file, 0700 directory).
+///
+/// The file is always kept as a backup even when the OS keyring is available.
+/// On macOS, Keychain writes can silently fail (phantom `Ok`) after binary-path
+/// or OS changes, so the file ensures the key is never lost between runs.
+/// The security trade-off is acceptable: the file is owner-readable only (0600)
+/// and lives in a 0700 directory, comparable to how `~/.ssh/` keys are stored.
 fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -37,18 +42,16 @@ fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
         }
     }
 
+    // Write atomically (tmp + rename) so a crash never leaves a
+    // partial key file. The rename is atomic on POSIX.
+    crate::fs_util::atomic_write(path, b64_key.as_bytes())?;
+
     #[cfg(unix)]
     {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true).mode(0o600);
-        let mut file = options.open(path)?;
-        file.write_all(b64_key.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, b64_key)?;
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            eprintln!("Warning: failed to set secure permissions on key file: {e}");
+        }
     }
     Ok(())
 }
@@ -106,16 +109,11 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                             if decoded.len() == 32 {
                                 let mut arr = [0u8; 32];
                                 arr.copy_from_slice(&decoded);
-                                // Migrate file key into keyring; remove the
-                                // file only if a round-trip read confirms the
-                                // keyring actually persisted the value (macOS
-                                // Keychain can return Ok without writing).
-                                if entry.set_password(b64_key.trim()).is_ok()
-                                    && entry.get_password().ok().as_deref()
-                                        == Some(b64_key.trim())
-                                {
-                                    let _ = std::fs::remove_file(&key_file);
-                                }
+                                // Try to copy the key into the keyring for
+                                // convenience, but always keep the file as the
+                                // authoritative backup (the keyring can silently
+                                // fail on macOS — see round-trip checks below).
+                                let _ = entry.set_password(b64_key.trim());
                                 return Ok(cache_key(arr));
                             }
                         }
@@ -338,5 +336,67 @@ mod tests {
         let dec2 = decrypt(&enc2).unwrap();
         assert_eq!(dec1, dec2);
         assert_eq!(dec1, plaintext);
+    }
+
+    #[test]
+    fn save_key_file_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join(".encryption_key");
+
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        let b64 = STANDARD.encode(key);
+
+        save_key_file(&key_path, &b64).expect("save should succeed");
+
+        let read_back = std::fs::read_to_string(&key_path).unwrap();
+        assert_eq!(read_back, b64);
+
+        let decoded = STANDARD.decode(read_back.trim()).unwrap();
+        assert_eq!(decoded.len(), 32);
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn save_key_file_sets_secure_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join(".encryption_key");
+        save_key_file(&key_path, "dGVzdA==").expect("save should succeed");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::metadata(&key_path).unwrap().permissions();
+            assert_eq!(perms.mode() & 0o777, 0o600, "key file should be 0600");
+
+            let dir_perms = std::fs::metadata(dir.path()).unwrap().permissions();
+            assert_eq!(dir_perms.mode() & 0o777, 0o700, "key dir should be 0700");
+        }
+    }
+
+    #[test]
+    fn save_key_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join(".encryption_key");
+
+        save_key_file(&key_path, "first_key").expect("first save");
+        save_key_file(&key_path, "second_key").expect("second save");
+
+        let contents = std::fs::read_to_string(&key_path).unwrap();
+        assert_eq!(contents, "second_key");
+    }
+
+    #[test]
+    fn save_key_file_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir
+            .path()
+            .join("nested")
+            .join("dir")
+            .join(".encryption_key");
+
+        save_key_file(&key_path, "test_key").expect("save with nested dirs");
+        assert!(key_path.exists());
     }
 }
