@@ -56,6 +56,7 @@ keyring = "3.6.3"
 async-trait = "0.1.89"
 serde_yaml = "0.9.34"
 percent-encoding = "2.3.2"
+libc = "0.2"
 
 
 # The profile that 'cargo dist' will build with

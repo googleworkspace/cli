@@ -19,6 +19,9 @@
 //! LLM agent rather than a human operator.
 
 use crate::error::GwsError;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Validates that `dir` is a safe output directory.
@@ -134,6 +137,310 @@ pub fn validate_safe_upload_file_path(path: &str) -> Result<PathBuf, GwsError> {
 /// symlinks. Existing directory targets are rejected.
 pub fn validate_safe_output_file_path(path: &str) -> Result<PathBuf, GwsError> {
     validate_safe_write_file_path(path, "--output")
+}
+
+/// Validate and read an upload file in one operation.
+///
+/// This reduces the race window between path validation and file consumption by
+/// reading from the validated canonical path immediately.
+pub fn read_safe_upload_file(path: &str) -> Result<Vec<u8>, GwsError> {
+    let canonical = validate_safe_upload_file_path(path)?;
+
+    #[cfg(unix)]
+    {
+        let parent = canonical.parent().ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Failed to resolve parent directory for --upload '{}'",
+                path
+            ))
+        })?;
+        let leaf = canonical.file_name().ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Failed to resolve file name for --upload '{}'",
+                path
+            ))
+        })?;
+
+        let parent_dir = open_parent_dir_under_cwd(parent, "--upload", path)?;
+        let mut file = open_child_no_follow(
+            &parent_dir,
+            leaf,
+            libc::O_RDONLY | libc::O_NOFOLLOW,
+            0,
+            "--upload",
+            path,
+        )?;
+
+        let meta = file.metadata().map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to inspect upload file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(GwsError::Validation(format!(
+                "--upload '{}' must point to a regular file",
+                path
+            )));
+        }
+
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to read upload file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+        Ok(bytes)
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::read(&canonical).map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to read upload file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })
+    }
+}
+
+/// Validate and open an output file in one operation.
+///
+/// Returns a trusted writable file handle and the canonical path used for
+/// writing. Existing files are opened without truncation first; truncation
+/// happens only after post-open safety checks.
+pub fn open_safe_output_file(path: &str) -> Result<(std::fs::File, PathBuf), GwsError> {
+    let canonical = validate_safe_output_file_path(path)?;
+
+    let existed_before_open = std::fs::symlink_metadata(&canonical).is_ok();
+
+    #[cfg(unix)]
+    {
+        let parent = canonical.parent().ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Failed to resolve parent directory for --output '{}'",
+                path
+            ))
+        })?;
+        let leaf = canonical.file_name().ok_or_else(|| {
+            GwsError::Validation(format!(
+                "Failed to resolve file name for --output '{}'",
+                path
+            ))
+        })?;
+
+        let parent_dir = open_parent_dir_under_cwd(parent, "--output", path)?;
+        let flags = if existed_before_open {
+            libc::O_WRONLY | libc::O_NOFOLLOW
+        } else {
+            // O_CREAT|O_EXCL + O_NOFOLLOW prevents symlink-following and
+            // races that try to create the path entry between check and open.
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW
+        };
+        let file = open_child_no_follow(&parent_dir, leaf, flags, 0o600, "--output", path)?;
+
+        let meta = file.metadata().map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to inspect output file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(GwsError::Validation(format!(
+                "--output '{}' is not a regular file",
+                path
+            )));
+        }
+
+        if existed_before_open {
+            file.set_len(0).map_err(|e| {
+                GwsError::Validation(format!(
+                    "Failed to truncate output file '{}': {}",
+                    canonical.display(),
+                    e
+                ))
+            })?;
+        }
+
+        Ok((file, canonical))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut opts = OpenOptions::new();
+        opts.write(true);
+        if existed_before_open {
+            opts.create(false);
+        } else {
+            opts.create_new(true);
+        }
+
+        let file = opts.open(&canonical).map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to open output file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+
+        let canonical_after_open = canonical.canonicalize().map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to resolve output file after open '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+        let cwd = std::env::current_dir().map_err(|e| {
+            GwsError::Validation(format!("Failed to determine current directory: {e}"))
+        })?;
+        let canonical_cwd = cwd.canonicalize().map_err(|e| {
+            GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+        })?;
+        if !canonical_after_open.starts_with(&canonical_cwd) {
+            return Err(GwsError::Validation(format!(
+                "--output '{}' resolves outside current directory after open: '{}'",
+                path,
+                canonical_after_open.display()
+            )));
+        }
+
+        let meta = file.metadata().map_err(|e| {
+            GwsError::Validation(format!(
+                "Failed to inspect output file '{}': {}",
+                canonical.display(),
+                e
+            ))
+        })?;
+        if !meta.is_file() {
+            return Err(GwsError::Validation(format!(
+                "--output '{}' is not a regular file",
+                path
+            )));
+        }
+
+        if existed_before_open {
+            file.set_len(0).map_err(|e| {
+                GwsError::Validation(format!(
+                    "Failed to truncate output file '{}': {}",
+                    canonical.display(),
+                    e
+                ))
+            })?;
+        }
+
+        Ok((file, canonical))
+    }
+}
+
+#[cfg(unix)]
+fn open_parent_dir_under_cwd(
+    parent: &Path,
+    flag_name: &str,
+    original_path: &str,
+) -> Result<std::fs::File, GwsError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = std::fs::File::open(parent).map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to open parent directory for {flag_name} '{}': {}",
+            original_path, e
+        ))
+    })?;
+
+    let dir_meta = dir.metadata().map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to inspect parent directory for {flag_name} '{}': {}",
+            original_path, e
+        ))
+    })?;
+    if !dir_meta.is_dir() {
+        return Err(GwsError::Validation(format!(
+            "Parent path for {flag_name} '{}' is not a directory",
+            original_path
+        )));
+    }
+
+    let cwd = std::env::current_dir()
+        .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+    })?;
+    let canonical_parent = parent.canonicalize().map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to resolve parent directory for {flag_name} '{}': {}",
+            original_path, e
+        ))
+    })?;
+    if !canonical_parent.starts_with(&canonical_cwd) {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' resolves outside current directory",
+            original_path
+        )));
+    }
+
+    let parent_meta = std::fs::metadata(&canonical_parent).map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to inspect resolved parent directory for {flag_name} '{}': {}",
+            original_path, e
+        ))
+    })?;
+    if dir_meta.dev() != parent_meta.dev() || dir_meta.ino() != parent_meta.ino() {
+        return Err(GwsError::Validation(format!(
+            "Detected concurrent filesystem change while resolving {flag_name} '{}'",
+            original_path
+        )));
+    }
+
+    Ok(dir)
+}
+
+#[cfg(unix)]
+fn open_child_no_follow(
+    parent_dir: &std::fs::File,
+    leaf: &std::ffi::OsStr,
+    flags: libc::c_int,
+    mode: libc::mode_t,
+    flag_name: &str,
+    original_path: &str,
+) -> Result<std::fs::File, GwsError> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let leaf_c = CString::new(leaf.as_bytes()).map_err(|_| {
+        GwsError::Validation(format!(
+            "{flag_name} '{}' contains an invalid path segment",
+            original_path
+        ))
+    })?;
+
+    // SAFETY: `parent_dir` is a live directory FD. `leaf_c` is a valid,
+    // NUL-terminated C string with no interior NUL bytes.
+    let fd = unsafe {
+        libc::openat(
+            parent_dir.as_raw_fd(),
+            leaf_c.as_ptr(),
+            flags,
+            mode as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(GwsError::Validation(format!(
+            "Failed to open {flag_name} '{}': {}",
+            original_path,
+            std::io::Error::last_os_error()
+        )));
+    }
+
+    // SAFETY: `fd` is owned by this function on success and is converted into
+    // a `File` exactly once.
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    Ok(file)
 }
 
 fn validate_safe_read_file_path(path: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
@@ -555,6 +862,23 @@ mod tests {
         }
     }
 
+    #[test]
+    #[serial]
+    fn test_read_safe_upload_file_reads_valid_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let file = canonical_dir.join("input.txt");
+        fs::write(&file, "hello").unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = read_safe_upload_file("input.txt");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert_eq!(result.unwrap(), b"hello");
+    }
+
     // --- validate_safe_output_file_path ---
 
     #[test]
@@ -686,6 +1010,44 @@ mod tests {
         {
             // Skip on Windows due to symlink privilege requirements.
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_open_safe_output_file_creates_new_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let (mut file, path) = open_safe_output_file("new-file.bin").unwrap();
+        std::io::Write::write_all(&mut file, b"abc").unwrap();
+        drop(file);
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(path.ends_with("new-file.bin"));
+        assert_eq!(fs::read(path).unwrap(), b"abc");
+    }
+
+    #[test]
+    #[serial]
+    fn test_open_safe_output_file_truncates_existing_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let existing = canonical_dir.join("existing.bin");
+        fs::write(&existing, b"old-bytes").unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let (mut file, path) = open_safe_output_file("existing.bin").unwrap();
+        std::io::Write::write_all(&mut file, b"new").unwrap();
+        drop(file);
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(path.ends_with("existing.bin"));
+        assert_eq!(fs::read(path).unwrap(), b"new");
     }
 
     // --- reject_control_chars ---
