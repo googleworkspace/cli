@@ -21,9 +21,8 @@ use keyring::Entry;
 use rand::RngCore;
 use std::sync::OnceLock;
 
-/// Persist the base64-encoded encryption key to a local file with restrictive
-/// permissions (0600 file, 0700 directory).
-fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
+/// Ensure the key-file parent directory exists with restrictive permissions.
+fn ensure_key_dir(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -35,10 +34,37 @@ fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// Atomically create a **new** key file using `create_new(true)` (`O_EXCL` on
+/// Unix, `CREATE_NEW` on Windows). If another process already created the file,
+/// returns `Err` with `ErrorKind::AlreadyExists` so the caller can read the
+/// winner's key instead.
+fn save_key_file_exclusive(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    ensure_key_dir(path)?;
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true); // atomic: fails if file already exists
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(b64_key.as_bytes())?;
+    Ok(())
+}
+
+/// Persist the base64-encoded encryption key to a local file with restrictive
+/// permissions (0600 file, 0700 directory). Overwrites any existing file.
+fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    ensure_key_dir(path)?;
 
     #[cfg(unix)]
     {
-        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create(true).truncate(true).mode(0o600);
@@ -175,9 +201,20 @@ fn resolve_key(
                 // Best-effort: store in keyring.
                 let _ = provider.set_password(&b64_key);
 
-                // Always persist to file as durable fallback.
-                save_key_file(key_file, &b64_key)?;
-                return Ok(key);
+                // Atomically create the file; if another process raced us,
+                // use their key instead.
+                match save_key_file_exclusive(key_file, &b64_key) {
+                    Ok(()) => return Ok(key),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if let Some(winner) = read_key_file(key_file) {
+                            return Ok(winner);
+                        }
+                        // File exists but is unreadable/corrupt — overwrite.
+                        save_key_file(key_file, &b64_key)?;
+                        return Ok(key);
+                    }
+                    Err(e) => return Err(e.into()),
+                }
             }
             Err(e) => {
                 eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
@@ -190,11 +227,17 @@ fn resolve_key(
         return Ok(key);
     }
 
-    // --- 3. Generate new key, save to file -------------------------------
+    // --- 3. Generate new key, save to file (race-safe) -------------------
     let key = generate_random_key();
     let b64_key = STANDARD.encode(key);
-    save_key_file(key_file, &b64_key)?;
-    Ok(key)
+    match save_key_file_exclusive(key_file, &b64_key) {
+        Ok(()) => Ok(key),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another process created the file first — use their key.
+            read_key_file(key_file).ok_or_else(|| anyhow::anyhow!("key file exists but is corrupt"))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Returns the encryption key, generating and persisting one if it doesn't exist.
