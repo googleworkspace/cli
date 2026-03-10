@@ -1556,6 +1556,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_dir_returns_gws_subdir() {
         let path = config_dir();
         assert!(path.ends_with("gws"));
