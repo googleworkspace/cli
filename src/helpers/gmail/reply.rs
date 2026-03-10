@@ -20,7 +20,7 @@ pub(super) async fn handle_reply(
     matches: &ArgMatches,
     reply_all: bool,
 ) -> Result<(), GwsError> {
-    let config = parse_reply_args(matches);
+    let config = parse_reply_args(matches)?;
     let dry_run = matches.get_flag("dry-run");
 
     let (original, token) = if dry_run {
@@ -44,7 +44,7 @@ pub(super) async fn handle_reply(
 
     let self_email = token.as_ref().and_then(|(_, e)| e.as_deref());
 
-    // Build reply headers
+    // Determine reply recipients
     let mut reply_to = if reply_all {
         build_reply_all_recipients(
             &original,
@@ -161,7 +161,7 @@ async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<Strin
         .ok_or_else(|| GwsError::Other(anyhow::anyhow!("Profile missing emailAddress")))
 }
 
-// --- Header construction ---
+// --- Message construction ---
 
 fn extract_reply_to_address(original: &OriginalMessage) -> String {
     if original.reply_to.is_empty() {
@@ -385,37 +385,22 @@ fn build_reply_subject(original_subject: &str) -> String {
     }
 }
 
-fn build_references(original_references: &str, original_message_id: &str) -> String {
-    if original_references.is_empty() {
-        original_message_id.to_string()
-    } else {
-        format!("{} {}", original_references, original_message_id)
-    }
-}
-
 fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage) -> String {
-    let mut headers = format!(
-        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}\r\n\
-         MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
-        envelope.to, envelope.subject, envelope.in_reply_to, envelope.references
-    );
-
-    if let Some(from) = envelope.from {
-        headers.push_str(&format!("\r\nFrom: {}", from));
-    }
-
-    if let Some(cc) = envelope.cc {
-        headers.push_str(&format!("\r\nCc: {}", cc));
-    }
-
-    // Gmail API strips the Bcc header from the delivered message.
-    if let Some(bcc) = envelope.bcc {
-        headers.push_str(&format!("\r\nBcc: {}", bcc));
-    }
+    let builder = MessageBuilder {
+        to: envelope.to,
+        subject: envelope.subject,
+        from: envelope.from,
+        cc: envelope.cc,
+        bcc: envelope.bcc,
+        threading: Some(ThreadingHeaders {
+            in_reply_to: envelope.in_reply_to,
+            references: envelope.references,
+        }),
+    };
 
     let quoted = format_quoted_original(original);
-
-    format!("{}\r\n\r\n{}\r\n\r\n{}", headers, envelope.body, quoted)
+    let body = format!("{}\r\n\r\n{}", envelope.body, quoted);
+    builder.build(&body)
 }
 
 fn format_quoted_original(original: &OriginalMessage) -> String {
@@ -432,31 +417,28 @@ fn format_quoted_original(original: &OriginalMessage) -> String {
     )
 }
 
-// --- Helpers ---
+// --- Argument parsing ---
 
-fn parse_reply_args(matches: &ArgMatches) -> ReplyConfig {
-    ReplyConfig {
+fn parse_reply_args(matches: &ArgMatches) -> Result<ReplyConfig, GwsError> {
+    Ok(ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         body_text: matches.get_one::<String>("body").unwrap().to_string(),
-        from: matches.get_one::<String>("from").map(|s| s.to_string()),
-        to: matches
-            .get_one::<String>("to")
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        cc: matches
-            .get_one::<String>("cc")
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        bcc: matches
-            .get_one::<String>("bcc")
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        remove: matches
-            .try_get_one::<String>("remove")
-            .ok()
-            .flatten()
-            .map(|s| s.to_string()),
-    }
+        from: parse_optional_trimmed(matches, "from"),
+        to: parse_optional_trimmed(matches, "to"),
+        cc: parse_optional_trimmed(matches, "cc"),
+        bcc: parse_optional_trimmed(matches, "bcc"),
+        // try_get_one because +reply doesn't define --remove (only +reply-all does).
+        // Explicit match distinguishes "arg not defined" from unexpected errors.
+        remove: match matches.try_get_one::<String>("remove") {
+            Ok(val) => val.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            Err(clap::parser::MatchesError::UnknownArgument { .. }) => None,
+            Err(e) => {
+                return Err(GwsError::Other(anyhow::anyhow!(
+                    "Unexpected error reading --remove argument: {e}"
+                )))
+            }
+        },
+    })
 }
 
 #[cfg(test)]
@@ -477,22 +459,6 @@ mod tests {
     #[test]
     fn test_build_reply_subject_case_insensitive() {
         assert_eq!(build_reply_subject("RE: Hello"), "RE: Hello");
-    }
-
-    #[test]
-    fn test_build_references_empty() {
-        assert_eq!(
-            build_references("", "<msg-1@example.com>"),
-            "<msg-1@example.com>"
-        );
-    }
-
-    #[test]
-    fn test_build_references_with_existing() {
-        assert_eq!(
-            build_references("<msg-0@example.com>", "<msg-1@example.com>"),
-            "<msg-0@example.com> <msg-1@example.com>"
-        );
     }
 
     #[test]
@@ -710,7 +676,7 @@ mod tests {
     #[test]
     fn test_parse_reply_args() {
         let matches = make_reply_matches(&["test", "--message-id", "abc123", "--body", "My reply"]);
-        let config = parse_reply_args(&matches);
+        let config = parse_reply_args(&matches).unwrap();
         assert_eq!(config.message_id, "abc123");
         assert_eq!(config.body_text, "My reply");
         assert!(config.to.is_none());
@@ -736,7 +702,7 @@ mod tests {
             "--remove",
             "unwanted@example.com",
         ]);
-        let config = parse_reply_args(&matches);
+        let config = parse_reply_args(&matches).unwrap();
         assert_eq!(config.to.unwrap(), "dave@example.com");
         assert_eq!(config.cc.unwrap(), "extra@example.com");
         assert_eq!(config.bcc.unwrap(), "secret@example.com");
@@ -756,10 +722,27 @@ mod tests {
             "--bcc",
             "  ",
         ]);
-        let config = parse_reply_args(&matches);
+        let config = parse_reply_args(&matches).unwrap();
         assert!(config.to.is_none());
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
+    }
+
+    #[test]
+    fn test_parse_reply_args_without_remove_defined() {
+        // Simulates +reply which doesn't define --remove (only +reply-all does).
+        let cmd = Command::new("test")
+            .arg(Arg::new("message-id").long("message-id"))
+            .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("from").long("from"))
+            .arg(Arg::new("to").long("to"))
+            .arg(Arg::new("cc").long("cc"))
+            .arg(Arg::new("bcc").long("bcc"));
+        let matches = cmd
+            .try_get_matches_from(&["test", "--message-id", "abc", "--body", "hi"])
+            .unwrap();
+        let config = parse_reply_args(&matches).unwrap();
+        assert!(config.remove.is_none());
     }
 
     #[test]
