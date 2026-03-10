@@ -636,5 +636,4 @@ mod tests {
         let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list", "--format", "table"]);
     }
-
 }

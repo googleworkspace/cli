@@ -463,8 +463,7 @@ mod tests {
 
     #[test]
     fn test_build_sanitize_request_data_rejects_traversal() {
-        let result =
-            build_sanitize_request_data("../../etc/passwd", "text", "sanitizeUserPrompt");
+        let result = build_sanitize_request_data("../../etc/passwd", "text", "sanitizeUserPrompt");
         assert!(result.is_err());
     }
 

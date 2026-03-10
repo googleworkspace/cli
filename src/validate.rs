@@ -592,7 +592,10 @@ mod tests {
     #[test]
     fn test_validate_gcp_location_valid() {
         assert_eq!(validate_gcp_location("us-central1").unwrap(), "us-central1");
-        assert_eq!(validate_gcp_location("europe-west4").unwrap(), "europe-west4");
+        assert_eq!(
+            validate_gcp_location("europe-west4").unwrap(),
+            "europe-west4"
+        );
         assert_eq!(validate_gcp_location("asia-east1").unwrap(), "asia-east1");
         assert_eq!(validate_gcp_location("global").unwrap(), "global");
     }
