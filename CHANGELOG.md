@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.11.0
+
+### Minor Changes
+
+- 4d4b09f: Add `--cc` and `--bcc` flags to `+send`, `--to` and `--bcc` to `+reply` and `+reply-all`, and `--bcc` to `+forward`.
+
 ## 0.10.0
 
 ### Minor Changes
