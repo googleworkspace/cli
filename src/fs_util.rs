@@ -40,7 +40,21 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
         .map(|p| p.join(&tmp_name))
         .unwrap_or_else(|| std::path::PathBuf::from(&tmp_name));
 
-    std::fs::write(&tmp_path, data)?;
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut opts = OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&tmp_path)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+    }
+
     std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
@@ -56,7 +70,21 @@ pub async fn atomic_write_async(path: &Path, data: &[u8]) -> io::Result<()> {
         .map(|p| p.join(&tmp_name))
         .unwrap_or_else(|| std::path::PathBuf::from(&tmp_name));
 
-    tokio::fs::write(&tmp_path, data).await?;
+    {
+        use tokio::fs::OpenOptions;
+        use tokio::io::AsyncWriteExt;
+        let mut opts = OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use tokio::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&tmp_path).await?;
+        file.write_all(data).await?;
+        file.sync_all().await?;
+    }
+
     tokio::fs::rename(&tmp_path, path).await?;
     Ok(())
 }
@@ -98,5 +126,35 @@ mod tests {
         let path = dir.path().join("token_cache.json");
         atomic_write_async(&path, b"async hello").await.unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"async hello");
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_permissions() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::tempdir().unwrap();
+
+            // Sync
+            let path_sync = dir.path().join("sync.txt");
+            atomic_write(&path_sync, b"sync").unwrap();
+            let meta_sync = fs::metadata(&path_sync).unwrap();
+            assert_eq!(
+                meta_sync.permissions().mode() & 0o777,
+                0o600,
+                "Sync atomic_write should create file with 0600 permissions"
+            );
+
+            // Async
+            let path_async = dir.path().join("async.txt");
+            atomic_write_async(&path_async, b"async").await.unwrap();
+            let meta_async = fs::metadata(&path_async).unwrap();
+            assert_eq!(
+                meta_async.permissions().mode() & 0o777,
+                0o600,
+                "Async atomic_write_async should create file with 0600 permissions"
+            );
+        }
     }
 }
