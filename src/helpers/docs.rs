@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::docs_markdown;
 use super::Helper;
 use crate::auth;
 use crate::error::GwsError;
@@ -42,18 +43,27 @@ impl Helper for DocsHelper {
                 .arg(
                     Arg::new("text")
                         .long("text")
-                        .help("Text to append (plain text)")
+                        .help("Text to append")
                         .required(true)
                         .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("content-format")
+                        .long("content-format")
+                        .help("Content format: 'plaintext' or 'markdown'")
+                        .value_name("FORMAT")
+                        .value_parser(["plaintext", "markdown"])
+                        .default_value("plaintext"),
                 )
                 .after_help(
                     "\
 EXAMPLES:
   gws docs +write --document DOC_ID --text 'Hello, world!'
+  gws docs +write --document DOC_ID --content-format markdown --text '# Title\n\nSome **bold** text.'
 
 TIPS:
   Text is inserted at the end of the document body.
-  For rich formatting, use the raw batchUpdate API instead.",
+  Use --content-format markdown to convert markdown to rich formatting.",
                 ),
         );
         cmd
@@ -121,6 +131,10 @@ fn build_write_request(
 ) -> Result<(String, String, Vec<String>), GwsError> {
     let document_id = matches.get_one::<String>("document").unwrap();
     let text = matches.get_one::<String>("text").unwrap();
+    let content_format = matches
+        .get_one::<String>("content-format")
+        .map(|s| s.as_str())
+        .unwrap_or("plaintext");
 
     let documents_res = doc
         .resources
@@ -134,18 +148,22 @@ fn build_write_request(
         "documentId": document_id
     });
 
-    let body = json!({
-        "requests": [
-            {
+    let requests = match content_format {
+        "markdown" => docs_markdown::markdown_to_batch_requests(text),
+        _ => {
+            // Default: plain text insertion
+            vec![json!({
                 "insertText": {
                     "text": text,
                     "endOfSegmentLocation": {
-                        "segmentId": "" // Empty means body
+                        "segmentId": ""
                     }
                 }
-            }
-        ]
-    });
+            })]
+        }
+    };
+
+    let body = json!({ "requests": requests });
 
     let scopes: Vec<String> = batch_update_method
         .scopes
@@ -187,7 +205,12 @@ mod tests {
     fn make_matches_write(args: &[&str]) -> ArgMatches {
         let cmd = Command::new("test")
             .arg(Arg::new("document").long("document"))
-            .arg(Arg::new("text").long("text"));
+            .arg(Arg::new("text").long("text"))
+            .arg(
+                Arg::new("content-format")
+                    .long("content-format")
+                    .default_value("plaintext"),
+            );
         cmd.try_get_matches_from(args).unwrap()
     }
 
@@ -200,6 +223,30 @@ mod tests {
         assert!(params.contains("123"));
         assert!(body.contains("hello world"));
         assert!(body.contains("endOfSegmentLocation"));
+        assert_eq!(scopes[0], "https://scope");
+    }
+
+    #[test]
+    fn test_build_write_request_markdown() {
+        let doc = make_mock_doc();
+        let matches = make_matches_write(&[
+            "test",
+            "--document",
+            "456",
+            "--text",
+            "# Hello\n\nSome **bold** text.",
+            "--content-format",
+            "markdown",
+        ]);
+        let (params, body, scopes) = build_write_request(&matches, &doc).unwrap();
+
+        assert!(params.contains("456"));
+        // Should contain insertText and updateParagraphStyle (for heading) and updateTextStyle (for bold)
+        assert!(body.contains("insertText"));
+        assert!(body.contains("updateParagraphStyle"));
+        assert!(body.contains("HEADING_1"));
+        assert!(body.contains("updateTextStyle"));
+        assert!(body.contains("\"bold\":true") || body.contains("\"bold\": true"));
         assert_eq!(scopes[0], "https://scope");
     }
 }

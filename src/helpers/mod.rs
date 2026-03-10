@@ -19,6 +19,7 @@ use std::pin::Pin;
 pub mod calendar;
 pub mod chat;
 pub mod docs;
+pub mod docs_markdown;
 pub mod drive;
 pub mod events;
 pub mod gmail;

@@ -57,6 +57,7 @@ async-trait = "0.1.89"
 serde_yaml = "0.9.34"
 percent-encoding = "2.3.2"
 zeroize = { version = "1.8.2", features = ["derive"] }
+pulldown-cmark = "0.12"
 
 
 # The profile that 'cargo dist' will build with
