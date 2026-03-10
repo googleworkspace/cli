@@ -347,6 +347,19 @@ async fn handle_binary_response(
     Ok(None)
 }
 
+fn validate_execution_paths(
+    output_path: Option<&str>,
+    upload_path: Option<&str>,
+) -> Result<(), GwsError> {
+    if let Some(path) = output_path {
+        crate::validate::validate_safe_output_file_path(path)?;
+    }
+    if let Some(path) = upload_path {
+        crate::validate::validate_safe_input_file_path(path)?;
+    }
+    Ok(())
+}
+
 /// Executes an API method call.
 ///
 /// This is the core function of the CLI that handles:
@@ -374,6 +387,7 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
+    validate_execution_paths(output_path, upload_path)?;
     let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
 
     if dry_run {
@@ -1725,6 +1739,127 @@ async fn test_execute_method_missing_path_param() {
         .unwrap_err()
         .to_string()
         .contains("Required path parameter"));
+}
+
+#[tokio::test]
+async fn test_execute_method_dry_run_rejects_absolute_upload_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        media_upload: Some(crate::discovery::MediaUpload {
+            protocols: Some(crate::discovery::MediaUploadProtocols {
+                simple: Some(crate::discovery::MediaUploadProtocol {
+                    path: "/upload/files".to_string(),
+                    multipart: Some(true),
+                }),
+            }),
+            ..Default::default()
+        }),
+        supports_media_upload: true,
+        ..Default::default()
+    };
+
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        None,
+        Some("/etc/hosts"),
+        true,
+        &PaginationConfig::default(),
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("--upload must be a relative path"));
+}
+
+#[tokio::test]
+async fn test_execute_method_dry_run_rejects_absolute_output_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        Some("/tmp/out.bin"),
+        None,
+        true,
+        &PaginationConfig::default(),
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("--output must be a relative path"));
+}
+
+#[tokio::test]
+async fn test_execute_method_dry_run_accepts_safe_relative_paths() {
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        media_upload: Some(crate::discovery::MediaUpload {
+            protocols: Some(crate::discovery::MediaUploadProtocols {
+                simple: Some(crate::discovery::MediaUploadProtocol {
+                    path: "/upload/files".to_string(),
+                    multipart: Some(true),
+                }),
+            }),
+            ..Default::default()
+        }),
+        supports_media_upload: true,
+        ..Default::default()
+    };
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let result = execute_method(
+        &RestDescription::default(),
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        Some("target/path-hardening-upload-output/out.bin"),
+        Some("Cargo.toml"),
+        true,
+        &PaginationConfig::default(),
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+        true,
+    )
+    .await;
+
+    assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    let val = result.unwrap().expect("expected dry-run JSON");
+    assert_eq!(val["dry_run"], true);
 }
 
 #[test]
