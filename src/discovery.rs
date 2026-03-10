@@ -195,20 +195,18 @@ pub async fn fetch_discovery_document(
     let version =
         crate::validate::validate_api_identifier(version).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let cache_dir = crate::auth_commands::config_dir().join("cache");
-    std::fs::create_dir_all(&cache_dir)?;
+    let cache_dir = crate::auth_commands::config_dir().await.join("cache");
+    tokio::fs::create_dir_all(&cache_dir).await?;
 
     let cache_file = cache_dir.join(format!("{service}_{version}.json"));
 
     // Check cache (24hr TTL)
-    if cache_file.exists() {
-        if let Ok(metadata) = std::fs::metadata(&cache_file) {
-            if let Ok(modified) = metadata.modified() {
-                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
-                    let data = std::fs::read_to_string(&cache_file)?;
-                    let doc: RestDescription = serde_json::from_str(&data)?;
-                    return Ok(doc);
-                }
+    if let Ok(metadata) = tokio::fs::metadata(&cache_file).await {
+        if let Ok(modified) = metadata.modified() {
+            if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
+                let data = tokio::fs::read_to_string(&cache_file).await?;
+                let doc: RestDescription = serde_json::from_str(&data)?;
+                return Ok(doc);
             }
         }
     }
@@ -242,7 +240,7 @@ pub async fn fetch_discovery_document(
     };
 
     // Write to cache
-    if let Err(e) = std::fs::write(&cache_file, &body) {
+    if let Err(e) = tokio::fs::write(&cache_file, &body).await {
         // Non-fatal: just warn via stderr-safe approach
         let _ = e;
     }

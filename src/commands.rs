@@ -46,6 +46,13 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .help("Output format: json (default), table, yaml, csv")
                 .value_name("FORMAT")
                 .global(true),
+        )
+        .arg(
+            clap::Arg::new("profile")
+                .long("profile")
+                .help("The configuration profile to use (e.g. default, work, personal)")
+                .value_name("PROFILE")
+                .global(true),
         );
 
     // Inject helper commands

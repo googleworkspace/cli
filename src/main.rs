@@ -64,76 +64,81 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg (skip --api-version and its value)
-    let mut first_arg: Option<String> = None;
-    {
-        let mut skip_next = false;
-        for a in args.iter().skip(1) {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if a == "--api-version" {
-                skip_next = true;
-                continue;
-            }
-            if a.starts_with("--api-version=") {
-                continue;
-            }
-            if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
-                first_arg = Some(a.clone());
-                break;
-            }
-        }
+    let globals_cli = clap::Command::new("gws")
+        .ignore_errors(true)
+        .allow_external_subcommands(true)
+        .arg(clap::Arg::new("profile").long("profile").num_args(1).global(true))
+        .arg(clap::Arg::new("api-version").long("api-version").num_args(1).global(true))
+        .arg(clap::Arg::new("format").long("format").num_args(1).global(true))
+        .arg(clap::Arg::new("sanitize").long("sanitize").num_args(1).global(true));
+
+    let global_matches = globals_cli.try_get_matches_from(&args).unwrap_or_default();
+
+    if let Some(profile) = global_matches.get_one::<String>("profile") {
+        crate::auth_commands::validate_profile_name(profile)?;
+        let _ = crate::auth_commands::OVERRIDE_PROFILE.set(profile.clone());
     }
-    let first_arg = first_arg.ok_or_else(|| {
+
+    let first_arg = if let Some((cmd, _)) = global_matches.subcommand() {
+        Some(cmd.to_string())
+    } else {
+        args.iter()
+            .skip(1)
+            .find(|a| *a == "--help" || *a == "--version" || *a == "-h" || *a == "-V")
+            .cloned()
+    };
+
+    let first_arg_val = first_arg.ok_or_else(|| {
         GwsError::Validation(
             "No service specified. Usage: gws <service> <resource> [sub-resource] <method> [flags]"
                 .to_string(),
         )
     })?;
 
-    // Handle --help and --version at top level
-    if is_help_flag(&first_arg) {
+    if is_help_flag(&first_arg_val) {
         print_usage();
         return Ok(());
     }
 
-    if is_version_flag(&first_arg) {
+    if is_version_flag(&first_arg_val) {
         println!("gws {}", env!("CARGO_PKG_VERSION"));
         println!("This is not an officially supported Google product.");
         return Ok(());
     }
 
-    // Handle the `schema` command
-    if first_arg == "schema" {
-        if args.len() < 3 {
+    let parse_external_args = || -> Vec<String> {
+        global_matches
+            .subcommand()
+            .and_then(|(_, sub)| sub.get_many::<std::ffi::OsString>(""))
+            .map(|vals| vals.map(|s| s.to_string_lossy().to_string()).collect())
+            .unwrap_or_default()
+    };
+
+    if first_arg_val == "schema" {
+        let sub_args = parse_external_args();
+        if sub_args.is_empty() {
             return Err(GwsError::Validation(
                 "Usage: gws schema <service.resource.method> (e.g., gws schema drive.files.list) [--resolve-refs]"
                     .to_string(),
             ));
         }
-        let resolve_refs = args.iter().any(|arg| arg == "--resolve-refs");
-        // Remove the flag if it exists so it doesn't mess up path parsing, or just pass the path
-        // The path is args[2], flags might follow.
-        let path = &args[2];
+        let resolve_refs = sub_args.iter().any(|arg| arg == "--resolve-refs");
+        let path = &sub_args[0];
         return schema::handle_schema_command(path, resolve_refs).await;
     }
 
-    // Handle the `generate-skills` command
-    if first_arg == "generate-skills" {
-        let gen_args: Vec<String> = args.iter().skip(2).cloned().collect();
+    if first_arg_val == "generate-skills" {
+        let gen_args = parse_external_args();
         return generate_skills::handle_generate_skills(&gen_args).await;
     }
 
-    // Handle the `auth` command
-    if first_arg == "auth" {
-        let auth_args: Vec<String> = args.iter().skip(2).cloned().collect();
+    if first_arg_val == "auth" {
+        let auth_args = parse_external_args();
         return auth_commands::handle_auth_command(&auth_args).await;
     }
 
     // Parse service name and optional version override
-    let (api_name, version) = parse_service_and_version(&args, &first_arg)?;
+    let (api_name, version) = parse_service_and_version(&args, &first_arg_val)?;
 
     // For synthetic services (no Discovery doc), use an empty RestDescription
     let doc = if api_name == "workflow" {
@@ -155,7 +160,7 @@ async fn run() -> Result<(), GwsError> {
     // Re-parse args (skip argv[0] which is the binary, and argv[1] which is the service name)
     // Filter out --api-version and its value
     // Prepend "gws" as the program name since try_get_matches_from expects argv[0]
-    let sub_args = filter_args_for_subcommand(&args, &first_arg);
+    let sub_args = filter_args_for_subcommand(&args, &first_arg_val);
 
     let matches = cli.try_get_matches_from(&sub_args).map_err(|e| {
         // If it's a help or version display, print it and exit cleanly
@@ -423,6 +428,7 @@ fn print_usage() {
     println!("    --upload <PATH>       Local file to upload as media content (multipart)");
     println!("    --output <PATH>       Output file path for binary responses");
     println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
+    println!("    --profile <NAME>      Use a specific configuration profile");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
     println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
@@ -449,6 +455,7 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
     );
+    println!("    GOOGLE_WORKSPACE_CLI_PROFILE             Configuration profile to use (e.g., 'work', 'personal')");
     println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
     println!(
         "    GOOGLE_WORKSPACE_CLI_SANITIZE_MODE       Sanitization mode: warn (default) or block"
@@ -689,3 +696,4 @@ mod tests {
         assert_eq!(select_scope(&scopes), None);
     }
 }
+

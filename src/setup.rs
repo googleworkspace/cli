@@ -1265,7 +1265,7 @@ async fn stage_enable_apis(ctx: &mut SetupContext) -> Result<SetupStage, GwsErro
 ///
 /// Returned as the error message when `gws auth setup` cannot prompt interactively,
 /// so users get a clear checklist instead of a cryptic "run interactively" error.
-fn manual_oauth_instructions(project_id: &str) -> String {
+async fn manual_oauth_instructions(project_id: &str) -> String {
     let consent_url = if project_id.is_empty() {
         "https://console.cloud.google.com/apis/credentials/consent".to_string()
     } else {
@@ -1316,7 +1316,7 @@ fn manual_oauth_instructions(project_id: &str) -> String {
         ),
         consent_url = consent_url,
         creds_url = creds_url,
-        config_path = crate::oauth_config::client_config_path().display()
+        config_path = crate::oauth_config::client_config_path().await.display().to_string()
     )
 }
 
@@ -1332,14 +1332,14 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
         StepStatus::InProgress("Waiting for manual input...".into()),
     );
     if !ctx.interactive {
-        return Err(GwsError::Validation(manual_oauth_instructions(
-            &ctx.project_id,
-        )));
+        return Err(GwsError::Validation(
+            manual_oauth_instructions(&ctx.project_id).await,
+        ));
     }
 
     let (cid_result, csecret_result) = if let Some(ref mut w) = ctx.wizard {
         let current_creds: Option<serde_json::Value> = crate::credential_store::load_encrypted()
-            .ok()
+            .await.ok()
             .and_then(|s| serde_json::from_str(&s).ok());
 
         w.show_message(&format!(
@@ -1424,7 +1424,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
         &ctx.client_id,
         &ctx.client_secret,
         &ctx.project_id,
-    )
+    ).await
     .map_err(|e| GwsError::Validation(format!("Failed to save client config: {e}")))?;
 
     ctx.wiz(4, StepStatus::Done("configured".into()));
@@ -1488,7 +1488,7 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         "apis_enabled": ctx.enabled.len(),
         "apis_skipped": ctx.skipped.len(),
         "apis_failed": ctx.failed.iter().map(|(api, err)| json!({"api": api, "error": err})).collect::<Vec<_>>(),
-        "client_config": crate::oauth_config::client_config_path().display().to_string(),
+        "client_config": crate::oauth_config::client_config_path().await.display().to_string(),
     });
     println!(
         "{}",
