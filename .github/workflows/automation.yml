@@ -93,7 +93,7 @@ jobs:
       - name: Trigger Gemini Code Assist review
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
           script: |
             await github.rest.issues.createComment({
               owner: context.repo.owner,
