@@ -218,9 +218,9 @@ fn validate_safe_write_file_path(path: &str, flag_name: &str) -> Result<PathBuf,
         )));
     }
 
-    if canonical.exists() && canonical.is_dir() {
+    if canonical.exists() && !canonical.is_file() {
         return Err(GwsError::Validation(format!(
-            "{flag_name} '{}' points to a directory; provide a file path",
+            "{flag_name} '{}' must point to a regular file when it already exists",
             path
         )));
     }
@@ -603,6 +603,32 @@ mod tests {
         std::env::set_current_dir(&canonical_dir).unwrap();
 
         let result = validate_safe_output_file_path("already-dir");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    #[cfg(unix)]
+    fn test_output_file_path_rejects_fifo_target() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let fifo = canonical_dir.join("out.fifo");
+
+        let mkfifo_status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        if !mkfifo_status.success() {
+            // Skip if mkfifo is unavailable in this environment.
+            return;
+        }
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_output_file_path("out.fifo");
         std::env::set_current_dir(&saved_cwd).unwrap();
 
         assert!(result.is_err());
