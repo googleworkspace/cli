@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use yup_oauth2::storage::{TokenInfo, TokenStorage, TokenStorageError};
 
 /// A custom token storage implementation for `yup-oauth2` that encrypts
-/// the cached tokens at rest using the AES key derived from the OS keyring.
+/// the cached tokens at rest using AES-256-GCM encryption.
 pub struct EncryptedTokenStorage {
     file_path: PathBuf,
     // Add memory cache since TokenStorage getters can be called frequently
