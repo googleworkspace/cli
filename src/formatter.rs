@@ -599,6 +599,30 @@ mod tests {
     }
 
     #[test]
+    fn test_format_csv_flat_scalars() {
+        // Flat array of non-object, non-array values → one value per line
+        let val = json!(["apple", "banana", "cherry"]);
+        let output = format_value(&val, &OutputFormat::Csv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "apple");
+        assert_eq!(lines[1], "banana");
+        assert_eq!(lines[2], "cherry");
+    }
+
+    #[test]
+    fn test_format_csv_flat_scalars_with_escaping() {
+        // Scalars that contain commas/quotes must be CSV-escaped
+        let val = json!(["plain", "has,comma", "has\"quote"]);
+        let output = format_value(&val, &OutputFormat::Csv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "plain");
+        assert_eq!(lines[1], "\"has,comma\"");
+        assert_eq!(lines[2], "\"has\"\"quote\"");
+    }
+
+    #[test]
     fn test_format_csv_escape() {
         assert_eq!(csv_escape("simple"), "simple");
         assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
