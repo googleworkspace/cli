@@ -200,36 +200,8 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|s| crate::formatter::OutputFormat::from_str(s))
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
-    // Determine time range
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let days: u64 = if matches.get_flag("tomorrow") {
-        // Start from tomorrow, 1 day
-        1
-    } else if matches.get_flag("week") {
-        7
-    } else {
-        matches
-            .get_one::<String>("days")
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1)
-    };
-
-    let (time_min_epoch, time_max_epoch) = if matches.get_flag("tomorrow") {
-        // Tomorrow: start of tomorrow to end of tomorrow
-        let day_seconds = 86400;
-        let tomorrow_start = (now / day_seconds + 1) * day_seconds;
-        (tomorrow_start, tomorrow_start + day_seconds)
-    } else {
-        // Start from now
-        (now, now + days * 86400)
-    };
-
-    let time_min = epoch_to_rfc3339(time_min_epoch);
-    let time_max = epoch_to_rfc3339(time_max_epoch);
+    let now = chrono::Local::now();
+    let (time_min, time_max) = compute_agenda_range(matches, now)?;
 
     let client = crate::client::build_client()?;
     let calendar_filter = matches.get_one::<String>("calendar");
@@ -400,6 +372,93 @@ fn epoch_to_rfc3339(epoch: u64) -> String {
     Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
 }
 
+fn local_date_range<Tz>(
+    timezone: &Tz,
+    date: chrono::NaiveDate,
+    days: u64,
+) -> Result<(String, String), GwsError>
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    use chrono::{Days, LocalResult};
+
+    let start_naive = date.and_hms_opt(0, 0, 0).ok_or_else(|| {
+        GwsError::Other(anyhow::anyhow!("Failed to construct local start of day"))
+    })?;
+    let end_date = date.checked_add_days(Days::new(days)).ok_or_else(|| {
+        GwsError::Other(anyhow::anyhow!("Failed to compute end date for agenda range"))
+    })?;
+    let end_naive = end_date.and_hms_opt(0, 0, 0).ok_or_else(|| {
+        GwsError::Other(anyhow::anyhow!("Failed to construct local end of day"))
+    })?;
+
+    let start = match timezone.from_local_datetime(&start_naive) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::Ambiguous(dt, _) => dt,
+        LocalResult::None => {
+            return Err(GwsError::Other(anyhow::anyhow!(
+                "Failed to resolve local agenda start time"
+            )));
+        }
+    };
+    let end = match timezone.from_local_datetime(&end_naive) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::Ambiguous(dt, _) => dt,
+        LocalResult::None => {
+            return Err(GwsError::Other(anyhow::anyhow!(
+                "Failed to resolve local agenda end time"
+            )));
+        }
+    };
+
+    Ok((
+        start.with_timezone(&chrono::Utc).to_rfc3339(),
+        end.with_timezone(&chrono::Utc).to_rfc3339(),
+    ))
+}
+
+fn compute_agenda_range<Tz>(
+    matches: &ArgMatches,
+    now: chrono::DateTime<Tz>,
+) -> Result<(String, String), GwsError>
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    use chrono::Days;
+
+    let local_date = now.date_naive();
+
+    if matches.get_flag("tomorrow") {
+        let tomorrow = local_date.checked_add_days(Days::new(1)).ok_or_else(|| {
+            GwsError::Other(anyhow::anyhow!("Failed to compute tomorrow for agenda range"))
+        })?;
+        return local_date_range(&now.timezone(), tomorrow, 1);
+    }
+
+    if matches.get_flag("today") {
+        return local_date_range(&now.timezone(), local_date, 1);
+    }
+
+    if matches.get_flag("week") {
+        return local_date_range(&now.timezone(), local_date, 7);
+    }
+
+    if let Some(days) = matches
+        .get_one::<String>("days")
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        return local_date_range(&now.timezone(), local_date, days);
+    }
+
+    let now_epoch = now.with_timezone(&chrono::Utc).timestamp() as u64;
+    Ok((
+        epoch_to_rfc3339(now_epoch),
+        epoch_to_rfc3339(now_epoch + 86400),
+    ))
+}
+
 fn build_insert_request(
     matches: &ArgMatches,
     doc: &crate::discovery::RestDescription,
@@ -489,6 +548,19 @@ mod tests {
         cmd.try_get_matches_from(args).unwrap()
     }
 
+    fn make_matches_agenda(args: &[&str]) -> ArgMatches {
+        let cmd = Command::new("test")
+            .arg(Arg::new("today").long("today").action(ArgAction::SetTrue))
+            .arg(
+                Arg::new("tomorrow")
+                    .long("tomorrow")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(Arg::new("week").long("week").action(ArgAction::SetTrue))
+            .arg(Arg::new("days").long("days").num_args(1));
+        cmd.try_get_matches_from(args).unwrap()
+    }
+
     #[test]
     fn test_build_insert_request() {
         let doc = make_mock_doc();
@@ -535,5 +607,47 @@ mod tests {
         assert!(body.contains("Discuss stuff"));
         assert!(body.contains("a@b.com"));
         assert!(body.contains("c@d.com"));
+    }
+
+    #[test]
+    fn test_compute_agenda_range_today_uses_local_midnight_boundaries() {
+        use chrono::{FixedOffset, TimeZone};
+
+        let matches = make_matches_agenda(&["test", "--today"]);
+        let tz = FixedOffset::west_opt(8 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 3, 5, 20, 20, 0).unwrap();
+
+        let (time_min, time_max) = compute_agenda_range(&matches, now).unwrap();
+
+        assert_eq!(time_min, "2026-03-05T08:00:00+00:00");
+        assert_eq!(time_max, "2026-03-06T08:00:00+00:00");
+    }
+
+    #[test]
+    fn test_compute_agenda_range_tomorrow_uses_next_local_day() {
+        use chrono::{FixedOffset, TimeZone};
+
+        let matches = make_matches_agenda(&["test", "--tomorrow"]);
+        let tz = FixedOffset::west_opt(8 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 3, 5, 20, 20, 0).unwrap();
+
+        let (time_min, time_max) = compute_agenda_range(&matches, now).unwrap();
+
+        assert_eq!(time_min, "2026-03-06T08:00:00+00:00");
+        assert_eq!(time_max, "2026-03-07T08:00:00+00:00");
+    }
+
+    #[test]
+    fn test_compute_agenda_range_days_starts_at_local_midnight() {
+        use chrono::{FixedOffset, TimeZone};
+
+        let matches = make_matches_agenda(&["test", "--days", "2"]);
+        let tz = FixedOffset::west_opt(8 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 3, 5, 20, 20, 0).unwrap();
+
+        let (time_min, time_max) = compute_agenda_range(&matches, now).unwrap();
+
+        assert_eq!(time_min, "2026-03-05T08:00:00+00:00");
+        assert_eq!(time_max, "2026-03-07T08:00:00+00:00");
     }
 }
