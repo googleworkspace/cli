@@ -7,7 +7,7 @@ set -euo pipefail
 VERSION=$(node -p "require('./package.json').version")
 TAG="v${VERSION}"
 
-if git rev-parse "$TAG" >/dev/null 2>&1; then
+if git rev-parse "$TAG" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
   echo "Tag $TAG already exists, skipping"
   exit 0
 fi
