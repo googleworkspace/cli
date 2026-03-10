@@ -89,11 +89,9 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        // Keyring is authoritative — remove redundant file copy
-                        // if it exists (migrates existing installs on upgrade).
-                        if key_file.exists() {
-                            let _ = std::fs::remove_file(&key_file);
-                        }
+                        // Keyring read succeeded — keep the file as a backup
+                        // in case a future process cannot access the keyring
+                        // (e.g. ad-hoc signed binaries on macOS).
                         return Ok(cache_key(arr));
                     }
                 }
@@ -108,10 +106,25 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                             if decoded.len() == 32 {
                                 let mut arr = [0u8; 32];
                                 arr.copy_from_slice(&decoded);
-                                // Migrate file key into keyring; remove the
-                                // file if the keyring store succeeds.
+                                // Try to migrate file key into keyring, but
+                                // only remove the file if we can verify the
+                                // roundtrip (read back what we just wrote).
                                 if entry.set_password(b64_key.trim()).is_ok() {
-                                    let _ = std::fs::remove_file(&key_file);
+                                    match entry.get_password() {
+                                        Ok(readback) if readback.trim() == b64_key.trim() => {
+                                            // Keyring roundtrip verified — safe
+                                            // to remove the file copy.
+                                            let _ = std::fs::remove_file(&key_file);
+                                        }
+                                        _ => {
+                                            // Keyring write appeared to succeed
+                                            // but readback failed — keep the file.
+                                            eprintln!(
+                                                "Warning: OS keyring write succeeded but readback \
+                                                 failed; keeping .encryption_key file as fallback."
+                                            );
+                                        }
+                                    }
                                 }
                                 return Ok(cache_key(arr));
                             }
@@ -124,14 +137,11 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 rand::thread_rng().fill_bytes(&mut key);
                 let b64_key = STANDARD.encode(key);
 
-                // Try keyring first; only fall back to file storage
-                // if the keyring is unavailable.
-                if entry.set_password(&b64_key).is_ok() {
-                    return Ok(cache_key(key));
-                }
-
-                // Keyring store failed — persist to local file as fallback.
+                // Always persist to local file first so the key is never lost.
                 save_key_file(&key_file, &b64_key)?;
+
+                // Also try to store in keyring for convenience.
+                let _ = entry.set_password(&b64_key);
 
                 return Ok(cache_key(key));
             }
