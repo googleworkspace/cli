@@ -19,12 +19,17 @@
 //! error mapping, and optionally running text content through Model Armor for sanitization.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
+
+#[cfg(test)]
+use serial_test::serial;
+#[cfg(test)]
+use tempfile::tempdir;
 
 use crate::discovery::{RestDescription, RestMethod};
 use crate::error::GwsError;
@@ -75,7 +80,7 @@ fn parse_and_validate_inputs(
     method: &RestMethod,
     params_json: Option<&str>,
     body_json: Option<&str>,
-    upload_path: Option<&str>,
+    has_upload: bool,
 ) -> Result<ExecutionInput, GwsError> {
     let params: Map<String, Value> = if let Some(p) = params_json {
         serde_json::from_str(p)
@@ -122,8 +127,8 @@ fn parse_and_validate_inputs(
         }
     }
 
-    let (full_url, query_params) = build_url(doc, method, &params, upload_path.is_some())?;
-    let is_upload = upload_path.is_some() && method.supports_media_upload;
+    let (full_url, query_params) = build_url(doc, method, &params, has_upload)?;
+    let is_upload = has_upload && method.supports_media_upload;
 
     Ok(ExecutionInput {
         params,
@@ -144,7 +149,7 @@ async fn build_http_request(
     auth_method: &AuthMethod,
     page_token: Option<&str>,
     pages_fetched: u32,
-    upload_path: Option<&str>,
+    upload_path: Option<&Path>,
 ) -> Result<reqwest::RequestBuilder, GwsError> {
     let mut request = match method.http_method.as_str() {
         "GET" => client.get(&input.full_url),
@@ -185,7 +190,8 @@ async fn build_http_request(
             let file_bytes = tokio::fs::read(upload_path).await.map_err(|e| {
                 GwsError::Validation(format!(
                     "Failed to read upload file '{}': {}",
-                    upload_path, e
+                    upload_path.display(),
+                    e
                 ))
             })?;
 
@@ -303,12 +309,12 @@ async fn handle_json_response(
 async fn handle_binary_response(
     response: reqwest::Response,
     content_type: &str,
-    output_path: Option<&str>,
+    output_path: Option<&Path>,
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
     let file_path = if let Some(p) = output_path {
-        PathBuf::from(p)
+        p.to_path_buf()
     } else {
         let ext = mime_to_extension(content_type);
         PathBuf::from(format!("download.{ext}"))
@@ -350,14 +356,14 @@ async fn handle_binary_response(
 fn validate_execution_paths(
     output_path: Option<&str>,
     upload_path: Option<&str>,
-) -> Result<(), GwsError> {
-    if let Some(path) = output_path {
-        crate::validate::validate_safe_output_file_path(path)?;
-    }
-    if let Some(path) = upload_path {
-        crate::validate::validate_safe_input_file_path(path)?;
-    }
-    Ok(())
+) -> Result<(Option<PathBuf>, Option<PathBuf>), GwsError> {
+    let canonical_output_path = output_path
+        .map(crate::validate::validate_safe_output_file_path)
+        .transpose()?;
+    let canonical_upload_path = upload_path
+        .map(crate::validate::validate_safe_input_file_path)
+        .transpose()?;
+    Ok((canonical_output_path, canonical_upload_path))
 }
 
 /// Executes an API method call.
@@ -387,8 +393,14 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    validate_execution_paths(output_path, upload_path)?;
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
+    let (safe_output_path, safe_upload_path) = validate_execution_paths(output_path, upload_path)?;
+    let input = parse_and_validate_inputs(
+        doc,
+        method,
+        params_json,
+        body_json,
+        safe_upload_path.is_some(),
+    )?;
 
     if dry_run {
         let dry_run_info = json!({
@@ -423,7 +435,7 @@ pub async fn execute_method(
             &auth_method,
             page_token.as_deref(),
             pages_fetched,
-            upload_path,
+            safe_upload_path.as_deref(),
         )
         .await?;
 
@@ -470,7 +482,7 @@ pub async fn execute_method(
         } else if let Some(res) = handle_binary_response(
             response,
             &content_type,
-            output_path,
+            safe_output_path.as_deref(),
             output_format,
             capture_output,
         )
@@ -1860,6 +1872,77 @@ async fn test_execute_method_dry_run_accepts_safe_relative_paths() {
     assert!(result.is_ok(), "expected Ok, got: {result:?}");
     let val = result.unwrap().expect("expected dry-run JSON");
     assert_eq!(val["dry_run"], true);
+}
+
+#[test]
+#[serial]
+fn test_validate_execution_paths_returns_canonical_paths() {
+    let dir = tempdir().unwrap();
+    let canonical_dir = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(canonical_dir.join("sub")).unwrap();
+    std::fs::write(canonical_dir.join("sub").join("file.txt"), b"ok").unwrap();
+
+    let saved_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&canonical_dir).unwrap();
+    let result = validate_execution_paths(Some("downloads/out.bin"), Some("sub/file.txt"));
+    std::env::set_current_dir(&saved_cwd).unwrap();
+
+    let (output_path, upload_path) = result.expect("expected canonicalized paths");
+    assert_eq!(
+        output_path.unwrap(),
+        canonical_dir.join("downloads").join("out.bin")
+    );
+    assert_eq!(
+        upload_path.unwrap(),
+        canonical_dir
+            .join("sub")
+            .join("file.txt")
+            .canonicalize()
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_build_http_request_uses_canonical_upload_path() {
+    let dir = tempdir().unwrap();
+    let upload_path = dir.path().join("upload.bin");
+    std::fs::write(&upload_path, b"hello").unwrap();
+    let canonical_upload_path = upload_path.canonicalize().unwrap();
+
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: None,
+        params: Map::new(),
+        query_params: HashMap::new(),
+        is_upload: true,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        None,
+        &AuthMethod::None,
+        None,
+        0,
+        Some(canonical_upload_path.as_path()),
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    assert_eq!(built.url().query(), Some("uploadType=multipart"));
+    assert!(built
+        .headers()
+        .get("Content-Type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| value.starts_with("multipart/related; boundary=")));
 }
 
 #[test]
