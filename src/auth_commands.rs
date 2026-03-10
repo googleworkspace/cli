@@ -144,6 +144,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --login          Run `gws auth login` after successful setup\n",
         "  status   Show current authentication state\n",
         "  export   Print decrypted credentials to stdout\n",
+        "           --unmasked       Print full credentials including secrets (default: masked)\n",
         "  logout   Clear saved credentials and token cache",
     );
 
@@ -397,6 +398,7 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Export credentials to stdout 
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
     let enc_path = credential_store::encrypted_credentials_path();
     if !enc_path.exists() {
