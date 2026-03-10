@@ -398,7 +398,7 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Export credentials to stdout 
+/// Export credentials to stdout
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
     let enc_path = credential_store::encrypted_credentials_path();
     if !enc_path.exists() {
