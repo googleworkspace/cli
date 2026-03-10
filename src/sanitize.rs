@@ -122,10 +122,10 @@ fn regional_base_url(location: &str) -> String {
 /// Extract location from a full template resource name.
 /// e.g. "projects/my-project/locations/us-central1/templates/my-template" -> "us-central1"
 fn extract_location(resource_name: &str) -> Option<&str> {
-    let parts: Vec<&str> = resource_name.split('/').collect();
-    for i in 0..parts.len() {
-        if parts[i] == "locations" && i + 1 < parts.len() {
-            return Some(parts[i + 1]);
+    let mut parts = resource_name.split('/');
+    while let Some(part) = parts.next() {
+        if part == "locations" {
+            return parts.next();
         }
     }
     None
