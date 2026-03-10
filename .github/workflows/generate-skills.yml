@@ -42,7 +42,7 @@ jobs:
         with:
           # For cron/dispatch: check out main. For push: check out the branch.
           ref: ${{ github.head_ref || github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -88,6 +88,7 @@ jobs:
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
+          token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
           branch: chore/sync-skills
           title: "chore: sync skills with Discovery API"
           body: |
@@ -107,9 +108,11 @@ jobs:
         if: >-
           steps.diff.outputs.changed == 'true' &&
           github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "googleworkspace-bot"
+          git config user.email "googleworkspace-bot@users.noreply.github.com"
 
           git add skills/ docs/skills.md
           git commit -m "chore: regenerate skills [skip ci]"
