@@ -52,7 +52,7 @@ derive_builder = "0.20.2"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
 chrono = "0.4.44"
-keyring = "3.6.3"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 async-trait = "0.1.89"
 serde_yaml = "0.9.34"
 percent-encoding = "2.3.2"
