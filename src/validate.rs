@@ -141,7 +141,6 @@ pub fn validate_safe_output_file_path(path: &str) -> Result<PathBuf, GwsError> {
 ///
 /// This reduces the race window between path validation and file consumption by
 /// reading from the validated path immediately.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn read_safe_upload_file(path: &str) -> Result<Vec<u8>, GwsError> {
     let canonical = validate_safe_input_file_path(path)?;
 
@@ -212,7 +211,6 @@ pub fn read_safe_upload_file(path: &str) -> Result<Vec<u8>, GwsError> {
 /// Returns a trusted writable file handle and the canonical path used for
 /// writing. Existing files are opened without truncation first so post-open
 /// safety checks still run before bytes are written.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn open_safe_output_file(path: &str) -> Result<(std::fs::File, PathBuf), GwsError> {
     let canonical = validate_safe_output_file_path(path)?;
     let existed_before_open = std::fs::symlink_metadata(&canonical).is_ok();
@@ -335,7 +333,6 @@ pub fn open_safe_output_file(path: &str) -> Result<(std::fs::File, PathBuf), Gws
 }
 
 #[cfg(unix)]
-#[cfg_attr(not(test), allow(dead_code))]
 fn open_parent_dir_under_cwd(
     parent: &Path,
     flag_name: &str,
@@ -398,7 +395,6 @@ fn open_parent_dir_under_cwd(
 }
 
 #[cfg(unix)]
-#[cfg_attr(not(test), allow(dead_code))]
 fn open_child_no_follow(
     parent_dir: &std::fs::File,
     leaf: &std::ffi::OsStr,
