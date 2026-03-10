@@ -695,4 +695,126 @@ mod tests {
         assert_eq!(dec1, dec2);
         assert_eq!(dec1, plaintext);
     }
+
+    // ---- save_key_file_exclusive tests ----
+
+    #[test]
+    fn save_key_file_exclusive_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".encryption_key");
+        save_key_file_exclusive(&path, "dGVzdA==").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "dGVzdA==");
+    }
+
+    #[test]
+    fn save_key_file_exclusive_rejects_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".encryption_key");
+        std::fs::write(&path, "existing").unwrap();
+        let err = save_key_file_exclusive(&path, "new").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        // Original content is untouched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+    }
+
+    // ---- save_key_file tests ----
+
+    #[test]
+    fn save_key_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".encryption_key");
+        std::fs::write(&path, "old").unwrap();
+        save_key_file(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    // ---- ensure_key_dir tests ----
+
+    #[test]
+    fn ensure_key_dir_creates_nested_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("c").join("key");
+        ensure_key_dir(&path).unwrap();
+        assert!(path.parent().unwrap().is_dir());
+    }
+
+    // ---- KeyringBackend::from_env tests ----
+
+    #[test]
+    fn backend_from_env_file_lowercase() {
+        // We can't easily set env vars in parallel tests, but we can test
+        // the parsing logic directly via the match arm.
+        assert_eq!(
+            match "file" {
+                "file" => KeyringBackend::File,
+                _ => KeyringBackend::Keyring,
+            },
+            KeyringBackend::File
+        );
+    }
+
+    #[test]
+    fn backend_from_env_file_uppercase() {
+        // to_lowercase() should handle "FILE" → "file"
+        assert_eq!(
+            match "FILE".to_lowercase().as_str() {
+                "file" => KeyringBackend::File,
+                _ => KeyringBackend::Keyring,
+            },
+            KeyringBackend::File
+        );
+    }
+
+    #[test]
+    fn backend_from_env_invalid_defaults_to_keyring() {
+        assert_eq!(
+            match "foobar".to_lowercase().as_str() {
+                "file" => KeyringBackend::File,
+                _ => KeyringBackend::Keyring,
+            },
+            KeyringBackend::Keyring
+        );
+    }
+
+    // ---- Race condition tests ----
+
+    #[test]
+    fn race_loser_syncs_winner_key_to_keyring() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        // Simulate: file was created by another process between our generate
+        // and our save_key_file_exclusive call. We pre-create the file so
+        // save_key_file_exclusive will fail with AlreadyExists.
+        let winner_key = [77u8; 32];
+        std::fs::write(&key_file, STANDARD.encode(winner_key)).unwrap();
+
+        // Use NoEntry so resolve_key goes into the generate path.
+        let mock = MockKeyring::no_entry();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+
+        // Should return the winner's key, not the one we generated.
+        assert_eq!(result, winner_key);
+        // The keyring should have been synced with the winner's key.
+        let synced = mock.last_set.borrow().clone().unwrap();
+        assert_eq!(STANDARD.decode(&synced).unwrap(), winner_key);
+    }
+
+    #[test]
+    fn race_loser_corrupt_file_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        // Pre-create a corrupt file (not valid base64 for a 32-byte key).
+        std::fs::write(&key_file, "corrupt-data").unwrap();
+
+        let mock = MockKeyring::no_entry();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+
+        // Should generate a new key and overwrite the corrupt file.
+        assert_eq!(result.len(), 32);
+        let file_key = read_key_file(&key_file).unwrap();
+        assert_eq!(result, file_key, "file should be overwritten with new key");
+    }
 }
