@@ -12,14 +12,61 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fs::File;
 use std::path::PathBuf;
 
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 
+use fs2::FileExt;
 use keyring::Entry;
 use rand::RngCore;
 use std::sync::OnceLock;
+
+fn should_persist_fallback_key() -> bool {
+    cfg!(target_os = "linux")
+}
+
+fn persist_fallback_key(path: &std::path::Path, b64_key: &str) {
+    if let Err(e) = save_key_file(path, b64_key) {
+        eprintln!(
+            "Warning: failed to persist local fallback encryption key at {}: {e}",
+            path.display()
+        );
+    }
+}
+
+fn sync_key_file_after_keyring_success(path: &std::path::Path, b64_key: &str) {
+    if should_persist_fallback_key() {
+        persist_fallback_key(path, b64_key);
+    } else if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn acquire_key_creation_lock(config_dir: &std::path::Path) -> anyhow::Result<File> {
+    std::fs::create_dir_all(config_dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(config_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            eprintln!("Warning: failed to set secure permissions on key directory: {e}");
+        }
+    }
+
+    let lock_path = config_dir.join(".encryption_key.lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)?;
+
+    file.lock_exclusive()?;
+    Ok(file)
+}
 
 /// Persist the base64-encoded encryption key to a local file with restrictive
 /// permissions (0600 file, 0700 directory). Used only as a fallback when the OS
@@ -77,7 +124,14 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown-user".to_string());
 
-    let key_file = crate::auth_commands::config_dir().join(".encryption_key");
+    let config_dir = crate::auth_commands::config_dir();
+    let _lock = acquire_key_creation_lock(&config_dir)?;
+
+    if let Some(key) = KEY.get() {
+        return Ok(*key);
+    }
+
+    let key_file = config_dir.join(".encryption_key");
 
     let entry = Entry::new("gws-cli", &username);
 
@@ -89,11 +143,10 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        // Keyring is authoritative — remove redundant file copy
-                        // if it exists (migrates existing installs on upgrade).
-                        if key_file.exists() {
-                            let _ = std::fs::remove_file(&key_file);
-                        }
+                        // Keep a local fallback on Linux because Secret
+                        // Service availability can be transient across fresh
+                        // processes in headless environments.
+                        sync_key_file_after_keyring_success(&key_file, &b64_key);
                         return Ok(cache_key(arr));
                     }
                 }
@@ -108,10 +161,8 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                             if decoded.len() == 32 {
                                 let mut arr = [0u8; 32];
                                 arr.copy_from_slice(&decoded);
-                                // Migrate file key into keyring; remove the
-                                // file if the keyring store succeeds.
                                 if entry.set_password(b64_key.trim()).is_ok() {
-                                    let _ = std::fs::remove_file(&key_file);
+                                    sync_key_file_after_keyring_success(&key_file, b64_key.trim());
                                 }
                                 return Ok(cache_key(arr));
                             }
@@ -124,9 +175,11 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
                 rand::thread_rng().fill_bytes(&mut key);
                 let b64_key = STANDARD.encode(key);
 
-                // Try keyring first; only fall back to file storage
-                // if the keyring is unavailable.
+                // Try keyring first. On Linux, also keep a local fallback key
+                // because Secret Service access may succeed once but fail in a
+                // later process.
                 if entry.set_password(&b64_key).is_ok() {
+                    sync_key_file_after_keyring_success(&key_file, &b64_key);
                     return Ok(cache_key(key));
                 }
 
@@ -267,6 +320,38 @@ pub fn load_encrypted() -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    #[test]
+    fn sync_key_file_after_keyring_success_matches_platform_strategy() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let b64_key = STANDARD.encode([7u8; 32]);
+
+        save_key_file(&key_file, "stale-key").unwrap();
+        sync_key_file_after_keyring_success(&key_file, &b64_key);
+
+        if should_persist_fallback_key() {
+            assert_eq!(std::fs::read_to_string(&key_file).unwrap(), b64_key);
+        } else {
+            assert!(!key_file.exists());
+        }
+    }
+
+    #[test]
+    fn linux_strategy_persists_fallback_key_material() {
+        if !should_persist_fallback_key() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let b64_key = STANDARD.encode([9u8; 32]);
+
+        sync_key_file_after_keyring_success(&key_file, &b64_key);
+
+        assert_eq!(std::fs::read_to_string(&key_file).unwrap(), b64_key);
+    }
 
     #[test]
     fn get_or_create_key_is_deterministic() {
