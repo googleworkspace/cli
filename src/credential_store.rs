@@ -20,6 +20,7 @@ use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 use keyring::Entry;
 use rand::RngCore;
 use std::sync::OnceLock;
+use zeroize::Zeroize;
 
 /// Ensure the key-file parent directory exists with restrictive permissions.
 fn ensure_key_dir(path: &std::path::Path) -> std::io::Result<()> {
@@ -54,6 +55,7 @@ fn save_key_file_exclusive(path: &std::path::Path, b64_key: &str) -> std::io::Re
     }
     let mut file = opts.open(path)?;
     file.write_all(b64_key.as_bytes())?;
+    file.sync_all()?; // fsync: ensure key is durable before returning
     Ok(())
 }
 
@@ -70,6 +72,7 @@ fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
         options.write(true).create(true).truncate(true).mode(0o600);
         let mut file = options.open(path)?;
         file.write_all(b64_key.as_bytes())?;
+        file.sync_all()?; // fsync: ensure key is durable before returning
     }
     #[cfg(not(unix))]
     {
@@ -79,15 +82,38 @@ fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
 }
 
 /// Read and decode a base64-encoded 256-bit key from a file.
+///
+/// On Unix, warns if the file is world-readable (mode & 0o077 != 0).
 fn read_key_file(path: &std::path::Path) -> Option<[u8; 32]> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    // Item 4: validate file permissions on read
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mode = meta.permissions().mode();
+            if mode & 0o077 != 0 {
+                eprintln!(
+                    "Warning: encryption key file {} has overly permissive mode {:04o}. \
+                     Expected 0600. Run: chmod 600 {}",
+                    path.display(),
+                    mode & 0o777,
+                    path.display()
+                );
+            }
+        }
+    }
+
     let b64_key = std::fs::read_to_string(path).ok()?;
-    let decoded = STANDARD.decode(b64_key.trim()).ok()?;
+    let mut decoded = STANDARD.decode(b64_key.trim()).ok()?;
     if decoded.len() == 32 {
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&decoded);
+        decoded.zeroize(); // scrub decoded key material from heap
         Some(arr)
     } else {
+        decoded.zeroize();
         None
     }
 }
@@ -145,13 +171,27 @@ enum KeyringBackend {
 
 impl KeyringBackend {
     fn from_env() -> Self {
-        match std::env::var("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str()
-        {
+        let raw = std::env::var("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND").unwrap_or_default();
+        let lower = raw.to_lowercase();
+        match lower.as_str() {
             "file" => KeyringBackend::File,
-            _ => KeyringBackend::Keyring,
+            "keyring" | "" => KeyringBackend::Keyring,
+            other => {
+                // Item 1: warn on unrecognized values
+                eprintln!(
+                    "Warning: unknown GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=\"{other}\", \
+                     defaulting to \"keyring\". Valid values: \"keyring\", \"file\"."
+                );
+                KeyringBackend::Keyring
+            }
+        }
+    }
+
+    /// Human-readable name for logging and status output.
+    fn as_str(&self) -> &'static str {
+        match self {
+            KeyringBackend::Keyring => "keyring",
+            KeyringBackend::File => "file",
         }
     }
 }
@@ -255,6 +295,8 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
     }
 
     let backend = KeyringBackend::from_env();
+    // Item 5: log which backend was selected
+    eprintln!("Using keyring backend: {}", backend.as_str());
 
     let username = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -312,6 +354,11 @@ pub fn decrypt(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     })?;
 
     Ok(plaintext)
+}
+
+/// Returns the name of the active keyring backend for status display.
+pub fn active_backend_name() -> &'static str {
+    KeyringBackend::from_env().as_str()
 }
 
 /// Returns the path for encrypted credentials.

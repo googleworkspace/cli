@@ -944,6 +944,7 @@ async fn handle_status() -> Result<(), GwsError> {
     let mut output = json!({
         "auth_method": auth_method,
         "storage": storage,
+        "keyring_backend": credential_store::active_backend_name(),
         "encrypted_credentials": enc_path.display().to_string(),
         "encrypted_credentials_exists": has_encrypted,
         "plain_credentials": plain_path.display().to_string(),
