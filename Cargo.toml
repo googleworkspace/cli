@@ -52,11 +52,19 @@ derive_builder = "0.20.2"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
 chrono = "0.4.44"
-keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 async-trait = "0.1.89"
 serde_yaml = "0.9.34"
 percent-encoding = "2.3.2"
 zeroize = { version = "1.8.2", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+keyring = "3.6.3"
 
 
 # The profile that 'cargo dist' will build with
