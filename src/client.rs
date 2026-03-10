@@ -86,71 +86,13 @@ pub async fn send_builder_with_retry(
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
 
-    match template.try_clone() {
-        Some(r) => r.send().await,
-        None => template.send().await,
-    }
+    template.send().await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-
-    fn reason_phrase(code: u16) -> &'static str {
-        match code {
-            200 => "OK",
-            429 => "Too Many Requests",
-            500 => "Internal Server Error",
-            _ => "Status",
-        }
-    }
-
-    async fn spawn_response_server(
-        responses: Vec<(u16, Option<u64>)>,
-    ) -> (
-        String,
-        Arc<AtomicUsize>,
-        tokio::task::JoinHandle<Result<(), std::io::Error>>,
-    ) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let hits_clone = Arc::clone(&hits);
-
-        let handle = tokio::spawn(async move {
-            for (status, retry_after) in responses {
-                let (mut socket, _) = listener.accept().await?;
-                let mut buf = [0u8; 2048];
-                let _ = socket.read(&mut buf).await?;
-                hits_clone.fetch_add(1, Ordering::SeqCst);
-
-                let body = b"{}";
-                let mut extra_headers = String::new();
-                if let Some(v) = retry_after {
-                    extra_headers.push_str(&format!("Retry-After: {v}\r\n"));
-                }
-
-                let response = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n",
-                    status,
-                    reason_phrase(status),
-                    body.len(),
-                    extra_headers
-                );
-                socket.write_all(response.as_bytes()).await?;
-                socket.write_all(body).await?;
-            }
-            Ok(())
-        });
-
-        (format!("http://{addr}/"), hits, handle)
-    }
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn build_client_succeeds() {
@@ -174,7 +116,11 @@ mod tests {
 
     #[tokio::test]
     async fn send_with_retry_retries_on_429() {
-        let (url, hits, handle) = spawn_response_server(vec![(429, Some(0)), (200, None)]).await;
+        let (url, hits, handle) = crate::test_utils::spawn_response_server(vec![
+            crate::test_utils::mock_http_response(429, Some(0), "{}"),
+            crate::test_utils::mock_http_response(200, None, "{}"),
+        ])
+        .await;
         let client = reqwest::Client::new();
 
         let resp = send_with_retry(|| client.get(&url)).await.unwrap();
@@ -186,7 +132,11 @@ mod tests {
 
     #[tokio::test]
     async fn send_builder_with_retry_retries_on_429() {
-        let (url, hits, handle) = spawn_response_server(vec![(429, Some(0)), (200, None)]).await;
+        let (url, hits, handle) = crate::test_utils::spawn_response_server(vec![
+            crate::test_utils::mock_http_response(429, Some(0), "{}"),
+            crate::test_utils::mock_http_response(200, None, "{}"),
+        ])
+        .await;
         let client = reqwest::Client::new();
         let request = client.get(&url).header("x-test", "1");
 
@@ -199,7 +149,11 @@ mod tests {
 
     #[tokio::test]
     async fn send_builder_with_retry_does_not_retry_non_429() {
-        let (url, hits, handle) = spawn_response_server(vec![(500, None)]).await;
+        let (url, hits, handle) =
+            crate::test_utils::spawn_response_server(vec![crate::test_utils::mock_http_response(
+                500, None, "{}",
+            )])
+            .await;
         let client = reqwest::Client::new();
         let request = client.get(&url);
 
