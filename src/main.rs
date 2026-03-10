@@ -135,11 +135,19 @@ async fn run() -> Result<(), GwsError> {
     // Parse service name and optional version override
     let (api_name, version) = parse_service_and_version(&args, &first_arg)?;
 
-    // For synthetic services (no Discovery doc), use an empty RestDescription
+    // For synthetic services (no Discovery doc), use an empty RestDescription.
+    // aiplatform is synthetic because the Discovery doc is enormous (hundreds of
+    // resources) and we only expose ergonomic helper commands for inference.
     let doc = if api_name == "workflow" {
         discovery::RestDescription {
             name: "workflow".to_string(),
             description: Some("Cross-service productivity workflows".to_string()),
+            ..Default::default()
+        }
+    } else if api_name == "aiplatform" {
+        discovery::RestDescription {
+            name: "aiplatform".to_string(),
+            description: Some("Vertex AI inference (Gemini models)".to_string()),
             ..Default::default()
         }
     } else {

@@ -126,6 +126,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         version: "v1",
         description: "Cross-service productivity workflows",
     },
+    ServiceEntry {
+        aliases: &["vertex", "aiplatform"],
+        api_name: "aiplatform",
+        version: "v1",
+        description: "Vertex AI inference (Gemini models)",
+    },
 ];
 
 /// Resolves a service alias to (api_name, version).
@@ -163,6 +169,14 @@ mod tests {
         assert_eq!(
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("vertex").unwrap(),
+            ("aiplatform".to_string(), "v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("aiplatform").unwrap(),
+            ("aiplatform".to_string(), "v1".to_string())
         );
     }
 
