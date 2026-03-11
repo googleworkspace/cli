@@ -22,8 +22,12 @@ pub(crate) fn is_tty() -> bool {
 
 fn colorize(s: &str, code: &str) -> String {
     if is_tty() {
-        // Strip ESC characters to prevent terminal escape injection.
-        let sanitized = s.replace('\x1b', "");
+        // Strip control characters to prevent terminal escape injection.
+        // We allow newline and tab for basic formatting.
+        let sanitized: String = s
+            .chars()
+            .filter(|&c| !c.is_control() || c == '\n' || c == '\t')
+            .collect();
         format!("\x1b[{code}m{sanitized}\x1b[0m")
     } else {
         s.to_string()
