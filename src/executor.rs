@@ -811,13 +811,14 @@ fn build_multipart_stream(
     let content_type = format!("multipart/related; boundary={boundary}");
 
     // Chain: preamble bytes -> file chunks (via ReaderStream) -> postamble bytes
+    // All parts use bytes::Bytes for zero-copy streaming.
     let file_path = file_path.to_owned();
-    let preamble_bytes = preamble.into_bytes();
-    let postamble_bytes = postamble.into_bytes();
+    let preamble_bytes = bytes::Bytes::from(preamble.into_bytes());
+    let postamble_bytes = bytes::Bytes::from(postamble.into_bytes());
 
     let file_stream =
         futures_util::stream::once(async move { tokio::fs::File::open(file_path).await })
-            .map_ok(|f| tokio_util::io::ReaderStream::new(f).map_ok(|b| b.to_vec()))
+            .map_ok(tokio_util::io::ReaderStream::new)
             .try_flatten();
 
     let stream =
