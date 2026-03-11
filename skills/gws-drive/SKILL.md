@@ -148,4 +148,4 @@ gws drive files list --params '{"corpora": "drive", "driveId": "DRIVE_ID", "supp
 gws drive files get --params '{"fileId": "FILE_ID", "supportsAllDrives": true}'
 ```
 
-If a file or folder isn't found, add `supportsAllDrives: true` to the request.
+If a file or folder isn't found, ensure your request includes all necessary parameters for Shared Drive access (e.g., `supportsAllDrives: true`, `includeItemsFromAllDrives: true`).
