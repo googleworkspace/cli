@@ -280,8 +280,10 @@ pub(super) async fn handle_subscribe(
                         .send()
                         .await;
                 }
+                eprintln!("Cleanup complete.");
+            } else {
+                eprintln!("Warning: failed to refresh token for cleanup. Resources may need manual deletion.");
             }
-            eprintln!("Cleanup complete.");
         } else {
             eprintln!("\n--- Reconnection Info ---");
             eprintln!(
