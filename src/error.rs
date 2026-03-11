@@ -20,29 +20,17 @@ pub(crate) fn is_tty() -> bool {
     std::io::stderr().is_terminal()
 }
 
-pub(crate) fn yellow(s: &str) -> String {
+fn colorize(s: &str, code: &str) -> String {
     if is_tty() {
-        format!("\x1b[33m{s}\x1b[0m")
+        format!("\x1b[{code}m{s}\x1b[0m")
     } else {
         s.to_string()
     }
 }
 
-pub(crate) fn red(s: &str) -> String {
-    if is_tty() {
-        format!("\x1b[31m{s}\x1b[0m")
-    } else {
-        s.to_string()
-    }
-}
-
-pub(crate) fn bold(s: &str) -> String {
-    if is_tty() {
-        format!("\x1b[1m{s}\x1b[0m")
-    } else {
-        s.to_string()
-    }
-}
+pub(crate) fn yellow(s: &str) -> String { colorize(s, "33") }
+pub(crate) fn red(s: &str) -> String    { colorize(s, "31") }
+pub(crate) fn bold(s: &str) -> String   { colorize(s, "1")  }
 
 #[derive(Error, Debug)]
 pub enum GwsError {
