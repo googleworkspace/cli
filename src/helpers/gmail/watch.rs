@@ -422,11 +422,6 @@ async fn fetch_and_output_messages(
     let msg_ids = extract_message_ids_from_history(&body);
 
     for msg_id in msg_ids {
-        // Refresh token per message in case the batch is large
-        let gmail_token = gmail_token_provider
-            .access_token()
-            .await
-            .context("Failed to get Gmail token")?;
         let msg_url = format!(
             "{gmail_api_base}/users/me/messages/{}",
             crate::validate::encode_path_segment(&msg_id),
@@ -905,7 +900,7 @@ mod tests {
     async fn test_watch_pull_loop_refreshes_tokens_for_each_request() {
         let client = reqwest::Client::new();
         let pubsub_provider = FakeTokenProvider::new(["pubsub-token"]);
-        let gmail_provider = FakeTokenProvider::new(["gmail-history", "gmail-message"]);
+        let gmail_provider = FakeTokenProvider::new(["gmail-token"]);
         let (pubsub_base, gmail_base, requests, server) = spawn_watch_server().await;
         let mut last_history_id = 1;
         let config = WatchConfig {
@@ -953,12 +948,12 @@ mod tests {
             requests[1].0,
             "/gmail/v1/users/me/history?startHistoryId=1&historyTypes=messageAdded"
         );
-        assert_eq!(requests[1].1, "authorization: Bearer gmail-history");
+        assert_eq!(requests[1].1, "authorization: Bearer gmail-token");
         assert_eq!(
             requests[2].0,
             "/gmail/v1/users/me/messages/msg%2D1?format=full"
         );
-        assert_eq!(requests[2].1, "authorization: Bearer gmail-message");
+        assert_eq!(requests[2].1, "authorization: Bearer gmail-token");
         assert_eq!(
             requests[3].0,
             "/v1/projects/test/subscriptions/demo:acknowledge"
