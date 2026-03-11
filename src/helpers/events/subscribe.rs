@@ -538,37 +538,12 @@ fn derive_slug_from_event_types(event_types: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::FakeTokenProvider;
     use base64::Engine as _;
-    use std::collections::VecDeque;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::Mutex;
-
-    struct FakeTokenProvider {
-        tokens: Arc<Mutex<VecDeque<String>>>,
-    }
-
-    impl FakeTokenProvider {
-        fn new(tokens: impl IntoIterator<Item = &'static str>) -> Self {
-            Self {
-                tokens: Arc::new(Mutex::new(
-                    tokens.into_iter().map(|token| token.to_string()).collect(),
-                )),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl crate::auth::AccessTokenProvider for FakeTokenProvider {
-        async fn access_token(&self) -> anyhow::Result<String> {
-            self.tokens
-                .lock()
-                .await
-                .pop_front()
-                .ok_or_else(|| anyhow::anyhow!("no test token remaining"))
-        }
-    }
 
     async fn spawn_subscribe_server() -> (
         String,

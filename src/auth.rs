@@ -115,6 +115,35 @@ pub fn token_provider(scopes: &[&str]) -> ScopedTokenProvider {
     ScopedTokenProvider::new(scopes)
 }
 
+/// A fake [`AccessTokenProvider`] for tests that returns tokens from a queue.
+#[cfg(test)]
+pub struct FakeTokenProvider {
+    tokens: std::sync::Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>,
+}
+
+#[cfg(test)]
+impl FakeTokenProvider {
+    pub fn new(tokens: impl IntoIterator<Item = &'static str>) -> Self {
+        Self {
+            tokens: std::sync::Arc::new(tokio::sync::Mutex::new(
+                tokens.into_iter().map(|t| t.to_string()).collect(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl AccessTokenProvider for FakeTokenProvider {
+    async fn access_token(&self) -> anyhow::Result<String> {
+        self.tokens
+            .lock()
+            .await
+            .pop_front()
+            .ok_or_else(|| anyhow::anyhow!("no test token remaining"))
+    }
+}
+
 /// Builds an OAuth2 authenticator and returns an access token.
 ///
 /// Tries credentials in order:
