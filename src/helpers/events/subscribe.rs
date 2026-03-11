@@ -1,5 +1,8 @@
 use super::*;
+use crate::auth::AccessTokenProvider;
 use std::path::PathBuf;
+
+const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
 
 #[derive(Debug, Clone, Default, Builder)]
 #[builder(setter(into))]
@@ -110,6 +113,7 @@ pub(super) async fn handle_subscribe(
     }
 
     let client = crate::client::build_client()?;
+    let pubsub_token_provider = auth::token_provider(&[PUBSUB_SCOPE]);
 
     // Get Pub/Sub token
     let pubsub_token = auth::get_token(&[PUBSUB_SCOPE])
@@ -248,27 +252,34 @@ pub(super) async fn handle_subscribe(
         };
 
     // Pull loop
-    let result = pull_loop(&client, &pubsub_token, &pubsub_subscription, config.clone()).await;
+    let result = pull_loop(
+        &client,
+        &pubsub_token_provider,
+        &pubsub_subscription,
+        config.clone(),
+        PUBSUB_API_BASE,
+    )
+    .await;
 
     // On exit, print reconnection info or cleanup
     if created_resources {
         if config.cleanup {
             eprintln!("\nCleaning up Pub/Sub resources...");
             // Delete Pub/Sub subscription
-            let _ = client
-                .delete(format!(
-                    "https://pubsub.googleapis.com/v1/{pubsub_subscription}"
-                ))
-                .bearer_auth(&pubsub_token)
-                .send()
-                .await;
-            // Delete Pub/Sub topic
-            if let Some(ref topic) = topic_name {
+            if let Ok(pubsub_token) = pubsub_token_provider.access_token().await {
                 let _ = client
-                    .delete(format!("https://pubsub.googleapis.com/v1/{topic}"))
+                    .delete(format!("{PUBSUB_API_BASE}/{pubsub_subscription}"))
                     .bearer_auth(&pubsub_token)
                     .send()
                     .await;
+                // Delete Pub/Sub topic
+                if let Some(ref topic) = topic_name {
+                    let _ = client
+                        .delete(format!("{PUBSUB_API_BASE}/{topic}"))
+                        .bearer_auth(&pubsub_token)
+                        .send()
+                        .await;
+                }
             }
             eprintln!("Cleanup complete.");
         } else {
@@ -301,21 +312,24 @@ pub(super) async fn handle_subscribe(
 /// Pulls messages from a Pub/Sub subscription in a loop.
 async fn pull_loop(
     client: &reqwest::Client,
-    token: &str,
+    token_provider: &dyn auth::AccessTokenProvider,
     subscription: &str,
     config: SubscribeConfig,
+    pubsub_api_base: &str,
 ) -> Result<(), GwsError> {
     let mut file_counter: u64 = 0;
     loop {
+        let token = token_provider
+            .access_token()
+            .await
+            .map_err(|e| GwsError::Auth(format!("Failed to get Pub/Sub token: {e}")))?;
         let pull_body = json!({
             "maxMessages": config.max_messages,
         });
 
         let pull_future = client
-            .post(format!(
-                "https://pubsub.googleapis.com/v1/{subscription}:pull"
-            ))
-            .bearer_auth(token)
+            .post(format!("{pubsub_api_base}/{subscription}:pull"))
+            .bearer_auth(&token)
             .header("Content-Type", "application/json")
             .json(&pull_body)
             .timeout(std::time::Duration::from_secs(config.poll_interval.max(10)))
@@ -374,15 +388,17 @@ async fn pull_loop(
 
         // Acknowledge messages
         if !config.no_ack && !ack_ids.is_empty() {
+            let token = token_provider
+                .access_token()
+                .await
+                .map_err(|e| GwsError::Auth(format!("Failed to get Pub/Sub token: {e}")))?;
             let ack_body = json!({
                 "ackIds": ack_ids,
             });
 
             let _ = client
-                .post(format!(
-                    "https://pubsub.googleapis.com/v1/{subscription}:acknowledge"
-                ))
-                .bearer_auth(token)
+                .post(format!("{pubsub_api_base}/{subscription}:acknowledge"))
+                .bearer_auth(&token)
                 .header("Content-Type", "application/json")
                 .json(&ack_body)
                 .send()
@@ -526,6 +542,101 @@ fn derive_slug_from_event_types(event_types: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
+
+    struct FakeTokenProvider {
+        tokens: Arc<Mutex<VecDeque<String>>>,
+    }
+
+    impl FakeTokenProvider {
+        fn new(tokens: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                tokens: Arc::new(Mutex::new(
+                    tokens.into_iter().map(|token| token.to_string()).collect(),
+                )),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::auth::AccessTokenProvider for FakeTokenProvider {
+        async fn access_token(&self) -> anyhow::Result<String> {
+            self.tokens
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| anyhow::anyhow!("no test token remaining"))
+        }
+    }
+
+    async fn spawn_subscribe_server() -> (
+        String,
+        Arc<Mutex<Vec<(String, String)>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded_requests = Arc::clone(&requests);
+
+        let handle = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0_u8; 8192];
+                let bytes_read = stream.read(&mut buf).await.unwrap();
+                let request = String::from_utf8_lossy(&buf[..bytes_read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("")
+                    .to_string();
+                let auth_header = request
+                    .lines()
+                    .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                recorded_requests
+                    .lock()
+                    .await
+                    .push((path.clone(), auth_header));
+
+                let body = match path.as_str() {
+                    "/v1/projects/test/subscriptions/demo:pull" => json!({
+                        "receivedMessages": [{
+                            "ackId": "ack-1",
+                            "message": {
+                                "attributes": {
+                                    "type": "google.workspace.chat.message.v1.created",
+                                    "source": "//chat/spaces/A"
+                                },
+                                "data": base64::engine::general_purpose::STANDARD
+                                    .encode(json!({ "id": "evt-1" }).to_string())
+                            }
+                        }]
+                    })
+                    .to_string(),
+                    "/v1/projects/test/subscriptions/demo:acknowledge" => json!({}).to_string(),
+                    other => panic!("unexpected request path: {other}"),
+                };
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        (format!("http://{addr}/v1"), requests, handle)
+    }
 
     fn make_matches_subscribe(args: &[&str]) -> ArgMatches {
         let cmd = Command::new("test")
@@ -752,5 +863,43 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("--project is required"));
+    }
+
+    #[tokio::test]
+    async fn test_pull_loop_refreshes_pubsub_token_between_requests() {
+        let client = reqwest::Client::new();
+        let token_provider = FakeTokenProvider::new(["pubsub-pull", "pubsub-ack"]);
+        let (pubsub_base, requests, server) = spawn_subscribe_server().await;
+        let config = SubscribeConfigBuilder::default()
+            .subscription(Some(SubscriptionName(
+                "projects/test/subscriptions/demo".to_string(),
+            )))
+            .max_messages(1_u32)
+            .poll_interval(1_u64)
+            .once(true)
+            .build()
+            .unwrap();
+
+        pull_loop(
+            &client,
+            &token_provider,
+            "projects/test/subscriptions/demo",
+            config,
+            &pubsub_base,
+        )
+        .await
+        .unwrap();
+
+        server.await.unwrap();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].0, "/v1/projects/test/subscriptions/demo:pull");
+        assert_eq!(requests[0].1, "authorization: Bearer pubsub-pull");
+        assert_eq!(
+            requests[1].0,
+            "/v1/projects/test/subscriptions/demo:acknowledge"
+        );
+        assert_eq!(requests[1].1, "authorization: Bearer pubsub-ack");
     }
 }

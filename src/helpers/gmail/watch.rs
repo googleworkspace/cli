@@ -1,4 +1,8 @@
 use super::*;
+use crate::auth::AccessTokenProvider;
+
+const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
+const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 
 /// Handles the `+watch` command — Gmail push notifications via Pub/Sub.
 pub(super) async fn handle_watch(
@@ -12,6 +16,8 @@ pub(super) async fn handle_watch(
     }
 
     let client = crate::client::build_client()?;
+    let gmail_token_provider = auth::token_provider(&[GMAIL_SCOPE]);
+    let pubsub_token_provider = auth::token_provider(&[PUBSUB_SCOPE]);
 
     // Get tokens
     let gmail_token = auth::get_token(&[GMAIL_SCOPE])
@@ -195,14 +201,19 @@ pub(super) async fn handle_watch(
         .unwrap_or(0);
 
     // Pull loop
+    let runtime = WatchRuntime {
+        client: &client,
+        pubsub_token_provider: &pubsub_token_provider,
+        gmail_token_provider: &gmail_token_provider,
+        sanitize_config,
+        pubsub_api_base: PUBSUB_API_BASE,
+        gmail_api_base: GMAIL_API_BASE,
+    };
     let result = watch_pull_loop(
-        &client,
-        &pubsub_token,
-        &gmail_token,
+        &runtime,
         &pubsub_subscription,
         &mut last_history_id,
         config.clone(),
-        sanitize_config,
     )
     .await;
 
@@ -210,20 +221,19 @@ pub(super) async fn handle_watch(
     if created_resources {
         if config.cleanup {
             eprintln!("\nCleaning up Pub/Sub resources...");
-            let _ = client
-                .delete(format!(
-                    "https://pubsub.googleapis.com/v1/{}",
-                    pubsub_subscription
-                ))
-                .bearer_auth(&pubsub_token)
-                .send()
-                .await;
-            if let Some(ref topic) = topic_name {
+            if let Ok(pubsub_token) = pubsub_token_provider.access_token().await {
                 let _ = client
-                    .delete(format!("https://pubsub.googleapis.com/v1/{}", topic))
+                    .delete(format!("{PUBSUB_API_BASE}/{}", pubsub_subscription))
                     .bearer_auth(&pubsub_token)
                     .send()
                     .await;
+                if let Some(ref topic) = topic_name {
+                    let _ = client
+                        .delete(format!("{PUBSUB_API_BASE}/{}", topic))
+                        .bearer_auth(&pubsub_token)
+                        .send()
+                        .await;
+                }
             }
             eprintln!("Cleanup complete.");
         } else {
@@ -245,21 +255,22 @@ pub(super) async fn handle_watch(
 
 /// Pull loop for Gmail watch — polls Pub/Sub, fetches messages via history API.
 async fn watch_pull_loop(
-    client: &reqwest::Client,
-    pubsub_token: &str,
-    gmail_token: &str,
+    runtime: &WatchRuntime<'_>,
     subscription: &str,
     last_history_id: &mut u64,
     config: WatchConfig,
-    sanitize_config: &crate::helpers::modelarmor::SanitizeConfig,
 ) -> Result<(), GwsError> {
     loop {
+        let pubsub_token = runtime
+            .pubsub_token_provider
+            .access_token()
+            .await
+            .context("Failed to get Pub/Sub token")?;
         let pull_body = json!({ "maxMessages": config.max_messages });
-        let pull_future = client
-            .post(format!(
-                "https://pubsub.googleapis.com/v1/{subscription}:pull"
-            ))
-            .bearer_auth(pubsub_token)
+        let pull_future = runtime
+            .client
+            .post(format!("{}/{subscription}:pull", runtime.pubsub_api_base))
+            .bearer_auth(&pubsub_token)
             .header("Content-Type", "application/json")
             .json(&pull_body)
             .timeout(std::time::Duration::from_secs(config.poll_interval.max(10)))
@@ -296,12 +307,13 @@ async fn watch_pull_loop(
         if max_history_id > *last_history_id && *last_history_id > 0 {
             // Fetch new messages via history API
             fetch_and_output_messages(
-                client,
-                gmail_token,
+                runtime.client,
+                runtime.gmail_token_provider,
                 *last_history_id,
                 &config.format,
                 config.output_dir.as_ref(),
-                sanitize_config,
+                runtime.sanitize_config,
+                runtime.gmail_api_base,
             )
             .await?;
         }
@@ -312,12 +324,19 @@ async fn watch_pull_loop(
 
         // Acknowledge messages
         if !ack_ids.is_empty() {
+            let pubsub_token = runtime
+                .pubsub_token_provider
+                .access_token()
+                .await
+                .context("Failed to get Pub/Sub token")?;
             let ack_body = json!({ "ackIds": ack_ids });
-            let _ = client
+            let _ = runtime
+                .client
                 .post(format!(
-                    "https://pubsub.googleapis.com/v1/{subscription}:acknowledge"
+                    "{}/{subscription}:acknowledge",
+                    runtime.pubsub_api_base
                 ))
-                .bearer_auth(pubsub_token)
+                .bearer_auth(&pubsub_token)
                 .header("Content-Type", "application/json")
                 .json(&ack_body)
                 .send()
@@ -379,19 +398,24 @@ fn process_pull_response(response: &Value) -> (Vec<String>, u64) {
 /// Fetches new messages since `start_history_id` and outputs them as NDJSON.
 async fn fetch_and_output_messages(
     client: &reqwest::Client,
-    gmail_token: &str,
+    gmail_token_provider: &dyn auth::AccessTokenProvider,
     start_history_id: u64,
     msg_format: &str,
     output_dir: Option<&std::path::PathBuf>,
     sanitize_config: &crate::helpers::modelarmor::SanitizeConfig,
+    gmail_api_base: &str,
 ) -> Result<(), GwsError> {
+    let gmail_token = gmail_token_provider
+        .access_token()
+        .await
+        .context("Failed to get Gmail token")?;
     let resp = client
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/history")
+        .get(format!("{gmail_api_base}/users/me/history"))
         .query(&[
             ("startHistoryId", &start_history_id.to_string()),
             ("historyTypes", &"messageAdded".to_string()),
         ])
-        .bearer_auth(gmail_token)
+        .bearer_auth(&gmail_token)
         .send()
         .await
         .context("Failed to get history")?;
@@ -402,14 +426,18 @@ async fn fetch_and_output_messages(
 
     for msg_id in msg_ids {
         // Fetch full message
+        let gmail_token = gmail_token_provider
+            .access_token()
+            .await
+            .context("Failed to get Gmail token")?;
         let msg_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+            "{gmail_api_base}/users/me/messages/{}",
             crate::validate::encode_path_segment(&msg_id),
         );
         let msg_resp = client
             .get(&msg_url)
             .query(&[("format", msg_format)])
-            .bearer_auth(gmail_token)
+            .bearer_auth(&gmail_token)
             .send()
             .await;
 
@@ -527,6 +555,15 @@ struct WatchConfig {
     output_dir: Option<std::path::PathBuf>,
 }
 
+struct WatchRuntime<'a> {
+    client: &'a reqwest::Client,
+    pubsub_token_provider: &'a dyn auth::AccessTokenProvider,
+    gmail_token_provider: &'a dyn auth::AccessTokenProvider,
+    sanitize_config: &'a crate::helpers::modelarmor::SanitizeConfig,
+    pubsub_api_base: &'a str,
+    gmail_api_base: &'a str,
+}
+
 fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
     let format_str = matches
         .get_one::<String>("msg-format")
@@ -562,6 +599,119 @@ fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
+
+    struct FakeTokenProvider {
+        tokens: Arc<Mutex<VecDeque<String>>>,
+    }
+
+    impl FakeTokenProvider {
+        fn new(tokens: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                tokens: Arc::new(Mutex::new(
+                    tokens.into_iter().map(|token| token.to_string()).collect(),
+                )),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::auth::AccessTokenProvider for FakeTokenProvider {
+        async fn access_token(&self) -> anyhow::Result<String> {
+            self.tokens
+                .lock()
+                .await
+                .pop_front()
+                .ok_or_else(|| anyhow::anyhow!("no test token remaining"))
+        }
+    }
+
+    async fn spawn_watch_server() -> (
+        String,
+        String,
+        Arc<Mutex<Vec<(String, String)>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded_requests = Arc::clone(&requests);
+
+        let handle = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0_u8; 8192];
+                let bytes_read = stream.read(&mut buf).await.unwrap();
+                let request = String::from_utf8_lossy(&buf[..bytes_read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("")
+                    .to_string();
+                let auth_header = request
+                    .lines()
+                    .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                recorded_requests
+                    .lock()
+                    .await
+                    .push((path.clone(), auth_header));
+
+                let body = match path.as_str() {
+                    "/v1/projects/test/subscriptions/demo:pull" => {
+                        let payload = base64::engine::general_purpose::STANDARD
+                            .encode(json!({ "historyId": 2 }).to_string());
+                        json!({
+                            "receivedMessages": [{
+                                "ackId": "ack-1",
+                                "message": {
+                                    "data": payload,
+                                    "messageId": "msg-1"
+                                }
+                            }]
+                        })
+                        .to_string()
+                    }
+                    "/gmail/v1/users/me/history?startHistoryId=1&historyTypes=messageAdded" => {
+                        json!({
+                            "history": [{
+                                "messagesAdded": [{
+                                    "message": { "id": "msg-1" }
+                                }]
+                            }]
+                        })
+                        .to_string()
+                    }
+                    "/gmail/v1/users/me/messages/msg%2D1?format=full" => {
+                        json!({ "id": "msg-1" }).to_string()
+                    }
+                    "/v1/projects/test/subscriptions/demo:acknowledge" => json!({}).to_string(),
+                    other => panic!("unexpected request path: {other}"),
+                };
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+
+        (
+            format!("http://{addr}/v1"),
+            format!("http://{addr}/gmail/v1"),
+            requests,
+            handle,
+        )
+    }
 
     #[test]
     fn test_extract_message_ids_from_history() {
@@ -777,5 +927,71 @@ mod tests {
         // If no match found, block mode returns the exact input untouched.
         assert_eq!(output, msg);
         assert!(output.get("_sanitization").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_watch_pull_loop_refreshes_tokens_for_each_request() {
+        let client = reqwest::Client::new();
+        let pubsub_provider = FakeTokenProvider::new(["pubsub-pull", "pubsub-ack"]);
+        let gmail_provider = FakeTokenProvider::new(["gmail-history", "gmail-message"]);
+        let (pubsub_base, gmail_base, requests, server) = spawn_watch_server().await;
+        let mut last_history_id = 1;
+        let config = WatchConfig {
+            project: None,
+            subscription: None,
+            topic: None,
+            label_ids: None,
+            max_messages: 10,
+            poll_interval: 1,
+            format: "full".to_string(),
+            once: true,
+            cleanup: false,
+            output_dir: None,
+        };
+        let sanitize_config = crate::helpers::modelarmor::SanitizeConfig {
+            template: None,
+            mode: crate::helpers::modelarmor::SanitizeMode::Warn,
+        };
+
+        let runtime = WatchRuntime {
+            client: &client,
+            pubsub_token_provider: &pubsub_provider,
+            gmail_token_provider: &gmail_provider,
+            sanitize_config: &sanitize_config,
+            pubsub_api_base: &pubsub_base,
+            gmail_api_base: &gmail_base,
+        };
+
+        watch_pull_loop(
+            &runtime,
+            "projects/test/subscriptions/demo",
+            &mut last_history_id,
+            config,
+        )
+        .await
+        .unwrap();
+
+        server.await.unwrap();
+
+        let requests = requests.lock().await;
+        assert_eq!(requests.len(), 4);
+        assert_eq!(requests[0].0, "/v1/projects/test/subscriptions/demo:pull");
+        assert_eq!(requests[0].1, "authorization: Bearer pubsub-pull");
+        assert_eq!(
+            requests[1].0,
+            "/gmail/v1/users/me/history?startHistoryId=1&historyTypes=messageAdded"
+        );
+        assert_eq!(requests[1].1, "authorization: Bearer gmail-history");
+        assert_eq!(
+            requests[2].0,
+            "/gmail/v1/users/me/messages/msg%2D1?format=full"
+        );
+        assert_eq!(requests[2].1, "authorization: Bearer gmail-message");
+        assert_eq!(
+            requests[3].0,
+            "/v1/projects/test/subscriptions/demo:acknowledge"
+        );
+        assert_eq!(requests[3].1, "authorization: Bearer pubsub-ack");
+        assert_eq!(last_history_id, 2);
     }
 }

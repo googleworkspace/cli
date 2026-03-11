@@ -77,6 +77,44 @@ enum Credential {
     ServiceAccount(yup_oauth2::ServiceAccountKey),
 }
 
+/// Fetches access tokens for a fixed set of scopes.
+///
+/// Long-running helpers use this trait so they can request a fresh token before
+/// each API call instead of holding a single token string until it expires.
+#[async_trait::async_trait]
+pub trait AccessTokenProvider: Send + Sync {
+    async fn access_token(&self) -> anyhow::Result<String>;
+}
+
+/// A token provider backed by [`get_token`].
+///
+/// This keeps the scope list in one place so call sites can ask for a fresh
+/// token whenever they need to make another request.
+#[derive(Debug, Clone)]
+pub struct ScopedTokenProvider {
+    scopes: Vec<String>,
+}
+
+impl ScopedTokenProvider {
+    pub fn new(scopes: &[&str]) -> Self {
+        Self {
+            scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AccessTokenProvider for ScopedTokenProvider {
+    async fn access_token(&self) -> anyhow::Result<String> {
+        let scopes: Vec<&str> = self.scopes.iter().map(String::as_str).collect();
+        get_token(&scopes).await
+    }
+}
+
+pub fn token_provider(scopes: &[&str]) -> ScopedTokenProvider {
+    ScopedTokenProvider::new(scopes)
+}
+
 /// Builds an OAuth2 authenticator and returns an access token.
 ///
 /// Tries credentials in order:
@@ -542,6 +580,19 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "my-test-token");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_scoped_token_provider_uses_get_token() {
+        let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "provider-token");
+        let provider = token_provider(&["https://www.googleapis.com/auth/drive"]);
+
+        let first = provider.access_token().await.unwrap();
+        let second = provider.access_token().await.unwrap();
+
+        assert_eq!(first, "provider-token");
+        assert_eq!(second, "provider-token");
     }
 
     #[tokio::test]
