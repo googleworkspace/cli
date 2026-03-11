@@ -29,7 +29,9 @@ gws gmail +reply-all --message-id <ID> --body <TEXT>
 | `--message-id` | ✓ | — | Gmail message ID to reply to |
 | `--body` | ✓ | — | Reply body (plain text) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
-| `--cc` | — | — | Additional CC recipients (comma-separated) |
+| `--to` | — | — | Additional To email address(es), comma-separated |
+| `--cc` | — | — | Additional CC email address(es), comma-separated |
+| `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--remove` | — | — | Exclude recipients from the outgoing reply (comma-separated emails) |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
 
@@ -39,14 +41,18 @@ gws gmail +reply-all --message-id <ID> --body <TEXT>
 gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
 gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
 gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
+gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 ```
 
 ## Tips
 
 - Replies to the sender and all original To/CC recipients.
+- Use --to to add extra recipients to the To field.
+- Use --cc to add new CC recipients.
+- Use --bcc for recipients who should not be visible to others.
 - Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
-- The command fails if exclusions leave no reply target.
-- Use --cc to add new recipients.
+- The command fails if no To recipient remains after exclusions and --to additions.
 
 ## See Also
 

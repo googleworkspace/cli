@@ -37,14 +37,15 @@ pub(super) async fn handle_forward(
     };
 
     let subject = build_forward_subject(&original.subject);
-    let raw = create_forward_raw_message(
-        &config.to,
-        config.cc.as_deref(),
-        config.from.as_deref(),
-        &subject,
-        config.body_text.as_deref(),
-        &original,
-    );
+    let envelope = ForwardEnvelope {
+        to: &config.to,
+        cc: config.cc.as_deref(),
+        bcc: config.bcc.as_deref(),
+        from: config.from.as_deref(),
+        subject: &subject,
+        body: config.body_text.as_deref(),
+    };
+    let raw = create_forward_raw_message(&envelope, &original);
 
     super::send_raw_email(
         doc,
@@ -56,13 +57,27 @@ pub(super) async fn handle_forward(
     .await
 }
 
+// --- Data structures ---
+
 pub(super) struct ForwardConfig {
     pub message_id: String,
     pub to: String,
     pub from: Option<String>,
     pub cc: Option<String>,
+    pub bcc: Option<String>,
     pub body_text: Option<String>,
 }
+
+struct ForwardEnvelope<'a> {
+    to: &'a str,
+    cc: Option<&'a str>,
+    bcc: Option<&'a str>,
+    from: Option<&'a str>,
+    subject: &'a str,
+    body: Option<&'a str>,
+}
+
+// --- Message construction ---
 
 fn build_forward_subject(original_subject: &str) -> String {
     if original_subject.to_lowercase().starts_with("fwd:") {
@@ -72,40 +87,27 @@ fn build_forward_subject(original_subject: &str) -> String {
     }
 }
 
-fn create_forward_raw_message(
-    to: &str,
-    cc: Option<&str>,
-    from: Option<&str>,
-    subject: &str,
-    body: Option<&str>,
-    original: &OriginalMessage,
-) -> String {
-    let references = if original.references.is_empty() {
-        original.message_id_header.clone()
-    } else {
-        format!("{} {}", original.references, original.message_id_header)
+fn create_forward_raw_message(envelope: &ForwardEnvelope, original: &OriginalMessage) -> String {
+    let references = build_references(&original.references, &original.message_id_header);
+    let builder = MessageBuilder {
+        to: envelope.to,
+        subject: envelope.subject,
+        from: envelope.from,
+        cc: envelope.cc,
+        bcc: envelope.bcc,
+        threading: Some(ThreadingHeaders {
+            in_reply_to: &original.message_id_header,
+            references: &references,
+        }),
     };
 
-    let mut headers = format!(
-        "To: {}\r\nSubject: {}\r\nIn-Reply-To: {}\r\nReferences: {}\r\n\
-         MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8",
-        to, subject, original.message_id_header, references
-    );
-
-    if let Some(from) = from {
-        headers.push_str(&format!("\r\nFrom: {}", from));
-    }
-
-    if let Some(cc) = cc {
-        headers.push_str(&format!("\r\nCc: {}", cc));
-    }
-
     let forwarded_block = format_forwarded_message(original);
+    let body = match envelope.body {
+        Some(note) => format!("{}\r\n\r\n{}", note, forwarded_block),
+        None => forwarded_block,
+    };
 
-    match body {
-        Some(body) => format!("{}\r\n\r\n{}\r\n\r\n{}", headers, body, forwarded_block),
-        None => format!("{}\r\n\r\n{}", headers, forwarded_block),
-    }
+    builder.build(&body)
 }
 
 fn format_forwarded_message(original: &OriginalMessage) -> String {
@@ -130,12 +132,15 @@ fn format_forwarded_message(original: &OriginalMessage) -> String {
     )
 }
 
+// --- Argument parsing ---
+
 fn parse_forward_args(matches: &ArgMatches) -> ForwardConfig {
     ForwardConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
         to: matches.get_one::<String>("to").unwrap().to_string(),
-        from: matches.get_one::<String>("from").map(|s| s.to_string()),
-        cc: matches.get_one::<String>("cc").map(|s| s.to_string()),
+        from: parse_optional_trimmed(matches, "from"),
+        cc: parse_optional_trimmed(matches, "cc"),
+        bcc: parse_optional_trimmed(matches, "bcc"),
         body_text: matches.get_one::<String>("body").map(|s| s.to_string()),
     }
 }
@@ -161,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_create_forward_raw_message_without_body() {
-        let original = super::super::OriginalMessage {
+        let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
@@ -174,14 +179,15 @@ mod tests {
             body_text: "Original content".to_string(),
         };
 
-        let raw = create_forward_raw_message(
-            "dave@example.com",
-            None,
-            None,
-            "Fwd: Hello",
-            None,
-            &original,
-        );
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: None,
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
 
         assert!(raw.contains("To: dave@example.com"));
         assert!(raw.contains("Subject: Fwd: Hello"));
@@ -196,8 +202,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_forward_raw_message_with_body_and_cc() {
-        let original = super::super::OriginalMessage {
+    fn test_create_forward_raw_message_with_all_optional_headers() {
+        let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<abc@example.com>".to_string(),
             references: "".to_string(),
@@ -210,23 +216,26 @@ mod tests {
             body_text: "Original content".to_string(),
         };
 
-        let raw = create_forward_raw_message(
-            "dave@example.com",
-            Some("eve@example.com"),
-            None,
-            "Fwd: Hello",
-            Some("FYI see below"),
-            &original,
-        );
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: Some("eve@example.com"),
+            bcc: Some("secret@example.com"),
+            from: Some("alias@example.com"),
+            subject: "Fwd: Hello",
+            body: Some("FYI see below"),
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
 
         assert!(raw.contains("Cc: eve@example.com"));
+        assert!(raw.contains("Bcc: secret@example.com"));
+        assert!(raw.contains("From: alias@example.com"));
         assert!(raw.contains("FYI see below"));
         assert!(raw.contains("Cc: carol@example.com"));
     }
 
     #[test]
     fn test_create_forward_raw_message_references_chain() {
-        let original = super::super::OriginalMessage {
+        let original = OriginalMessage {
             thread_id: "t1".to_string(),
             message_id_header: "<msg-2@example.com>".to_string(),
             references: "<msg-0@example.com> <msg-1@example.com>".to_string(),
@@ -239,14 +248,15 @@ mod tests {
             body_text: "Original content".to_string(),
         };
 
-        let raw = create_forward_raw_message(
-            "dave@example.com",
-            None,
-            None,
-            "Fwd: Hello",
-            None,
-            &original,
-        );
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: None,
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
 
         assert!(raw.contains("In-Reply-To: <msg-2@example.com>"));
         assert!(
@@ -260,6 +270,7 @@ mod tests {
             .arg(Arg::new("to").long("to"))
             .arg(Arg::new("from").long("from"))
             .arg(Arg::new("cc").long("cc"))
+            .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("body").long("body"))
             .arg(
                 Arg::new("dry-run")
@@ -277,6 +288,7 @@ mod tests {
         assert_eq!(config.message_id, "abc123");
         assert_eq!(config.to, "dave@example.com");
         assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
         assert!(config.body_text.is_none());
     }
 
@@ -290,11 +302,30 @@ mod tests {
             "dave@example.com",
             "--cc",
             "eve@example.com",
+            "--bcc",
+            "secret@example.com",
             "--body",
             "FYI",
         ]);
         let config = parse_forward_args(&matches);
         assert_eq!(config.cc.unwrap(), "eve@example.com");
+        assert_eq!(config.bcc.unwrap(), "secret@example.com");
         assert_eq!(config.body_text.unwrap(), "FYI");
+
+        // Whitespace-only values become None
+        let matches = make_forward_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--to",
+            "dave@example.com",
+            "--cc",
+            "",
+            "--bcc",
+            "  ",
+        ]);
+        let config = parse_forward_args(&matches);
+        assert!(config.cc.is_none());
+        assert!(config.bcc.is_none());
     }
 }

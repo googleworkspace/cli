@@ -29,7 +29,9 @@ gws gmail +reply --message-id <ID> --body <TEXT>
 | `--message-id` | ✓ | — | Gmail message ID to reply to |
 | `--body` | ✓ | — | Reply body (plain text) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
-| `--cc` | — | — | Additional CC recipients (comma-separated) |
+| `--to` | — | — | Additional To email address(es), comma-separated |
+| `--cc` | — | — | Additional CC email address(es), comma-separated |
+| `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
@@ -37,12 +39,15 @@ gws gmail +reply --message-id <ID> --body <TEXT>
 ```bash
 gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
 gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
+gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 ```
 
 ## Tips
 
 - Automatically sets In-Reply-To, References, and threadId headers.
 - Quotes the original message in the reply body.
+- --to adds extra recipients to the To field.
 - For reply-all, use +reply-all instead.
 
 ## See Also

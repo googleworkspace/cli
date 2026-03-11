@@ -29,7 +29,8 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 | `--message-id` | ✓ | — | Gmail message ID to forward |
 | `--to` | ✓ | — | Recipient email address(es), comma-separated |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
-| `--cc` | — | — | CC recipients (comma-separated) |
+| `--cc` | — | — | CC email address(es), comma-separated |
+| `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--body` | — | — | Optional note to include above the forwarded message |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
 
@@ -39,12 +40,12 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
+gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
 ```
 
 ## Tips
 
 - Includes the original message with sender, date, subject, and recipients.
-- Sends the forward as a new message rather than forcing it into the original thread.
 
 ## See Also
 

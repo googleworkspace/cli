@@ -232,6 +232,129 @@ fn extract_plain_text_body(payload: &Value) -> Option<String> {
     None
 }
 
+/// Strip CR and LF characters to prevent header injection attacks.
+pub(super) fn sanitize_header_value(value: &str) -> String {
+    value.replace(['\r', '\n'], "")
+}
+
+/// RFC 2047 encode a header value if it contains non-ASCII characters.
+/// Uses standard Base64 (RFC 2045) and folds at 75-char encoded-word limit.
+pub(super) fn encode_header_value(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_string();
+    }
+
+    use base64::engine::general_purpose::STANDARD;
+
+    // RFC 2047 specifies a 75-character limit for encoded-words.
+    // Max raw length of 45 bytes -> 60 encoded chars. 60 + len("=?UTF-8?B??=") = 72, < 75.
+    const MAX_RAW_LEN: usize = 45;
+
+    // Chunk at character boundaries to avoid splitting multi-byte UTF-8 sequences.
+    let mut chunks: Vec<&str> = Vec::new();
+    let mut start = 0;
+    for (i, ch) in value.char_indices() {
+        if i + ch.len_utf8() - start > MAX_RAW_LEN && i > start {
+            chunks.push(&value[start..i]);
+            start = i;
+        }
+    }
+    if start < value.len() {
+        chunks.push(&value[start..]);
+    }
+
+    let encoded_words: Vec<String> = chunks
+        .iter()
+        .map(|chunk| format!("=?UTF-8?B?{}?=", STANDARD.encode(chunk.as_bytes())))
+        .collect();
+
+    // Join with CRLF and a space for folding.
+    encoded_words.join("\r\n ")
+}
+
+/// In-Reply-To and References values for threading a reply or forward.
+pub(super) struct ThreadingHeaders<'a> {
+    pub in_reply_to: &'a str,
+    pub references: &'a str,
+}
+
+/// Shared builder for RFC 2822 email messages.
+///
+/// Handles header construction with CRLF sanitization and RFC 2047
+/// encoding of non-ASCII subjects. Each helper owns its body assembly
+/// (quoted reply, forwarded block, plain body) and passes it to `build()`.
+pub(super) struct MessageBuilder<'a> {
+    pub to: &'a str,
+    pub subject: &'a str,
+    pub from: Option<&'a str>,
+    pub cc: Option<&'a str>,
+    pub bcc: Option<&'a str>,
+    pub threading: Option<ThreadingHeaders<'a>>,
+}
+
+impl MessageBuilder<'_> {
+    /// Build the complete RFC 2822 message (headers + blank line + body).
+    pub fn build(&self, body: &str) -> String {
+        debug_assert!(
+            !self.to.is_empty(),
+            "MessageBuilder: `to` must not be empty"
+        );
+
+        let mut headers = format!(
+            "To: {}\r\nSubject: {}",
+            sanitize_header_value(self.to),
+            // Sanitize first: stripping CRLF before encoding prevents injection
+            // in encoded-words.
+            encode_header_value(&sanitize_header_value(self.subject)),
+        );
+
+        if let Some(ref threading) = self.threading {
+            headers.push_str(&format!(
+                "\r\nIn-Reply-To: {}\r\nReferences: {}",
+                sanitize_header_value(threading.in_reply_to),
+                sanitize_header_value(threading.references),
+            ));
+        }
+
+        headers.push_str("\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8");
+
+        if let Some(from) = self.from {
+            headers.push_str(&format!("\r\nFrom: {}", sanitize_header_value(from)));
+        }
+
+        if let Some(cc) = self.cc {
+            headers.push_str(&format!("\r\nCc: {}", sanitize_header_value(cc)));
+        }
+
+        // The Gmail API reads the Bcc header to route to those recipients,
+        // then strips it before delivery.
+        if let Some(bcc) = self.bcc {
+            headers.push_str(&format!("\r\nBcc: {}", sanitize_header_value(bcc)));
+        }
+
+        format!("{}\r\n\r\n{}", headers, body)
+    }
+}
+
+/// Build the References header value. Returns just the message ID when there
+/// are no prior references, or appends it to the existing chain.
+pub(super) fn build_references(original_references: &str, original_message_id: &str) -> String {
+    if original_references.is_empty() {
+        original_message_id.to_string()
+    } else {
+        format!("{} {}", original_references, original_message_id)
+    }
+}
+
+/// Parse an optional clap argument, trimming whitespace and treating
+/// empty/whitespace-only values as None.
+pub(super) fn parse_optional_trimmed(matches: &ArgMatches, name: &str) -> Option<String> {
+    matches
+        .get_one::<String>(name)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub(super) fn resolve_send_method(
     doc: &crate::discovery::RestDescription,
 ) -> Result<&crate::discovery::RestMethod, GwsError> {
@@ -249,8 +372,8 @@ pub(super) fn resolve_send_method(
         .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
 }
 
-/// Shared helper: base64-encode a raw RFC 2822 message and send it via
-/// `users.messages.send`, optionally keeping it in the given thread.
+/// Build the JSON request body for `users.messages.send`, base64-encoding
+/// the raw RFC 2822 message and optionally including a threadId.
 pub(super) fn build_raw_send_body(raw_message: &str, thread_id: Option<&str>) -> Value {
     let mut body =
         serde_json::Map::from_iter([("raw".to_string(), json!(URL_SAFE.encode(raw_message)))]);
@@ -328,9 +451,9 @@ impl Helper for GmailHelper {
                 .arg(
                     Arg::new("to")
                         .long("to")
-                        .help("Recipient email address")
+                        .help("Recipient email address(es), comma-separated")
                         .required(true)
-                        .value_name("EMAIL"),
+                        .value_name("EMAILS"),
                 )
                 .arg(
                     Arg::new("subject")
@@ -347,6 +470,18 @@ impl Helper for GmailHelper {
                         .value_name("TEXT"),
                 )
                 .arg(
+                    Arg::new("cc")
+                        .long("cc")
+                        .help("CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("dry-run")
                         .long("dry-run")
                         .help("Show the request that would be sent without executing it")
@@ -356,11 +491,12 @@ impl Helper for GmailHelper {
                     "\
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
 
 TIPS:
   Handles RFC 2822 formatting and base64 encoding automatically.
-  For HTML bodies, attachments, or CC/BCC, use the raw API instead:
-    gws gmail users messages send --json '...' ",
+  For HTML bodies or attachments, use the raw API instead: gws gmail users messages send --json '...'",
                 ),
         );
 
@@ -424,9 +560,21 @@ TIPS:
                         .value_name("EMAIL"),
                 )
                 .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Additional To email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("Additional CC recipients (comma-separated)")
+                        .help("Additional CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -440,10 +588,13 @@ TIPS:
 EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
   Quotes the original message in the reply body.
+  --to adds extra recipients to the To field.
   For reply-all, use +reply-all instead.",
                 ),
         );
@@ -472,9 +623,21 @@ TIPS:
                         .value_name("EMAIL"),
                 )
                 .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .help("Additional To email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("Additional CC recipients (comma-separated)")
+                        .help("Additional CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -495,12 +658,16 @@ EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
+  Use --to to add extra recipients to the To field.
+  Use --cc to add new CC recipients.
+  Use --bcc for recipients who should not be visible to others.
   Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
-  The command fails if exclusions leave no reply target.
-  Use --cc to add new recipients.",
+  The command fails if no To recipient remains after exclusions and --to additions.",
                 ),
         );
 
@@ -530,7 +697,13 @@ TIPS:
                 .arg(
                     Arg::new("cc")
                         .long("cc")
-                        .help("CC recipients (comma-separated)")
+                        .help("CC email address(es), comma-separated")
+                        .value_name("EMAILS"),
+                )
+                .arg(
+                    Arg::new("bcc")
+                        .long("bcc")
+                        .help("BCC email address(es), comma-separated")
                         .value_name("EMAILS"),
                 )
                 .arg(
@@ -551,10 +724,10 @@ EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
 
 TIPS:
-  Includes the original message with sender, date, subject, and recipients.
-  Sends the forward as a new message rather than forcing it into the original thread.",
+  Includes the original message with sender, date, subject, and recipients.",
                 ),
         );
 
@@ -775,6 +948,186 @@ mod tests {
             "<ref-1@example.com> <ref-2@example.com>"
         );
         assert_eq!(original.body_text, "Snippet fallback");
+    }
+
+    #[test]
+    fn test_sanitize_header_value_strips_crlf() {
+        assert_eq!(
+            sanitize_header_value("alice@example.com\r\nBcc: evil@attacker.com"),
+            "alice@example.comBcc: evil@attacker.com"
+        );
+        assert_eq!(sanitize_header_value("normal value"), "normal value");
+        assert_eq!(sanitize_header_value("bare\nnewline"), "barenewline");
+        assert_eq!(sanitize_header_value("bare\rreturn"), "barereturn");
+    }
+
+    #[test]
+    fn test_encode_header_value_ascii() {
+        assert_eq!(encode_header_value("Hello World"), "Hello World");
+    }
+
+    #[test]
+    fn test_encode_header_value_non_ascii_short() {
+        let encoded = encode_header_value("Solar — Quote");
+        assert_eq!(encoded, "=?UTF-8?B?U29sYXIg4oCUIFF1b3Rl?=");
+    }
+
+    #[test]
+    fn test_encode_header_value_non_ascii_long_folds() {
+        let long_subject = "This is a very long subject line that contains non-ASCII characters like — and it must be folded to respect the 75-character line limit of RFC 2047.";
+        let encoded = encode_header_value(long_subject);
+
+        assert!(encoded.contains("\r\n "), "Encoded string should be folded");
+        let parts: Vec<&str> = encoded.split("\r\n ").collect();
+        assert!(parts.len() > 1, "Should be multiple parts");
+        for part in &parts {
+            assert!(part.starts_with("=?UTF-8?B?"));
+            assert!(part.ends_with("?="));
+            assert!(part.len() <= 75, "Part too long: {} chars", part.len());
+        }
+    }
+
+    #[test]
+    fn test_encode_header_value_multibyte_boundary() {
+        use base64::engine::general_purpose::STANDARD;
+        let subject = format!("{}€€€", "A".repeat(43));
+        let encoded = encode_header_value(&subject);
+        for part in encoded.split("\r\n ") {
+            let b64 = part.trim_start_matches("=?UTF-8?B?").trim_end_matches("?=");
+            let decoded = STANDARD.decode(b64).expect("valid base64");
+            String::from_utf8(decoded).expect("each chunk must be valid UTF-8");
+        }
+    }
+
+    #[test]
+    fn test_message_builder_basic() {
+        let raw = MessageBuilder {
+            to: "test@example.com",
+            subject: "Hello",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+        }
+        .build("World");
+
+        assert!(raw.contains("To: test@example.com"));
+        assert!(raw.contains("Subject: Hello"));
+        assert!(raw.contains("MIME-Version: 1.0"));
+        assert!(raw.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(raw.contains("\r\n\r\nWorld"));
+        assert!(!raw.contains("From:"));
+        assert!(!raw.contains("Cc:"));
+        assert!(!raw.contains("Bcc:"));
+        assert!(!raw.contains("In-Reply-To:"));
+        assert!(!raw.contains("References:"));
+    }
+
+    #[test]
+    fn test_message_builder_all_optional_headers() {
+        let raw = MessageBuilder {
+            to: "alice@example.com",
+            subject: "Re: Hello",
+            from: Some("alias@example.com"),
+            cc: Some("carol@example.com"),
+            bcc: Some("secret@example.com"),
+            threading: Some(ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            }),
+        }
+        .build("Reply body");
+
+        assert!(raw.contains("To: alice@example.com"));
+        assert!(raw.contains("Subject: Re: Hello"));
+        assert!(raw.contains("From: alias@example.com"));
+        assert!(raw.contains("Cc: carol@example.com"));
+        assert!(raw.contains("Bcc: secret@example.com"));
+        assert!(raw.contains("In-Reply-To: <abc@example.com>"));
+        assert!(raw.contains("References: <abc@example.com>"));
+        assert!(raw.contains("Reply body"));
+    }
+
+    #[test]
+    fn test_message_builder_non_ascii_subject() {
+        let raw = MessageBuilder {
+            to: "test@example.com",
+            subject: "Solar — Quote Request",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+        }
+        .build("Body");
+
+        assert!(raw.contains("=?UTF-8?B?"));
+        assert!(!raw.contains("Solar — Quote Request"));
+    }
+
+    #[test]
+    fn test_message_builder_sanitizes_crlf_injection() {
+        let raw = MessageBuilder {
+            to: "alice@example.com\r\nBcc: evil@attacker.com",
+            subject: "Hello",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+        }
+        .build("Body");
+
+        // The CRLF is stripped, preventing header injection. The "Bcc: evil..."
+        // text becomes part of the To value, not a separate header.
+        let header_section = raw.split("\r\n\r\n").next().unwrap();
+        let header_lines: Vec<&str> = header_section.split("\r\n").collect();
+        assert!(
+            !header_lines.iter().any(|l| l.starts_with("Bcc:")),
+            "No Bcc header should exist"
+        );
+    }
+
+    #[test]
+    fn test_message_builder_sanitizes_optional_headers() {
+        let raw = MessageBuilder {
+            to: "alice@example.com",
+            subject: "Hello",
+            from: Some("sender@example.com\r\nBcc: evil@attacker.com"),
+            cc: Some("carol@example.com\r\nX-Injected: yes"),
+            bcc: None,
+            threading: None,
+        }
+        .build("Body");
+
+        let header_section = raw.split("\r\n\r\n").next().unwrap();
+        let header_lines: Vec<&str> = header_section.split("\r\n").collect();
+        assert!(
+            !header_lines.iter().any(|l| l.starts_with("X-Injected:")),
+            "Injected header via Cc should not exist"
+        );
+        assert!(
+            header_lines
+                .iter()
+                .filter(|l| l.starts_with("Bcc:"))
+                .count()
+                == 0,
+            "Injected Bcc via From should not exist"
+        );
+    }
+
+    #[test]
+    fn test_build_references_empty() {
+        assert_eq!(
+            build_references("", "<msg-1@example.com>"),
+            "<msg-1@example.com>"
+        );
+    }
+
+    #[test]
+    fn test_build_references_with_existing() {
+        assert_eq!(
+            build_references("<msg-0@example.com>", "<msg-1@example.com>"),
+            "<msg-0@example.com> <msg-1@example.com>"
+        );
     }
 
     #[test]
