@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::discovery::{RestDescription, RestMethod};
 use crate::error::GwsError;
@@ -182,17 +182,22 @@ async fn build_http_request(
         if input.is_upload {
             let upload_path = upload_path.expect("upload_path must be Some when is_upload is true");
 
-            let file_bytes = tokio::fs::read(upload_path).await.map_err(|e| {
-                GwsError::Validation(format!(
-                    "Failed to read upload file '{}': {}",
-                    upload_path, e
-                ))
-            })?;
+            let file_size = tokio::fs::metadata(upload_path)
+                .await
+                .map_err(|e| {
+                    GwsError::Validation(format!(
+                        "Failed to read upload file '{}': {}",
+                        upload_path, e
+                    ))
+                })?
+                .len();
 
             request = request.query(&[("uploadType", "multipart")]);
-            let (multipart_body, content_type) = build_multipart_body(&input.body, &file_bytes)?;
+            let (body, content_type, content_length) =
+                build_multipart_stream(&input.body, upload_path, file_size);
             request = request.header("Content-Type", content_type);
-            request = request.body(multipart_body);
+            request = request.header("Content-Length", content_length);
+            request = request.body(body);
         } else if let Some(ref body_val) = input.body {
             request = request.header("Content-Type", "application/json");
             request = request.json(body_val);
@@ -731,6 +736,7 @@ fn handle_error_response<T>(
 /// Builds a multipart/related body for media upload requests.
 ///
 /// Returns the body bytes and the Content-Type header value (with boundary).
+#[cfg(test)]
 fn build_multipart_body(
     metadata: &Option<Value>,
     file_bytes: &[u8],
@@ -766,6 +772,97 @@ fn build_multipart_body(
 
     let content_type = format!("multipart/related; boundary={boundary}");
     Ok((body, content_type))
+}
+
+/// Build a streaming multipart/related body for file uploads.
+///
+/// Instead of reading the entire file into memory, this streams the file
+/// contents from disk in 64 KB chunks, keeping memory usage constant
+/// regardless of file size. Returns `(body, content_type, content_length)`.
+fn build_multipart_stream(
+    metadata: &Option<Value>,
+    file_path: &str,
+    file_size: u64,
+) -> (reqwest::Body, String, u64) {
+    let boundary = format!("gws_boundary_{:016x}", rand::random::<u64>());
+
+    let media_mime = metadata
+        .as_ref()
+        .and_then(|m| m.get("mimeType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let metadata_json = metadata
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
+        .unwrap_or_else(|| "{}".to_string());
+
+    let preamble = format!(
+        "--{boundary}\r\n\
+         Content-Type: application/json; charset=UTF-8\r\n\r\n\
+         {metadata_json}\r\n\
+         --{boundary}\r\n\
+         Content-Type: {media_mime}\r\n\r\n"
+    );
+    let postamble = format!("\r\n--{boundary}--\r\n");
+
+    let content_length = preamble.len() as u64 + file_size + postamble.len() as u64;
+    let content_type = format!("multipart/related; boundary={boundary}");
+
+    // State machine for the streaming body: preamble -> file chunks -> postamble
+    enum State {
+        Preamble {
+            preamble: Vec<u8>,
+            file_path: String,
+            postamble: Vec<u8>,
+        },
+        Streaming {
+            file: tokio::fs::File,
+            postamble: Vec<u8>,
+        },
+        Done,
+    }
+
+    let initial = State::Preamble {
+        preamble: preamble.into_bytes(),
+        file_path: file_path.to_owned(),
+        postamble: postamble.into_bytes(),
+    };
+
+    let stream = futures_util::stream::unfold(initial, |state| async move {
+        match state {
+            State::Preamble {
+                preamble,
+                file_path,
+                postamble,
+            } => match tokio::fs::File::open(&file_path).await {
+                Ok(file) => Some((Ok(preamble), State::Streaming { file, postamble })),
+                Err(e) => Some((Err(e), State::Done)),
+            },
+            State::Streaming {
+                mut file,
+                postamble,
+            } => {
+                let mut buf = vec![0u8; 64 * 1024];
+                match file.read(&mut buf).await {
+                    Ok(0) => Some((Ok(postamble), State::Done)),
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Some((Ok(buf), State::Streaming { file, postamble }))
+                    }
+                    Err(e) => Some((Err(e), State::Done)),
+                }
+            }
+            State::Done => None,
+        }
+    });
+
+    (
+        reqwest::Body::wrap_stream(stream),
+        content_type,
+        content_length,
+    )
 }
 
 /// Validates a JSON body against a Discovery Document schema.
@@ -1216,6 +1313,57 @@ mod tests {
         assert!(body_str.contains(boundary));
         assert!(body_str.contains("application/octet-stream")); // Fallback mime
         assert!(body_str.contains("Binary data"));
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_stream_content_length() {
+        use std::io::Write;
+        let metadata = Some(json!({ "name": "test.txt", "mimeType": "text/plain" }));
+        let content = b"Hello streaming world";
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(content).unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+
+        let (_, content_type, content_length) =
+            build_multipart_stream(&metadata, &path, content.len() as u64);
+
+        assert!(content_type.starts_with("multipart/related; boundary="));
+        let boundary = content_type.split("boundary=").nth(1).unwrap();
+        assert!(boundary.starts_with("gws_boundary_"));
+
+        // Verify content_length matches the expected structure:
+        // preamble + file_size + postamble
+        let metadata_json = serde_json::to_string(metadata.as_ref().unwrap()).unwrap();
+        let preamble_len = format!(
+            "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata_json}\r\n--{boundary}\r\nContent-Type: text/plain\r\n\r\n"
+        ).len() as u64;
+        let postamble_len = format!("\r\n--{boundary}--\r\n").len() as u64;
+        assert_eq!(content_length, preamble_len + content.len() as u64 + postamble_len);
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_stream_large_file() {
+        use std::io::Write;
+        let metadata = Some(json!({ "name": "big.bin", "mimeType": "application/octet-stream" }));
+        let content = vec![0xABu8; 256 * 1024]; // 256KB — larger than the 64KB chunk size
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(&content).unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+
+        let (_, _, content_length) =
+            build_multipart_stream(&metadata, &path, content.len() as u64);
+
+        // Verify the declared content_length is consistent
+        let metadata_json = serde_json::to_string(metadata.as_ref().unwrap()).unwrap();
+        let boundary_example = "gws_boundary_0000000000000000";
+        // Structural overhead is: preamble + postamble (boundary length is fixed at 29 chars)
+        let expected_overhead = format!(
+            "--{boundary_example}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata_json}\r\n--{boundary_example}\r\nContent-Type: application/octet-stream\r\n\r\n"
+        ).len() as u64
+            + format!("\r\n--{boundary_example}--\r\n").len() as u64;
+        assert_eq!(content_length, expected_overhead + content.len() as u64);
     }
 
     #[test]
