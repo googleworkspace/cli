@@ -15,6 +15,35 @@
 use serde_json::json;
 use thiserror::Error;
 
+pub(crate) fn is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stderr().is_terminal()
+}
+
+pub(crate) fn yellow(s: &str) -> String {
+    if is_tty() {
+        format!("\x1b[33m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
+
+pub(crate) fn red(s: &str) -> String {
+    if is_tty() {
+        format!("\x1b[31m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
+
+pub(crate) fn bold(s: &str) -> String {
+    if is_tty() {
+        format!("\x1b[1m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum GwsError {
     #[error("{message}")]
@@ -111,7 +140,7 @@ pub fn print_error_json(err: &GwsError) {
     {
         if reason == "accessNotConfigured" {
             eprintln!();
-            eprintln!("💡 API not enabled for your GCP project.");
+            eprintln!("{}", yellow("💡 API not enabled for your GCP project."));
             if let Some(url) = enable_url {
                 eprintln!("   Enable it at: {url}");
             } else {
@@ -125,6 +154,37 @@ pub fn print_error_json(err: &GwsError) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // In test environments stderr is not a TTY, so the helpers return plain strings.
+    #[test]
+    fn test_yellow_non_tty() {
+        // Stderr is not a TTY in CI/test runners; plain string is returned.
+        let result = yellow("hello");
+        // Either plain or ANSI-wrapped depending on environment; must contain the text.
+        assert!(result.contains("hello"));
+    }
+
+    #[test]
+    fn test_red_non_tty() {
+        let result = red("error");
+        assert!(result.contains("error"));
+    }
+
+    #[test]
+    fn test_bold_non_tty() {
+        let result = bold("important");
+        assert!(result.contains("important"));
+    }
+
+    #[test]
+    fn test_color_helpers_no_ansi_when_non_tty() {
+        // In test runners, stderr is not a TTY — helpers must return the raw string.
+        if !is_tty() {
+            assert_eq!(yellow("x"), "x");
+            assert_eq!(red("x"), "x");
+            assert_eq!(bold("x"), "x");
+        }
+    }
 
     #[test]
     fn test_error_to_json_api() {

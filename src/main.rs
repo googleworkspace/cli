@@ -174,7 +174,8 @@ async fn run() -> Result<(), GwsError> {
             Ok(fmt) => fmt,
             Err(unknown) => {
                 eprintln!(
-                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
+                    "{} unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)",
+                    crate::error::yellow("warning:")
                 );
                 formatter::OutputFormat::Json
             }

@@ -228,7 +228,7 @@ async fn handle_json_response(
                 Ok(result) => {
                     let is_match = result.filter_match_state == "MATCH_FOUND";
                     if is_match {
-                        eprintln!("⚠️  Model Armor: prompt injection detected (filterMatchState: MATCH_FOUND)");
+                        eprintln!("{}", crate::error::yellow("⚠️  Model Armor: prompt injection detected (filterMatchState: MATCH_FOUND)"));
                     }
 
                     if is_match && *sanitize_mode == crate::helpers::modelarmor::SanitizeMode::Block
@@ -254,7 +254,7 @@ async fn handle_json_response(
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Model Armor sanitization failed: {e}");
+                    eprintln!("{}", crate::error::yellow(&format!("⚠️  Model Armor sanitization failed: {e}")));
                 }
             }
         }
