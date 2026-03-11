@@ -142,7 +142,7 @@ To include Shared Drive content, pass `supportsAllDrives: true` in `--params`:
 
 ```bash
 # list files in a shared drive
-gws drive files list --params '{"driveId": "DRIVE_ID", "corpora": "drive", "supportsAllDrives": true, "includeItemsFromAllDrives": true}'
+gws drive files list --params '{"driveId": "DRIVE_ID", "supportsAllDrives": true, "includeItemsFromAllDrives": true}'
 
 # get a file that lives in a shared drive
 gws drive files get --params '{"fileId": "FILE_ID", "supportsAllDrives": true}'
