@@ -207,8 +207,32 @@ async fn load_credentials_inner(
 
     // 2. Encrypted credentials (always AuthorizedUser for now)
     if enc_path.exists() {
-        let json_str = credential_store::load_encrypted_from_path(enc_path)
-            .context("Failed to decrypt credentials")?;
+        let json_str = match credential_store::load_encrypted_from_path(enc_path) {
+            Ok(s) => s,
+            Err(e) => {
+                // Decryption failed — the encryption key likely changed (e.g. after
+                // an upgrade that migrated keys between keyring and file storage).
+                // Remove the stale file so the next `gws auth login` starts fresh,
+                // and fall through to other credential sources.
+                eprintln!(
+                    "warning: removing undecryptable credentials file ({}): {e:#}",
+                    enc_path.display()
+                );
+                let _ = std::fs::remove_file(enc_path);
+                // Also remove any stale token cache that used the old key.
+                let token_cache = enc_path.with_file_name("token_cache.json");
+                let _ = std::fs::remove_file(&token_cache);
+                let sa_token_cache = enc_path.with_file_name("sa_token_cache.json");
+                let _ = std::fs::remove_file(&sa_token_cache);
+
+                // Fall through to remaining credential sources below.
+                anyhow::bail!(
+                    "Encrypted credentials could not be decrypted (key may have changed \
+                     after an upgrade). The stale file has been removed automatically. \
+                     Please run `gws auth login` to re-authenticate."
+                );
+            }
+        };
 
         let creds: serde_json::Value =
             serde_json::from_str(&json_str).context("Failed to parse decrypted credentials")?;
@@ -612,6 +636,37 @@ mod tests {
             }
             _ => panic!("Expected AuthorizedUser"),
         }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
+        // When credentials.enc cannot be decrypted, the file should be removed
+        // automatically so that a subsequent `gws auth login` starts fresh.
+        let tmp = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+
+        // Write garbage data that cannot be decrypted
+        std::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890").unwrap();
+        assert!(enc_path.exists());
+
+        let result = load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist"))
+            .await;
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("could not be decrypted"),
+            "Error should mention decryption failure, got: {msg}"
+        );
+        assert!(
+            !enc_path.exists(),
+            "Stale credentials.enc must be removed after decryption failure"
+        );
     }
 
     #[tokio::test]
