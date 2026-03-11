@@ -324,11 +324,6 @@ async fn watch_pull_loop(
 
         // Acknowledge messages
         if !ack_ids.is_empty() {
-            let pubsub_token = runtime
-                .pubsub_token_provider
-                .access_token()
-                .await
-                .context("Failed to get Pub/Sub token")?;
             let ack_body = json!({ "ackIds": ack_ids });
             let _ = runtime
                 .client
@@ -426,10 +421,6 @@ async fn fetch_and_output_messages(
 
     for msg_id in msg_ids {
         // Fetch full message
-        let gmail_token = gmail_token_provider
-            .access_token()
-            .await
-            .context("Failed to get Gmail token")?;
         let msg_url = format!(
             "{gmail_api_base}/users/me/messages/{}",
             crate::validate::encode_path_segment(&msg_id),
@@ -932,8 +923,8 @@ mod tests {
     #[tokio::test]
     async fn test_watch_pull_loop_refreshes_tokens_for_each_request() {
         let client = reqwest::Client::new();
-        let pubsub_provider = FakeTokenProvider::new(["pubsub-pull", "pubsub-ack"]);
-        let gmail_provider = FakeTokenProvider::new(["gmail-history", "gmail-message"]);
+        let pubsub_provider = FakeTokenProvider::new(["pubsub-token"]);
+        let gmail_provider = FakeTokenProvider::new(["gmail-token"]);
         let (pubsub_base, gmail_base, requests, server) = spawn_watch_server().await;
         let mut last_history_id = 1;
         let config = WatchConfig {
@@ -976,22 +967,22 @@ mod tests {
         let requests = requests.lock().await;
         assert_eq!(requests.len(), 4);
         assert_eq!(requests[0].0, "/v1/projects/test/subscriptions/demo:pull");
-        assert_eq!(requests[0].1, "authorization: Bearer pubsub-pull");
+        assert_eq!(requests[0].1, "authorization: Bearer pubsub-token");
         assert_eq!(
             requests[1].0,
             "/gmail/v1/users/me/history?startHistoryId=1&historyTypes=messageAdded"
         );
-        assert_eq!(requests[1].1, "authorization: Bearer gmail-history");
+        assert_eq!(requests[1].1, "authorization: Bearer gmail-token");
         assert_eq!(
             requests[2].0,
             "/gmail/v1/users/me/messages/msg%2D1?format=full"
         );
-        assert_eq!(requests[2].1, "authorization: Bearer gmail-message");
+        assert_eq!(requests[2].1, "authorization: Bearer gmail-token");
         assert_eq!(
             requests[3].0,
             "/v1/projects/test/subscriptions/demo:acknowledge"
         );
-        assert_eq!(requests[3].1, "authorization: Bearer pubsub-ack");
+        assert_eq!(requests[3].1, "authorization: Bearer pubsub-token");
         assert_eq!(last_history_id, 2);
     }
 }

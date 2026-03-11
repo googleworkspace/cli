@@ -388,10 +388,6 @@ async fn pull_loop(
 
         // Acknowledge messages
         if !config.no_ack && !ack_ids.is_empty() {
-            let token = token_provider
-                .access_token()
-                .await
-                .map_err(|e| GwsError::Auth(format!("Failed to get Pub/Sub token: {e}")))?;
             let ack_body = json!({
                 "ackIds": ack_ids,
             });
@@ -868,7 +864,7 @@ mod tests {
     #[tokio::test]
     async fn test_pull_loop_refreshes_pubsub_token_between_requests() {
         let client = reqwest::Client::new();
-        let token_provider = FakeTokenProvider::new(["pubsub-pull", "pubsub-ack"]);
+        let token_provider = FakeTokenProvider::new(["pubsub-token"]);
         let (pubsub_base, requests, server) = spawn_subscribe_server().await;
         let config = SubscribeConfigBuilder::default()
             .subscription(Some(SubscriptionName(
@@ -895,11 +891,11 @@ mod tests {
         let requests = requests.lock().await;
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].0, "/v1/projects/test/subscriptions/demo:pull");
-        assert_eq!(requests[0].1, "authorization: Bearer pubsub-pull");
+        assert_eq!(requests[0].1, "authorization: Bearer pubsub-token");
         assert_eq!(
             requests[1].0,
             "/v1/projects/test/subscriptions/demo:acknowledge"
         );
-        assert_eq!(requests[1].1, "authorization: Bearer pubsub-ack");
+        assert_eq!(requests[1].1, "authorization: Bearer pubsub-token");
     }
 }
