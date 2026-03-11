@@ -14,7 +14,7 @@
 
 [package]
 name = "gws"
-version = "0.9.1"
+version = "0.11.1"
 edition = "2021"
 description = "Google Workspace CLI — dynamic command surface from Discovery Service"
 license = "Apache-2.0"
@@ -57,6 +57,7 @@ async-trait = "0.1.89"
 serde_yaml = "0.9.34"
 percent-encoding = "2.3.2"
 libc = "0.2"
+zeroize = { version = "1.8.2", features = ["derive"] }
 
 
 # The profile that 'cargo dist' will build with

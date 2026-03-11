@@ -356,6 +356,23 @@ fn format_csv_page(value: &Value, emit_header: bool) -> String {
         return String::new();
     }
 
+    // Array of non-objects
+    if !arr.iter().any(|v| v.is_object()) {
+        let mut output = String::new();
+        for item in arr {
+            if let Value::Array(inner) = item {
+                let cells: Vec<String> = inner
+                    .iter()
+                    .map(|v| csv_escape(&value_to_cell(v)))
+                    .collect();
+                let _ = writeln!(output, "{}", cells.join(","));
+            } else {
+                let _ = writeln!(output, "{}", csv_escape(&value_to_cell(item)));
+            }
+        }
+        return output;
+    }
+
     // Collect columns
     let mut columns: Vec<String> = Vec::new();
     for item in arr {
@@ -562,6 +579,47 @@ mod tests {
         assert!(output.contains("id,name"));
         assert!(output.contains("1,hello"));
         assert!(output.contains("2,world"));
+    }
+
+    #[test]
+    fn test_format_csv_array_of_arrays() {
+        // Sheets API returns {"values": [["col1","col2"], ["a","b"]]}
+        let val = json!({
+            "values": [
+                ["Student Name", "Gender", "Class Level"],
+                ["Alexandra", "Female", "4. Senior"],
+                ["Andrew", "Male", "1. Freshman"]
+            ]
+        });
+        let output = format_value(&val, &OutputFormat::Csv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "Student Name,Gender,Class Level");
+        assert_eq!(lines[1], "Alexandra,Female,4. Senior");
+        assert_eq!(lines[2], "Andrew,Male,1. Freshman");
+    }
+
+    #[test]
+    fn test_format_csv_flat_scalars() {
+        // Flat array of non-object, non-array values → one value per line
+        let val = json!(["apple", "banana", "cherry"]);
+        let output = format_value(&val, &OutputFormat::Csv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "apple");
+        assert_eq!(lines[1], "banana");
+        assert_eq!(lines[2], "cherry");
+    }
+
+    #[test]
+    fn test_format_csv_flat_scalars_with_escaping() {
+        // Scalars that contain commas/quotes must be CSV-escaped
+        let val = json!(["plain", "has,comma", "has\"quote"]);
+        let output = format_value(&val, &OutputFormat::Csv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "plain");
+        assert_eq!(lines[1], "\"has,comma\"");
+        assert_eq!(lines[2], "\"has\"\"quote\"");
     }
 
     #[test]

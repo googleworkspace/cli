@@ -359,7 +359,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             "message": "Authentication successful. Encrypted credentials saved.",
             "account": actual_email.as_deref().unwrap_or("(unknown)"),
             "credentials_file": enc_path.display().to_string(),
-            "encryption": "AES-256-GCM (key secured by OS Keyring or local `.encryption_key`)",
+            "encryption": "AES-256-GCM (key in OS keyring or local `.encryption_key`; set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file for headless)",
             "scopes": scopes,
         });
         println!(
@@ -944,6 +944,7 @@ async fn handle_status() -> Result<(), GwsError> {
     let mut output = json!({
         "auth_method": auth_method,
         "storage": storage,
+        "keyring_backend": credential_store::active_backend_name(),
         "encrypted_credentials": enc_path.display().to_string(),
         "encrypted_credentials_exists": has_encrypted,
         "plain_credentials": plain_path.display().to_string(),
