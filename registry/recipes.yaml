@@ -216,7 +216,7 @@ recipes:
     services: [sheets, drive]
     steps:
       - "Find the tracking sheet: `gws drive files list --params '{\"q\": \"name = '\\''Sales Pipeline'\\'' and mimeType = '\\''application/vnd.google-apps.spreadsheet'\\''\"}'`"
-      - "Read current data: `gws sheets +read --spreadsheet-id SHEET_ID --range 'Pipeline!A1:F'`"
+      - "Read current data: `gws sheets +read --spreadsheet-id SHEET_ID --range \"Pipeline!A1:F\"`"
       - "Append new row: `gws sheets +append --spreadsheet-id SHEET_ID --range 'Pipeline' --values '[\"2024-03-15\", \"Acme Corp\", \"Proposal Sent\", \"$50,000\", \"Q2\", \"jdoe\"]'`"
 
   - name: collect-form-responses
@@ -424,7 +424,7 @@ recipes:
     category: productivity
     services: [sheets, calendar]
     steps:
-      - "Read event data: `gws sheets +read --spreadsheet-id SHEET_ID --range 'Events!A2:D'`"
+      - "Read event data: `gws sheets +read --spreadsheet-id SHEET_ID --range \"Events!A2:D\"`"
       - "For each row, create a calendar event: `gws calendar +insert --summary 'Team Standup' --start '2025-01-20T09:00' --duration 30 --attendees alice@company.com,bob@company.com`"
 
   # ============================================================
@@ -514,8 +514,8 @@ recipes:
     category: productivity
     services: [sheets]
     steps:
-      - "Read the first tab: `gws sheets +read --spreadsheet-id SHEET_ID --range 'January!A1:D'`"
-      - "Read the second tab: `gws sheets +read --spreadsheet-id SHEET_ID --range 'February!A1:D'`"
+      - "Read the first tab: `gws sheets +read --spreadsheet-id SHEET_ID --range \"January!A1:D\"`"
+      - "Read the second tab: `gws sheets +read --spreadsheet-id SHEET_ID --range \"February!A1:D\"`"
       - "Compare the data and identify changes"
 
   # ============================================================
@@ -553,7 +553,7 @@ recipes:
     category: productivity
     services: [sheets, docs, drive]
     steps:
-      - "Read the data: `gws sheets +read --spreadsheet-id SHEET_ID --range 'Sales!A1:D'`"
+      - "Read the data: `gws sheets +read --spreadsheet-id SHEET_ID --range \"Sales!A1:D\"`"
       - "Create the report doc: `gws docs documents create --json '{\"title\": \"Sales Report - January 2025\"}'`"
       - "Write the report: `gws docs +write --document-id DOC_ID --text '## Sales Report - January 2025\n\n### Summary\nTotal deals: 45\nRevenue: $125,000\n\n### Top Deals\n1. Acme Corp - $25,000\n2. Widget Inc - $18,000'`"
       - "Share with stakeholders: `gws drive permissions create --params '{\"fileId\": \"DOC_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"cfo@company.com\"}'`"

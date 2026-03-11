@@ -82,7 +82,7 @@ TIPS:
                 .after_help(
                     "\
 EXAMPLES:
-  gws sheets +read --spreadsheet ID --range 'Sheet1!A1:D10'
+  gws sheets +read --spreadsheet ID --range "Sheet1!A1:D10"
   gws sheets +read --spreadsheet ID --range Sheet1
 
 TIPS:

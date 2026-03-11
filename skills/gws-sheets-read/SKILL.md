@@ -32,7 +32,7 @@ gws sheets +read --spreadsheet <ID> --range <RANGE>
 ## Examples
 
 ```bash
-gws sheets +read --spreadsheet ID --range 'Sheet1!A1:D10'
+gws sheets +read --spreadsheet ID --range "Sheet1!A1:D10"
 gws sheets +read --spreadsheet ID --range Sheet1
 ```
 
