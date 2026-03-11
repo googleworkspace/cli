@@ -272,6 +272,35 @@ pub(super) fn encode_header_value(value: &str) -> String {
     encoded_words.join("\r\n ")
 }
 
+/// RFC 2047 encode the display-name portions of an address header value.
+///
+/// Handles formats like `"Name" <addr>`, `Name <addr>`, bare `addr`, and
+/// comma-separated lists thereof. Only the display-name text is encoded;
+/// angle-bracket addresses are left untouched.
+pub(super) fn encode_address_header_value(value: &str) -> String {
+    value
+        .split(',')
+        .map(|addr| {
+            let trimmed = addr.trim();
+            if let Some(open) = trimmed.rfind('<') {
+                let display = trimmed[..open].trim();
+                let angle_addr = &trimmed[open..]; // "<email>"
+                if display.is_empty() {
+                    trimmed.to_string()
+                } else {
+                    // Strip surrounding quotes if present.
+                    let unquoted = display.trim_matches('"').trim();
+                    format!("{} {}", encode_header_value(unquoted), angle_addr)
+                }
+            } else {
+                // Bare address (no display name) — nothing to encode.
+                trimmed.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// In-Reply-To and References values for threading a reply or forward.
 pub(super) struct ThreadingHeaders<'a> {
     pub in_reply_to: &'a str,
@@ -281,7 +310,7 @@ pub(super) struct ThreadingHeaders<'a> {
 /// Shared builder for RFC 2822 email messages.
 ///
 /// Handles header construction with CRLF sanitization and RFC 2047
-/// encoding of non-ASCII subjects. Each helper owns its body assembly
+/// encoding of non-ASCII subjects and address display names. Each helper owns its body assembly
 /// (quoted reply, forwarded block, plain body) and passes it to `build()`.
 pub(super) struct MessageBuilder<'a> {
     pub to: &'a str,
@@ -302,7 +331,7 @@ impl MessageBuilder<'_> {
 
         let mut headers = format!(
             "To: {}\r\nSubject: {}",
-            sanitize_header_value(self.to),
+            encode_address_header_value(&sanitize_header_value(self.to)),
             // Sanitize first: stripping CRLF before encoding prevents injection
             // in encoded-words.
             encode_header_value(&sanitize_header_value(self.subject)),
@@ -319,17 +348,26 @@ impl MessageBuilder<'_> {
         headers.push_str("\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8");
 
         if let Some(from) = self.from {
-            headers.push_str(&format!("\r\nFrom: {}", sanitize_header_value(from)));
+            headers.push_str(&format!(
+                "\r\nFrom: {}",
+                encode_address_header_value(&sanitize_header_value(from))
+            ));
         }
 
         if let Some(cc) = self.cc {
-            headers.push_str(&format!("\r\nCc: {}", sanitize_header_value(cc)));
+            headers.push_str(&format!(
+                "\r\nCc: {}",
+                encode_address_header_value(&sanitize_header_value(cc))
+            ));
         }
 
         // The Gmail API reads the Bcc header to route to those recipients,
         // then strips it before delivery.
         if let Some(bcc) = self.bcc {
-            headers.push_str(&format!("\r\nBcc: {}", sanitize_header_value(bcc)));
+            headers.push_str(&format!(
+                "\r\nBcc: {}",
+                encode_address_header_value(&sanitize_header_value(bcc))
+            ));
         }
 
         format!("{}\r\n\r\n{}", headers, body)
@@ -962,6 +1000,66 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_address_header_value_bare_email() {
+        assert_eq!(
+            encode_address_header_value("user@example.com"),
+            "user@example.com"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_value_ascii_display_name() {
+        let result = encode_address_header_value("\"Alice\" <alice@example.com>");
+        assert_eq!(result, "Alice <alice@example.com>");
+    }
+
+    #[test]
+    fn test_encode_address_header_value_non_ascii_display_name() {
+        use base64::engine::general_purpose::STANDARD;
+        let input = "\"\u{4e0b}\u{91ce}\u{7950}\u{592a}\" <user@example.com>";
+        let result = encode_address_header_value(input);
+        assert!(
+            result.contains("=?UTF-8?B?"),
+            "Display name should be RFC 2047 encoded: {}",
+            result
+        );
+        assert!(
+            result.ends_with("<user@example.com>"),
+            "Email address must be preserved: {}",
+            result
+        );
+        // Decode and verify the display name round-trips.
+        let b64_part = result
+            .trim_start_matches("=?UTF-8?B?")
+            .split("?=")
+            .next()
+            .unwrap();
+        let decoded = String::from_utf8(STANDARD.decode(b64_part).unwrap()).unwrap();
+        assert_eq!(decoded, "\u{4e0b}\u{91ce}\u{7950}\u{592a}");
+    }
+
+    #[test]
+    fn test_encode_address_header_value_multiple_addresses() {
+        let input = "\"\u{4e0b}\u{91ce}\" <a@example.com>, bob@example.com, \"\u{91ce}\u{53e3}\" <c@example.com>";
+        let result = encode_address_header_value(input);
+        let parts: Vec<&str> = result.split(", ").collect();
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].contains("=?UTF-8?B?"));
+        assert!(parts[0].ends_with("<a@example.com>"));
+        assert_eq!(parts[1], "bob@example.com");
+        assert!(parts[2].contains("=?UTF-8?B?"));
+        assert!(parts[2].ends_with("<c@example.com>"));
+    }
+
+    #[test]
+    fn test_encode_address_header_value_unquoted_non_ascii() {
+        let input = "\u{4e0b}\u{91ce}\u{7950}\u{592a} <user@example.com>";
+        let result = encode_address_header_value(input);
+        assert!(result.contains("=?UTF-8?B?"));
+        assert!(result.ends_with("<user@example.com>"));
+    }
+
+    #[test]
     fn test_encode_header_value_ascii() {
         assert_eq!(encode_header_value("Hello World"), "Hello World");
     }
@@ -1062,6 +1160,45 @@ mod tests {
 
         assert!(raw.contains("=?UTF-8?B?"));
         assert!(!raw.contains("Solar — Quote Request"));
+    }
+
+    #[test]
+    fn test_message_builder_non_ascii_address_headers() {
+        let raw = MessageBuilder {
+            to: "\"\u{91ce}\u{53e3}\" <noguchi@example.com>",
+            subject: "Report",
+            from: Some("\"\u{9577}\u{8c37}\u{5ddd}\" <hasegawa@example.com>"),
+            cc: Some("\"\u{4e0b}\u{91ce}\u{7950}\u{592a}\" <shimono@example.com>"),
+            bcc: Some("\"\u{9ed2}\u{5ddd}\" <kurokawa@example.com>"),
+            threading: None,
+        }
+        .build("Body");
+
+        // Display names must be RFC 2047 encoded, not raw UTF-8.
+        assert!(
+            !raw.contains("\u{4e0b}\u{91ce}\u{7950}\u{592a}"),
+            "Raw non-ASCII must not appear in Cc header"
+        );
+        assert!(
+            !raw.contains("\u{91ce}\u{53e3}"),
+            "Raw non-ASCII must not appear in To header"
+        );
+        assert!(
+            !raw.contains("\u{9577}\u{8c37}\u{5ddd}"),
+            "Raw non-ASCII must not appear in From header"
+        );
+        assert!(
+            !raw.contains("\u{9ed2}\u{5ddd}"),
+            "Raw non-ASCII must not appear in Bcc header"
+        );
+        // Email addresses must be preserved.
+        assert!(raw.contains("<noguchi@example.com>"));
+        assert!(raw.contains("<hasegawa@example.com>"));
+        assert!(raw.contains("<shimono@example.com>"));
+        assert!(raw.contains("<kurokawa@example.com>"));
+        // Encoded words must be present.
+        assert!(raw.contains("Cc: =?UTF-8?B?"));
+        assert!(raw.contains("From: =?UTF-8?B?"));
     }
 
     #[test]
