@@ -135,3 +135,17 @@ gws schema drive.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Shared Drives
+
+Most `files` and `permissions` methods only search **My Drive** by default.
+To include Shared Drive content, pass `supportsAllDrives: true` in `--params`:
+
+```bash
+# list files in a shared drive
+gws drive files list --params '{"driveId": "DRIVE_ID", "corpora": "drive", "supportsAllDrives": true, "includeItemsFromAllDrives": true}'
+
+# get a file that lives in a shared drive
+gws drive files get --params '{"fileId": "FILE_ID", "supportsAllDrives": true}'
+```
+
+If a file or folder isn't found, add `supportsAllDrives: true` to the request.
