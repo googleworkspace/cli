@@ -22,7 +22,9 @@ pub(crate) fn is_tty() -> bool {
 
 fn colorize(s: &str, code: &str) -> String {
     if is_tty() {
-        format!("\x1b[{code}m{s}\x1b[0m")
+        // Strip ESC characters to prevent terminal escape injection.
+        let sanitized = s.replace('\x1b', "");
+        format!("\x1b[{code}m{sanitized}\x1b[0m")
     } else {
         s.to_string()
     }
@@ -142,27 +144,6 @@ pub fn print_error_json(err: &GwsError) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // In test environments stderr is not a TTY, so the helpers return plain strings.
-    #[test]
-    fn test_yellow_non_tty() {
-        // Stderr is not a TTY in CI/test runners; plain string is returned.
-        let result = yellow("hello");
-        // Either plain or ANSI-wrapped depending on environment; must contain the text.
-        assert!(result.contains("hello"));
-    }
-
-    #[test]
-    fn test_red_non_tty() {
-        let result = red("error");
-        assert!(result.contains("error"));
-    }
-
-    #[test]
-    fn test_bold_non_tty() {
-        let result = bold("important");
-        assert!(result.contains("important"));
-    }
 
     #[test]
     fn test_color_helpers_no_ansi_when_non_tty() {
