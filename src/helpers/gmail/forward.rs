@@ -43,7 +43,8 @@ pub(super) async fn handle_forward(
         bcc: config.bcc.as_deref(),
         from: config.from.as_deref(),
         subject: &subject,
-        body: config.body_text.as_deref(),
+        body: config.body.as_deref(),
+        html: config.html,
     };
     let raw = create_forward_raw_message(&envelope, &original);
 
@@ -65,7 +66,8 @@ pub(super) struct ForwardConfig {
     pub from: Option<String>,
     pub cc: Option<String>,
     pub bcc: Option<String>,
-    pub body_text: Option<String>,
+    pub body: Option<String>,
+    pub html: bool,
 }
 
 struct ForwardEnvelope<'a> {
@@ -74,7 +76,8 @@ struct ForwardEnvelope<'a> {
     bcc: Option<&'a str>,
     from: Option<&'a str>,
     subject: &'a str,
-    body: Option<&'a str>,
+    body: Option<&'a str>, // Optional user note above forwarded block
+    html: bool,
 }
 
 // --- Message construction ---
@@ -99,11 +102,16 @@ fn create_forward_raw_message(envelope: &ForwardEnvelope, original: &OriginalMes
             in_reply_to: &original.message_id_header,
             references: &references,
         }),
+        html: envelope.html,
     };
 
-    let forwarded_block = format_forwarded_message(original);
+    let (forwarded_block, separator) = if envelope.html {
+        (format_forwarded_message_html(original), "<br>\r\n")
+    } else {
+        (format_forwarded_message(original), "\r\n\r\n")
+    };
     let body = match envelope.body {
-        Some(note) => format!("{}\r\n\r\n{}", note, forwarded_block),
+        Some(note) => format!("{}{}{}", note, separator, forwarded_block),
         None => forwarded_block,
     };
 
@@ -132,6 +140,40 @@ fn format_forwarded_message(original: &OriginalMessage) -> String {
     )
 }
 
+fn format_forwarded_message_html(original: &OriginalMessage) -> String {
+    let cc_line = if original.cc.is_empty() {
+        String::new()
+    } else {
+        format!("Cc: {}<br>", format_address_list_with_links(&original.cc))
+    };
+
+    let body = resolve_html_body(original);
+    let date = format_date_for_attribution(&original.date);
+    let from = format_forward_from(&original.from);
+    let to = format_address_list_with_links(&original.to);
+
+    format!(
+        "<div class=\"gmail_quote gmail_quote_container\">\
+           <div dir=\"ltr\" class=\"gmail_attr\">\
+             ---------- Forwarded message ---------<br>\
+             From: {}<br>\
+             Date: {}<br>\
+             Subject: {}<br>\
+             To: {}<br>\
+             {}\
+           </div>\
+           <br><br>\
+           {}\
+         </div>",
+        from,
+        date,
+        html_escape(&original.subject),
+        to,
+        cc_line,
+        body,
+    )
+}
+
 // --- Argument parsing ---
 
 fn parse_forward_args(matches: &ArgMatches) -> ForwardConfig {
@@ -141,7 +183,8 @@ fn parse_forward_args(matches: &ArgMatches) -> ForwardConfig {
         from: parse_optional_trimmed(matches, "from"),
         cc: parse_optional_trimmed(matches, "cc"),
         bcc: parse_optional_trimmed(matches, "bcc"),
-        body_text: matches.get_one::<String>("body").map(|s| s.to_string()),
+        body: parse_optional_trimmed(matches, "body"),
+        html: matches.get_flag("html"),
     }
 }
 
@@ -177,6 +220,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original content".to_string(),
+            body_html: None,
         };
 
         let envelope = ForwardEnvelope {
@@ -186,6 +230,7 @@ mod tests {
             from: None,
             subject: "Fwd: Hello",
             body: None,
+            html: false,
         };
         let raw = create_forward_raw_message(&envelope, &original);
 
@@ -214,6 +259,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original content".to_string(),
+            body_html: None,
         };
 
         let envelope = ForwardEnvelope {
@@ -223,6 +269,7 @@ mod tests {
             from: Some("alias@example.com"),
             subject: "Fwd: Hello",
             body: Some("FYI see below"),
+            html: false,
         };
         let raw = create_forward_raw_message(&envelope, &original);
 
@@ -246,6 +293,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original content".to_string(),
+            body_html: None,
         };
 
         let envelope = ForwardEnvelope {
@@ -255,6 +303,7 @@ mod tests {
             from: None,
             subject: "Fwd: Hello",
             body: None,
+            html: false,
         };
         let raw = create_forward_raw_message(&envelope, &original);
 
@@ -272,6 +321,7 @@ mod tests {
             .arg(Arg::new("cc").long("cc"))
             .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("html").long("html").action(ArgAction::SetTrue))
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
@@ -289,7 +339,7 @@ mod tests {
         assert_eq!(config.to, "dave@example.com");
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
-        assert!(config.body_text.is_none());
+        assert!(config.body.is_none());
     }
 
     #[test]
@@ -310,7 +360,7 @@ mod tests {
         let config = parse_forward_args(&matches);
         assert_eq!(config.cc.unwrap(), "eve@example.com");
         assert_eq!(config.bcc.unwrap(), "secret@example.com");
-        assert_eq!(config.body_text.unwrap(), "FYI");
+        assert_eq!(config.body.unwrap(), "FYI");
 
         // Whitespace-only values become None
         let matches = make_forward_matches(&[
@@ -327,5 +377,226 @@ mod tests {
         let config = parse_forward_args(&matches);
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
+    }
+
+    #[test]
+    fn test_parse_forward_args_html_flag() {
+        let matches = make_forward_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--to",
+            "dave@example.com",
+            "--html",
+        ]);
+        let config = parse_forward_args(&matches);
+        assert!(config.html);
+
+        // Default is false
+        let matches =
+            make_forward_matches(&["test", "--message-id", "abc123", "--to", "dave@example.com"]);
+        let config = parse_forward_args(&matches);
+        assert!(!config.html);
+    }
+
+    // --- HTML mode tests ---
+
+    #[test]
+    fn test_format_forwarded_message_html_with_html_body() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026".to_string(),
+            body_text: "plain fallback".to_string(),
+            body_html: Some("<p>Rich <b>content</b></p>".to_string()),
+        };
+        let html = format_forwarded_message_html(&original);
+        assert!(html.contains("gmail_quote"));
+        assert!(html.contains("Forwarded message"));
+        assert!(html.contains("<p>Rich <b>content</b></p>"));
+        assert!(!html.contains("plain fallback"));
+        // No blockquote in forwards (unlike replies)
+        assert!(!html.contains("<blockquote"));
+    }
+
+    #[test]
+    fn test_format_forwarded_message_html_fallback_plain_text() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026".to_string(),
+            body_text: "Line one & <stuff>\nLine two".to_string(),
+            body_html: None,
+        };
+        let html = format_forwarded_message_html(&original);
+        assert!(html.contains("Line one &amp; &lt;stuff&gt;<br>"));
+        assert!(html.contains("Line two"));
+    }
+
+    #[test]
+    fn test_format_forwarded_message_html_escapes_metadata() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "Tom & Jerry <tj@example.com>".to_string(),
+            reply_to: "".to_string(),
+            to: "<alice@example.com>".to_string(),
+            cc: "".to_string(),
+            subject: "A < B & C".to_string(),
+            date: "Jan 1 <2026>".to_string(),
+            body_text: "text".to_string(),
+            body_html: None,
+        };
+        let html = format_forwarded_message_html(&original);
+        // From line: display name in <strong>, email in mailto link
+        assert!(html.contains("Tom &amp; Jerry"));
+        assert!(html.contains("<a href=\"mailto:tj@example.com\">tj@example.com</a>"));
+        // To line: email wrapped in mailto link
+        assert!(html.contains("<a href=\"mailto:alice@example.com\">"));
+        assert!(html.contains("A &lt; B &amp; C"));
+        // Non-RFC-2822 date falls back to html-escaped raw string
+        assert!(html.contains("Jan 1 &lt;2026&gt;"));
+    }
+
+    #[test]
+    fn test_format_forwarded_message_html_conditional_cc() {
+        let with_cc = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "carol@example.com".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026".to_string(),
+            body_text: "text".to_string(),
+            body_html: None,
+        };
+        let html = format_forwarded_message_html(&with_cc);
+        assert!(html.contains("Cc: <a href=\"mailto:carol@example.com\">carol@example.com</a>"));
+
+        let without_cc = OriginalMessage {
+            cc: "".to_string(),
+            ..with_cc
+        };
+        let html = format_forwarded_message_html(&without_cc);
+        assert!(!html.contains("Cc:"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_html_without_body() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original content".to_string(),
+            body_html: Some("<p>Original</p>".to_string()),
+        };
+
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: None,
+            html: true,
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
+
+        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(raw.contains("gmail_quote"));
+        assert!(raw.contains("Forwarded message"));
+        assert!(raw.contains("<p>Original</p>"));
+        // No user note — forwarded block is the entire body
+        assert!(!raw.contains("<p>FYI</p>"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_html_plain_text_fallback() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Plain & simple".to_string(),
+            body_html: None,
+        };
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: Some("<p>FYI</p>"),
+            html: true,
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
+
+        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(raw.contains("<p>FYI</p><br>\r\n<div class=\"gmail_quote gmail_quote_container\">"));
+        // Plain text body is HTML-escaped in the fallback
+        assert!(raw.contains("Plain &amp; simple"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_html() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original content".to_string(),
+            body_html: Some("<p>Original</p>".to_string()),
+        };
+
+        let envelope = ForwardEnvelope {
+            to: "dave@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: Some("<p>FYI</p>"),
+            html: true,
+        };
+        let raw = create_forward_raw_message(&envelope, &original);
+
+        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(raw.contains("<p>FYI</p>"));
+        assert!(raw.contains("gmail_quote"));
+        assert!(raw.contains("Forwarded message"));
+        assert!(raw.contains("<p>Original</p>"));
+        // HTML separator: <br> between note and forwarded block (not \r\n\r\n)
+        assert!(raw.contains("<p>FYI</p><br>\r\n<div class=\"gmail_quote gmail_quote_container\">"));
     }
 }

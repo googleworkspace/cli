@@ -89,9 +89,12 @@ pub(super) async fn handle_reply(
         bcc: bcc.as_deref(),
         from: config.from.as_deref(),
         subject: &subject,
-        in_reply_to: &in_reply_to,
-        references: &references,
-        body: &config.body_text,
+        threading: ThreadingHeaders {
+            in_reply_to: &in_reply_to,
+            references: &references,
+        },
+        body: &config.body,
+        html: config.html,
     };
 
     let raw = create_reply_raw_message(&envelope, &original);
@@ -114,19 +117,20 @@ struct ReplyEnvelope<'a> {
     bcc: Option<&'a str>,
     from: Option<&'a str>,
     subject: &'a str,
-    in_reply_to: &'a str,
-    references: &'a str,
-    body: &'a str,
+    threading: ThreadingHeaders<'a>,
+    body: &'a str, // Always present: --body is required for replies
+    html: bool,
 }
 
 pub(super) struct ReplyConfig {
     pub message_id: String,
-    pub body_text: String,
+    pub body: String,
     pub from: Option<String>,
     pub to: Option<String>,
     pub cc: Option<String>,
     pub bcc: Option<String>,
     pub remove: Option<String>,
+    pub html: bool,
 }
 
 async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<String, GwsError> {
@@ -171,54 +175,6 @@ fn extract_reply_to_address(original: &OriginalMessage) -> String {
     }
 }
 
-/// Split an RFC 5322 mailbox list on commas, respecting quoted strings.
-/// `"Doe, John" <john@example.com>, alice@example.com` →
-/// `["\"Doe, John\" <john@example.com>", "alice@example.com"]`
-fn split_mailbox_list(header: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut in_quotes = false;
-    let mut start = 0;
-    let mut prev_backslash = false;
-
-    for (i, ch) in header.char_indices() {
-        match ch {
-            '\\' if in_quotes => {
-                prev_backslash = !prev_backslash;
-                continue;
-            }
-            '"' if !prev_backslash => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                let token = header[start..i].trim();
-                if !token.is_empty() {
-                    result.push(token);
-                }
-                start = i + 1;
-            }
-            _ => {}
-        }
-        prev_backslash = false;
-    }
-
-    let token = header[start..].trim();
-    if !token.is_empty() {
-        result.push(token);
-    }
-
-    result
-}
-
-/// Extract the bare email address from a header value like
-/// `"Alice <alice@example.com>"` → `"alice@example.com"` or
-/// `"alice@example.com"` → `"alice@example.com"`.
-fn extract_email(addr: &str) -> &str {
-    if let Some(start) = addr.rfind('<') {
-        if let Some(end) = addr[start..].find('>') {
-            return &addr[start + 1..start + end];
-        }
-    }
-    addr.trim()
-}
-
 fn build_reply_all_recipients(
     original: &OriginalMessage,
     extra_cc: Option<&str>,
@@ -255,7 +211,7 @@ fn build_reply_all_recipients(
         cc_addrs.extend(split_mailbox_list(extra));
     }
 
-    // Remove addresses if requested (exact email match)
+    // Filter CC: remove reply-to recipients, excluded addresses, and duplicates
     let mut seen = std::collections::HashSet::new();
     let cc_addrs: Vec<&str> = cc_addrs
         .into_iter()
@@ -392,14 +348,16 @@ fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage
         from: envelope.from,
         cc: envelope.cc,
         bcc: envelope.bcc,
-        threading: Some(ThreadingHeaders {
-            in_reply_to: envelope.in_reply_to,
-            references: envelope.references,
-        }),
+        threading: Some(envelope.threading),
+        html: envelope.html,
     };
 
-    let quoted = format_quoted_original(original);
-    let body = format!("{}\r\n\r\n{}", envelope.body, quoted);
+    let (quoted, separator) = if envelope.html {
+        (format_quoted_original_html(original), "<br>\r\n")
+    } else {
+        (format_quoted_original(original), "\r\n\r\n")
+    };
+    let body = format!("{}{}{}", envelope.body, separator, quoted);
     builder.build(&body)
 }
 
@@ -417,12 +375,33 @@ fn format_quoted_original(original: &OriginalMessage) -> String {
     )
 }
 
+fn format_quoted_original_html(original: &OriginalMessage) -> String {
+    let quoted_body = resolve_html_body(original);
+    let date = format_date_for_attribution(&original.date);
+    let sender = format_sender_for_attribution(&original.from);
+
+    format!(
+        "<div class=\"gmail_quote gmail_quote_container\">\
+           <div dir=\"ltr\" class=\"gmail_attr\">\
+             On {}, {} wrote:<br>\
+           </div>\
+           <blockquote class=\"gmail_quote\" \
+             style=\"margin:0 0 0 0.8ex;\
+             border-left:1px solid rgb(204,204,204);\
+             padding-left:1ex\">\
+             <div dir=\"ltr\">{}</div>\
+           </blockquote>\
+         </div>",
+        date, sender, quoted_body,
+    )
+}
+
 // --- Argument parsing ---
 
 fn parse_reply_args(matches: &ArgMatches) -> Result<ReplyConfig, GwsError> {
     Ok(ReplyConfig {
         message_id: matches.get_one::<String>("message-id").unwrap().to_string(),
-        body_text: matches.get_one::<String>("body").unwrap().to_string(),
+        body: matches.get_one::<String>("body").unwrap().to_string(),
         from: parse_optional_trimmed(matches, "from"),
         to: parse_optional_trimmed(matches, "to"),
         cc: parse_optional_trimmed(matches, "cc"),
@@ -438,6 +417,7 @@ fn parse_reply_args(matches: &ArgMatches) -> Result<ReplyConfig, GwsError> {
                 )))
             }
         },
+        html: matches.get_flag("html"),
     })
 }
 
@@ -474,6 +454,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original body".to_string(),
+            body_html: None,
         };
 
         let envelope = ReplyEnvelope {
@@ -482,9 +463,12 @@ mod tests {
             bcc: None,
             from: None,
             subject: "Re: Hello",
-            in_reply_to: "<abc@example.com>",
-            references: "<abc@example.com>",
+            threading: ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            },
             body: "My reply",
+            html: false,
         };
         let raw = create_reply_raw_message(&envelope, &original);
 
@@ -512,6 +496,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original body".to_string(),
+            body_html: None,
         };
 
         let envelope = ReplyEnvelope {
@@ -520,9 +505,12 @@ mod tests {
             bcc: Some("secret@example.com"),
             from: Some("alias@example.com"),
             subject: "Re: Hello",
-            in_reply_to: "<abc@example.com>",
-            references: "<abc@example.com>",
+            threading: ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            },
             body: "Reply with all headers",
+            html: false,
         };
         let raw = create_reply_raw_message(&envelope, &original);
 
@@ -544,6 +532,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
 
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
@@ -569,6 +558,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
 
         let recipients =
@@ -592,6 +582,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
 
         let recipients =
@@ -613,6 +604,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
 
         let recipients = build_reply_all_recipients(
@@ -643,6 +635,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
 
         let recipients = build_reply_all_recipients(
@@ -665,6 +658,7 @@ mod tests {
             .arg(Arg::new("cc").long("cc"))
             .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("remove").long("remove"))
+            .arg(Arg::new("html").long("html").action(ArgAction::SetTrue))
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
@@ -678,7 +672,7 @@ mod tests {
         let matches = make_reply_matches(&["test", "--message-id", "abc123", "--body", "My reply"]);
         let config = parse_reply_args(&matches).unwrap();
         assert_eq!(config.message_id, "abc123");
-        assert_eq!(config.body_text, "My reply");
+        assert_eq!(config.body, "My reply");
         assert!(config.to.is_none());
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
@@ -729,6 +723,26 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_reply_args_html_flag() {
+        let matches = make_reply_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--body",
+            "<b>Bold</b>",
+            "--html",
+        ]);
+        let config = parse_reply_args(&matches).unwrap();
+        assert!(config.html);
+
+        // Default is false
+        let matches =
+            make_reply_matches(&["test", "--message-id", "abc123", "--body", "Plain reply"]);
+        let config = parse_reply_args(&matches).unwrap();
+        assert!(!config.html);
+    }
+
+    #[test]
     fn test_parse_reply_args_without_remove_defined() {
         // Simulates +reply which doesn't define --remove (only +reply-all does).
         let cmd = Command::new("test")
@@ -737,7 +751,8 @@ mod tests {
             .arg(Arg::new("from").long("from"))
             .arg(Arg::new("to").long("to"))
             .arg(Arg::new("cc").long("cc"))
-            .arg(Arg::new("bcc").long("bcc"));
+            .arg(Arg::new("bcc").long("bcc"))
+            .arg(Arg::new("html").long("html").action(ArgAction::SetTrue));
         let matches = cmd
             .try_get_matches_from(&["test", "--message-id", "abc", "--body", "hi"])
             .unwrap();
@@ -758,6 +773,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         assert_eq!(
             extract_reply_to_address(&original),
@@ -778,21 +794,9 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         assert_eq!(extract_reply_to_address(&original), "list@example.com");
-    }
-
-    #[test]
-    fn test_extract_email_bare() {
-        assert_eq!(extract_email("alice@example.com"), "alice@example.com");
-    }
-
-    #[test]
-    fn test_extract_email_with_display_name() {
-        assert_eq!(
-            extract_email("Alice Smith <alice@example.com>"),
-            "alice@example.com"
-        );
     }
 
     #[test]
@@ -808,6 +812,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients =
             build_reply_all_recipients(&original, None, Some("ann@example.com"), None, None)
@@ -830,6 +835,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         assert_eq!(recipients.to, "list@example.com");
@@ -837,24 +843,6 @@ mod tests {
         assert!(cc.contains("bob@example.com"));
         // list@example.com is in To, should not duplicate in CC
         assert!(!cc.contains("list@example.com"));
-    }
-
-    #[test]
-    fn test_extract_email_malformed_no_closing_bracket() {
-        assert_eq!(
-            extract_email("Alice <alice@example.com"),
-            "Alice <alice@example.com"
-        );
-    }
-
-    #[test]
-    fn test_extract_email_empty_string() {
-        assert_eq!(extract_email(""), "");
-    }
-
-    #[test]
-    fn test_extract_email_whitespace_only() {
-        assert_eq!(extract_email("  "), "");
     }
 
     #[test]
@@ -870,6 +858,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         assert_eq!(recipients.to, "Alice <alice@example.com>");
@@ -890,6 +879,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(
             &original,
@@ -916,6 +906,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients =
             build_reply_all_recipients(&original, Some("extra@example.com"), None, None, None)
@@ -938,6 +929,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         assert!(recipients.cc.is_none());
@@ -956,6 +948,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         let cc = recipients.cc.unwrap();
@@ -975,6 +968,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         // To should be the full Reply-To value
@@ -985,52 +979,6 @@ mod tests {
         assert!(cc.contains("dave@example.com"));
         assert!(!cc.contains("list@example.com"));
         assert!(!cc.contains("owner@example.com"));
-    }
-
-    #[test]
-    fn test_split_mailbox_list_simple() {
-        let addrs = split_mailbox_list("alice@example.com, bob@example.com");
-        assert_eq!(addrs, vec!["alice@example.com", "bob@example.com"]);
-    }
-
-    #[test]
-    fn test_split_mailbox_list_quoted_comma() {
-        let addrs = split_mailbox_list(r#""Doe, John" <john@example.com>, alice@example.com"#);
-        assert_eq!(
-            addrs,
-            vec![r#""Doe, John" <john@example.com>"#, "alice@example.com"]
-        );
-    }
-
-    #[test]
-    fn test_split_mailbox_list_single() {
-        let addrs = split_mailbox_list("alice@example.com");
-        assert_eq!(addrs, vec!["alice@example.com"]);
-    }
-
-    #[test]
-    fn test_split_mailbox_list_empty() {
-        let addrs = split_mailbox_list("");
-        assert!(addrs.is_empty());
-    }
-
-    #[test]
-    fn test_split_mailbox_list_escaped_quotes() {
-        let addrs = split_mailbox_list(r#""Doe \"JD, Sr\"" <john@example.com>, alice@example.com"#);
-        assert_eq!(
-            addrs,
-            vec![
-                r#""Doe \"JD, Sr\"" <john@example.com>"#,
-                "alice@example.com"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_split_mailbox_list_double_backslash() {
-        // \\\\" inside quotes means an escaped backslash followed by a closing quote
-        let addrs = split_mailbox_list(r#""Trail\\" <t@example.com>, b@example.com"#);
-        assert_eq!(addrs, vec![r#""Trail\\" <t@example.com>"#, "b@example.com"]);
     }
 
     #[test]
@@ -1046,6 +994,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         let cc = recipients.cc.unwrap();
@@ -1067,6 +1016,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients =
             build_reply_all_recipients(&original, None, Some("john@example.com"), None, None);
@@ -1088,6 +1038,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients =
             build_reply_all_recipients(&original, None, None, Some("me@example.com"), None)
@@ -1110,6 +1061,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients =
             build_reply_all_recipients(&original, None, None, Some("me@example.com"), None)
@@ -1132,6 +1084,7 @@ mod tests {
             subject: "".to_string(),
             date: "".to_string(),
             body_text: "".to_string(),
+            body_html: None,
         };
         let recipients = build_reply_all_recipients(&original, None, None, None, None).unwrap();
         let cc = recipients.cc.unwrap();
@@ -1263,6 +1216,7 @@ mod tests {
             subject: "Hello".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Original".to_string(),
+            body_html: None,
         };
 
         let mut to = extract_reply_to_address(&original);
@@ -1277,9 +1231,12 @@ mod tests {
             bcc: bcc.as_deref(),
             from: None,
             subject: "Re: Hello",
-            in_reply_to: "<abc@example.com>",
-            references: "<abc@example.com>",
+            threading: ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            },
             body: "Adding Dave",
+            html: false,
         };
         let raw = create_reply_raw_message(&envelope, &original);
 
@@ -1303,6 +1260,7 @@ mod tests {
             subject: "Intro".to_string(),
             date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
             body_text: "Meet Bob".to_string(),
+            body_html: None,
         };
 
         // build_reply_all_recipients with --remove alice, self=me
@@ -1331,9 +1289,12 @@ mod tests {
             bcc: bcc.as_deref(),
             from: None,
             subject: "Re: Intro",
-            in_reply_to: "<abc@example.com>",
-            references: "<abc@example.com>",
+            threading: ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            },
             body: "Hi Bob, nice to meet you!",
+            html: false,
         };
         let raw = create_reply_raw_message(&envelope, &original);
 
@@ -1422,5 +1383,117 @@ mod tests {
             }
         });
         assert!(extract_plain_text_body(&payload).is_none());
+    }
+
+    // --- HTML mode tests ---
+
+    #[test]
+    fn test_format_quoted_original_html_with_html_body() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "Mon, 1 Jan 2026".to_string(),
+            body_text: "plain fallback".to_string(),
+            body_html: Some("<p>Rich <b>content</b></p>".to_string()),
+        };
+        let html = format_quoted_original_html(&original);
+        assert!(html.contains("gmail_quote"));
+        assert!(html.contains("<blockquote"));
+        assert!(html.contains("<p>Rich <b>content</b></p>"));
+        assert!(!html.contains("plain fallback"));
+        // Sender is a bare email — formatted as a mailto link
+        assert!(html.contains("<a href=\"mailto:alice@example.com\">alice@example.com</a> wrote:"));
+    }
+
+    #[test]
+    fn test_format_quoted_original_html_fallback_plain_text() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "Mon, 1 Jan 2026".to_string(),
+            body_text: "Line one & <stuff>\nLine two".to_string(),
+            body_html: None,
+        };
+        let html = format_quoted_original_html(&original);
+        assert!(html.contains("gmail_quote"));
+        assert!(html.contains("<blockquote"));
+        assert!(html.contains("Line one &amp; &lt;stuff&gt;<br>"));
+        assert!(html.contains("Line two"));
+    }
+
+    #[test]
+    fn test_format_quoted_original_html_escapes_metadata() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "".to_string(),
+            references: "".to_string(),
+            from: "O'Brien & Associates <ob@example.com>".to_string(),
+            reply_to: "".to_string(),
+            to: "".to_string(),
+            cc: "".to_string(),
+            subject: "".to_string(),
+            date: "Jan 1 <2026>".to_string(),
+            body_text: "text".to_string(),
+            body_html: None,
+        };
+        let html = format_quoted_original_html(&original);
+        assert!(html.contains("O&#39;Brien &amp; Associates"));
+        // Sender now has mailto link, email in angle brackets
+        assert!(html.contains("&lt;<a href=\"mailto:ob@example.com\">ob@example.com</a>&gt;"));
+        // Non-RFC-2822 date falls back to html-escaped raw string
+        assert!(html.contains("Jan 1 &lt;2026&gt;"));
+    }
+
+    #[test]
+    fn test_create_reply_raw_message_html() {
+        let original = OriginalMessage {
+            thread_id: "t1".to_string(),
+            message_id_header: "<abc@example.com>".to_string(),
+            references: "".to_string(),
+            from: "alice@example.com".to_string(),
+            reply_to: "".to_string(),
+            to: "bob@example.com".to_string(),
+            cc: "".to_string(),
+            subject: "Hello".to_string(),
+            date: "Mon, 1 Jan 2026 00:00:00 +0000".to_string(),
+            body_text: "Original body".to_string(),
+            body_html: Some("<p>Original</p>".to_string()),
+        };
+
+        let envelope = ReplyEnvelope {
+            to: "alice@example.com",
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Re: Hello",
+            threading: ThreadingHeaders {
+                in_reply_to: "<abc@example.com>",
+                references: "<abc@example.com>",
+            },
+            body: "<p>My HTML reply</p>",
+            html: true,
+        };
+        let raw = create_reply_raw_message(&envelope, &original);
+
+        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(raw.contains("<p>My HTML reply</p>"));
+        assert!(raw.contains("gmail_quote"));
+        assert!(raw.contains("<p>Original</p>"));
+        // HTML separator: <br> between reply and quoted block (not \r\n\r\n)
+        assert!(raw.contains(
+            "<p>My HTML reply</p><br>\r\n<div class=\"gmail_quote gmail_quote_container\">"
+        ));
     }
 }
