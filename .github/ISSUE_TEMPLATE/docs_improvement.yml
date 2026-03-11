@@ -1,0 +1,33 @@
+name: Documentation Improvement
+description: Report missing, incorrect, or unclear documentation
+labels: ["area: docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve the docs. Point us to what's missing, wrong, or confusing.
+
+  - type: input
+    id: location
+    attributes:
+      label: Document or Section
+      description: Which file, page, or section needs improvement?
+      placeholder: "README.md > Authentication, skills/gws-gmail/SKILL.md, etc."
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What's Wrong or Missing
+      description: Describe the issue with the current documentation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be improved?
+    validations:
+      required: false
