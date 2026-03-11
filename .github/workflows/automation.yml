@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
@@ -125,9 +126,17 @@ jobs:
               return;
             }
 
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              labels: ['gemini: reviewed'],
-            });
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                labels: ['gemini: reviewed'],
+              });
+            } catch (e) {
+              if (e.status === 403) {
+                console.log(`Token cannot add labels for this review event (${e.message}) — skipping`);
+                return;
+              }
+              throw e;
+            }
