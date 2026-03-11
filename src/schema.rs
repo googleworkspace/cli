@@ -210,6 +210,9 @@ fn param_to_json(param: &MethodParameter) -> Value {
     if let Some(ref vals) = param.enum_values {
         p["enum"] = json!(vals);
     }
+    if param.repeated {
+        p["repeated"] = json!(true);
+    }
     if param.deprecated {
         p["deprecated"] = json!(true);
     }
@@ -345,6 +348,22 @@ mod tests {
         assert_eq!(json["default"], "0");
         assert!(json["enum"].is_array());
         assert_eq!(json["deprecated"], true);
+        // repeated: false should NOT appear in output
+        assert!(json.get("repeated").is_none());
+    }
+
+    #[test]
+    fn test_param_to_json_repeated() {
+        let param = MethodParameter {
+            param_type: Some("string".to_string()),
+            location: Some("query".to_string()),
+            repeated: true,
+            ..Default::default()
+        };
+
+        let json = param_to_json(&param);
+        assert_eq!(json["type"], "string");
+        assert_eq!(json["repeated"], true);
     }
 
     #[test]
