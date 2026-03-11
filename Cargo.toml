@@ -45,6 +45,7 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 yup-oauth2 = "12"
 futures-util = "0.3"
 base64 = "0.22.1"

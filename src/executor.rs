@@ -22,9 +22,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::Context;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::{json, Map, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use crate::discovery::{RestDescription, RestMethod};
 use crate::error::GwsError;
@@ -810,53 +810,22 @@ fn build_multipart_stream(
     let content_length = preamble.len() as u64 + file_size + postamble.len() as u64;
     let content_type = format!("multipart/related; boundary={boundary}");
 
-    // State machine for the streaming body: preamble -> file chunks -> postamble
-    enum State {
-        Preamble {
-            preamble: Vec<u8>,
-            file_path: String,
-            postamble: Vec<u8>,
-        },
-        Streaming {
-            file: tokio::fs::File,
-            postamble: Vec<u8>,
-        },
-        Done,
-    }
+    // Chain: preamble bytes -> file chunks (via ReaderStream) -> postamble bytes
+    let file_path = file_path.to_owned();
+    let preamble_bytes = preamble.into_bytes();
+    let postamble_bytes = postamble.into_bytes();
 
-    let initial = State::Preamble {
-        preamble: preamble.into_bytes(),
-        file_path: file_path.to_owned(),
-        postamble: postamble.into_bytes(),
-    };
+    let file_stream =
+        futures_util::stream::once(async move { tokio::fs::File::open(file_path).await })
+            .map_ok(|f| tokio_util::io::ReaderStream::new(f).map_ok(|b| b.to_vec()))
+            .try_flatten();
 
-    let stream = futures_util::stream::unfold(initial, |state| async move {
-        match state {
-            State::Preamble {
-                preamble,
-                file_path,
-                postamble,
-            } => match tokio::fs::File::open(&file_path).await {
-                Ok(file) => Some((Ok(preamble), State::Streaming { file, postamble })),
-                Err(e) => Some((Err(e), State::Done)),
-            },
-            State::Streaming {
-                mut file,
-                postamble,
-            } => {
-                let mut buf = vec![0u8; 64 * 1024];
-                match file.read(&mut buf).await {
-                    Ok(0) => Some((Ok(postamble), State::Done)),
-                    Ok(n) => {
-                        buf.truncate(n);
-                        Some((Ok(buf), State::Streaming { file, postamble }))
-                    }
-                    Err(e) => Some((Err(e), State::Done)),
-                }
-            }
-            State::Done => None,
-        }
-    });
+    let stream =
+        futures_util::stream::once(async { Ok::<_, std::io::Error>(preamble_bytes) })
+            .chain(file_stream)
+            .chain(futures_util::stream::once(async {
+                Ok::<_, std::io::Error>(postamble_bytes)
+            }));
 
     (
         reqwest::Body::wrap_stream(stream),
