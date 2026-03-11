@@ -21,11 +21,8 @@
 
 mod auth;
 pub(crate) mod auth_commands;
-mod client;
 mod commands;
 pub(crate) mod credential_store;
-mod discovery;
-mod error;
 mod executor;
 mod formatter;
 mod fs_util;
@@ -33,12 +30,18 @@ mod generate_skills;
 mod helpers;
 mod oauth_config;
 mod schema;
-mod services;
 mod setup;
 mod setup_tui;
 mod text;
 mod token_storage;
-pub(crate) mod validate;
+
+// Re-use modules from the library crate
+use gws::client;
+use gws::config;
+use gws::discovery;
+use gws::error;
+use gws::services;
+use gws::validate;
 
 use error::{print_error_json, GwsError};
 
