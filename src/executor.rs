@@ -254,7 +254,7 @@ async fn handle_json_response(
                     }
                 }
                 Err(e) => {
-                    eprintln!("{}", crate::error::yellow(&format!("⚠️  Model Armor sanitization failed: {e}")));
+                    eprintln!("{} {e}", crate::error::yellow("⚠️  Model Armor sanitization failed:"));
                 }
             }
         }
