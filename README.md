@@ -66,6 +66,12 @@ A Nix flake is also available at `github:googleworkspace/cli`
 nix run github:googleworkspace/cli
 ```
 
+A Homebrew formula is also available (macOS):
+
+```bash
+brew install googleworkspace-cli
+```
+
 ## Quick Start
 
 ```bash
