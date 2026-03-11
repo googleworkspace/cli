@@ -539,6 +539,10 @@ fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
         .map(|dir| crate::validate::validate_safe_output_dir(dir))
         .transpose()?;
 
+    if let Some(subscription) = matches.get_one::<String>("subscription") {
+        crate::validate::validate_resource_name(subscription)?;
+    }
+
     Ok(WatchConfig {
         project: matches.get_one::<String>("project").cloned(),
         subscription: matches.get_one::<String>("subscription").cloned(),
@@ -707,6 +711,38 @@ mod tests {
         assert_eq!(config.format, "full");
         assert!(!config.once);
         assert!(!config.cleanup);
+    }
+
+    #[test]
+    fn test_parse_watch_args_subscription_traversal_rejected() {
+        let matches = make_matches_watch(&["test", "--subscription", "projects/../admin/subs/x"]);
+        let result = parse_watch_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("path traversal"));
+    }
+
+    #[test]
+    fn test_parse_watch_args_subscription_control_chars_rejected() {
+        let matches = make_matches_watch(&["test", "--subscription", "subs/bad\0name"]);
+        let result = parse_watch_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_parse_watch_args_valid_subscription() {
+        let matches = make_matches_watch(&[
+            "test",
+            "--subscription",
+            "projects/my-proj/subscriptions/my-sub",
+        ]);
+        let config = parse_watch_args(&matches).unwrap();
+        assert_eq!(
+            config.subscription.unwrap(),
+            "projects/my-proj/subscriptions/my-sub"
+        );
     }
 
     #[test]

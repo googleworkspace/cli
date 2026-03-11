@@ -132,6 +132,7 @@ pub(super) async fn handle_subscribe(
             // Generate descriptive names from event types
             // e.g. "google.workspace.drive.file.v1.updated" -> "drive-file-updated"
             let slug = derive_slug_from_event_types(&event_types_str);
+            crate::validate::validate_resource_name(&slug)?;
             let suffix = format!("{:08x}", rand::random::<u32>());
             let topic = format!("projects/{project}/topics/gws-{slug}-{suffix}");
             let sub = format!("projects/{project}/subscriptions/gws-{slug}-{suffix}");
@@ -713,6 +714,36 @@ mod tests {
         let (ack_ids, events) = process_events_pull_response(&response);
         assert!(ack_ids.is_empty());
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_parse_subscribe_args_subscription_traversal_rejected() {
+        let matches =
+            make_matches_subscribe(&["test", "--subscription", "projects/../admin/subs/x"]);
+        let result = parse_subscribe_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("path traversal"));
+    }
+
+    #[test]
+    fn test_parse_subscribe_args_subscription_control_chars_rejected() {
+        let matches = make_matches_subscribe(&["test", "--subscription", "subs/bad\0name"]);
+        let result = parse_subscribe_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_derive_slug_no_control_chars() {
+        // Normal event types produce clean slugs
+        let types = vec!["google.workspace.drive.file.v1.updated"];
+        let slug = derive_slug_from_event_types(&types);
+        assert!(
+            crate::validate::validate_resource_name(&slug).is_ok(),
+            "Generated slug should pass resource name validation"
+        );
     }
 
     #[test]
