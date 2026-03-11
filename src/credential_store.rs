@@ -436,6 +436,7 @@ mod tests {
         get_state: MockState,
         set_succeeds: bool,
         last_set: RefCell<Option<String>>,
+        on_set: RefCell<Option<Box<dyn FnMut(&str)>>>,
     }
 
     impl MockKeyring {
@@ -444,6 +445,7 @@ mod tests {
                 get_state: MockState::Ok(b64.to_string()),
                 set_succeeds: true,
                 last_set: RefCell::new(None),
+                on_set: RefCell::new(None),
             }
         }
 
@@ -452,6 +454,7 @@ mod tests {
                 get_state: MockState::NoEntry,
                 set_succeeds: true,
                 last_set: RefCell::new(None),
+                on_set: RefCell::new(None),
             }
         }
 
@@ -460,11 +463,20 @@ mod tests {
                 get_state: MockState::PlatformError,
                 set_succeeds: true,
                 last_set: RefCell::new(None),
+                on_set: RefCell::new(None),
             }
         }
 
         fn with_set_failure(mut self) -> Self {
             self.set_succeeds = false;
+            self
+        }
+
+        fn with_on_set<F>(self, callback: F) -> Self
+        where
+            F: FnMut(&str) + 'static,
+        {
+            *self.on_set.borrow_mut() = Some(Box::new(callback));
             self
         }
     }
@@ -482,6 +494,9 @@ mod tests {
 
         fn set_password(&self, password: &str) -> Result<(), keyring::Error> {
             *self.last_set.borrow_mut() = Some(password.to_string());
+            if let Some(callback) = self.on_set.borrow_mut().as_mut() {
+                callback(password);
+            }
             if self.set_succeeds {
                 Ok(())
             } else {
@@ -831,19 +846,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
 
-        // Simulate: file was created by another process between our generate
-        // and our save_key_file_exclusive call. We pre-create the file so
-        // save_key_file_exclusive will fail with AlreadyExists.
         let winner_key = [77u8; 32];
-        std::fs::write(&key_file, STANDARD.encode(winner_key)).unwrap();
+        let winner_b64 = STANDARD.encode(winner_key);
+        let race_key_file = key_file.clone();
+        let race_winner_b64 = winner_b64.clone();
 
-        // Use NoEntry so resolve_key goes into the generate path.
-        let mock = MockKeyring::no_entry();
+        let mock = MockKeyring::no_entry().with_on_set(move |_| {
+            if !race_key_file.exists() {
+                std::fs::write(&race_key_file, &race_winner_b64).unwrap();
+            }
+        });
         let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
 
-        // Should return the winner's key, not the one we generated.
         assert_eq!(result, winner_key);
-        // The keyring should have been synced with the winner's key.
         let synced = mock.last_set.borrow().clone().unwrap();
         assert_eq!(STANDARD.decode(&synced).unwrap(), winner_key);
     }
