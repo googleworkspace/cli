@@ -1,5 +1,19 @@
 # @googleworkspace/cli
 
+## 0.13.0
+
+### Minor Changes
+
+- 9d937af: Add `--html` flag to `+send`, `+reply`, `+reply-all`, and `+forward` for HTML email composition.
+
+### Patch Changes
+
+- 2df32ee: Document helper commands (`+` prefix) in README
+
+  Adds a "Helper Commands" section to the Advanced Usage chapter explaining
+  the `+` prefix convention, listing all 24 helper commands across 10 services
+  with descriptions and usage examples.
+
 ## 0.12.0
 
 ### Minor Changes
