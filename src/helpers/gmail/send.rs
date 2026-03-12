@@ -1,47 +1,70 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::*;
 
+/// Handle the `+send` subcommand.
 pub(super) async fn handle_send(
     doc: &crate::discovery::RestDescription,
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
-    let config = parse_send_args(matches);
+    let config = parse_send_args(matches)?;
 
-    let raw = MessageBuilder {
-        to: &config.to,
-        subject: &config.subject,
-        from: None,
-        cc: config.cc.as_deref(),
-        bcc: config.bcc.as_deref(),
-        threading: None,
-        html: config.html,
-    }
-    .build(&config.body);
+    let raw = create_send_raw_message(&config)?;
 
     super::send_raw_email(doc, matches, &raw, None, None).await
 }
 
 pub(super) struct SendConfig {
-    pub to: String,
+    pub to: Vec<Mailbox>,
     pub subject: String,
     pub body: String,
-    pub cc: Option<String>,
-    pub bcc: Option<String>,
+    pub cc: Option<Vec<Mailbox>>,
+    pub bcc: Option<Vec<Mailbox>>,
     pub html: bool,
 }
 
-fn parse_send_args(matches: &ArgMatches) -> SendConfig {
-    SendConfig {
-        to: matches.get_one::<String>("to").unwrap().to_string(),
+fn create_send_raw_message(config: &SendConfig) -> Result<String, GwsError> {
+    let mb = mail_builder::MessageBuilder::new()
+        .to(to_mb_address_list(&config.to))
+        .subject(&config.subject);
+
+    let mb = apply_optional_headers(mb, None, config.cc.as_deref(), config.bcc.as_deref());
+
+    finalize_message(mb, &config.body, config.html)
+}
+
+fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
+    let to = Mailbox::parse_list(matches.get_one::<String>("to").unwrap());
+    if to.is_empty() {
+        return Err(GwsError::Validation(
+            "--to must specify at least one recipient".to_string(),
+        ));
+    }
+    Ok(SendConfig {
+        to,
         subject: matches.get_one::<String>("subject").unwrap().to_string(),
         body: matches.get_one::<String>("body").unwrap().to_string(),
-        cc: parse_optional_trimmed(matches, "cc"),
-        bcc: parse_optional_trimmed(matches, "bcc"),
+        cc: parse_optional_mailboxes(matches, "cc"),
+        bcc: parse_optional_mailboxes(matches, "bcc"),
         html: matches.get_flag("html"),
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{extract_header, strip_qp_soft_breaks};
     use super::*;
 
     fn make_matches_send(args: &[&str]) -> ArgMatches {
@@ -66,8 +89,9 @@ mod tests {
             "--body",
             "Body",
         ]);
-        let config = parse_send_args(&matches);
-        assert_eq!(config.to, "me@example.com");
+        let config = parse_send_args(&matches).unwrap();
+        assert_eq!(config.to.len(), 1);
+        assert_eq!(config.to[0].email, "me@example.com");
         assert_eq!(config.subject, "Hi");
         assert_eq!(config.body, "Body");
         assert!(config.cc.is_none());
@@ -89,9 +113,9 @@ mod tests {
             "--bcc",
             "secret@example.com",
         ]);
-        let config = parse_send_args(&matches);
-        assert_eq!(config.cc.unwrap(), "carol@example.com");
-        assert_eq!(config.bcc.unwrap(), "secret@example.com");
+        let config = parse_send_args(&matches).unwrap();
+        assert_eq!(config.cc.as_ref().unwrap()[0].email, "carol@example.com");
+        assert_eq!(config.bcc.as_ref().unwrap()[0].email, "secret@example.com");
 
         // Whitespace-only values become None
         let matches = make_matches_send(&[
@@ -107,7 +131,7 @@ mod tests {
             "--bcc",
             "",
         ]);
-        let config = parse_send_args(&matches);
+        let config = parse_send_args(&matches).unwrap();
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
     }
@@ -124,7 +148,7 @@ mod tests {
             "<b>Bold</b>",
             "--html",
         ]);
-        let config = parse_send_args(&matches);
+        let config = parse_send_args(&matches).unwrap();
         assert!(config.html);
 
         // Default is false
@@ -137,25 +161,107 @@ mod tests {
             "--body",
             "Plain",
         ]);
-        let config = parse_send_args(&matches);
+        let config = parse_send_args(&matches).unwrap();
         assert!(!config.html);
     }
 
     #[test]
+    fn test_parse_send_args_empty_to_returns_error() {
+        let matches = make_matches_send(&["test", "--to", "", "--subject", "Hi", "--body", "Body"]);
+        let err = parse_send_args(&matches).err().unwrap();
+        assert!(
+            err.to_string().contains("--to"),
+            "error should mention --to"
+        );
+    }
+
+    #[test]
     fn test_send_html_raw_message() {
-        let raw = MessageBuilder {
-            to: "bob@example.com",
-            subject: "HTML test",
-            from: None,
+        let config = SendConfig {
+            to: Mailbox::parse_list("bob@example.com"),
+            subject: "HTML test".to_string(),
+            body: "<p>Hello <b>world</b></p>".to_string(),
             cc: None,
             bcc: None,
-            threading: None,
             html: true,
-        }
-        .build("<p>Hello <b>world</b></p>");
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+        let decoded = strip_qp_soft_breaks(&raw);
 
-        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
-        assert!(raw.contains("To: bob@example.com"));
-        assert!(raw.contains("<p>Hello <b>world</b></p>"));
+        assert!(decoded.contains("text/html"));
+        assert!(extract_header(&raw, "To")
+            .unwrap()
+            .contains("bob@example.com"));
+        assert!(extract_header(&raw, "Subject")
+            .unwrap()
+            .contains("HTML test"));
+        assert!(decoded.contains("<p>Hello <b>world</b></p>"));
+        assert!(extract_header(&raw, "Cc").is_none());
+    }
+
+    #[test]
+    fn test_send_plain_text_raw_message() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("bob@example.com"),
+            subject: "Hello".to_string(),
+            body: "World".to_string(),
+            cc: None,
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        assert!(extract_header(&raw, "To")
+            .unwrap()
+            .contains("bob@example.com"));
+        assert!(extract_header(&raw, "Subject").unwrap().contains("Hello"));
+        assert!(raw.contains("text/plain"));
+        assert!(raw.contains("World"));
+    }
+
+    #[test]
+    fn test_send_with_cc_and_bcc() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("alice@example.com"),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            cc: Some(Mailbox::parse_list("carol@example.com")),
+            bcc: Some(Mailbox::parse_list("secret@example.com")),
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        assert!(extract_header(&raw, "To")
+            .unwrap()
+            .contains("alice@example.com"));
+        assert!(extract_header(&raw, "Cc")
+            .unwrap()
+            .contains("carol@example.com"));
+        assert!(extract_header(&raw, "Bcc")
+            .unwrap()
+            .contains("secret@example.com"));
+        // Verify no leakage between headers
+        assert!(!extract_header(&raw, "To")
+            .unwrap()
+            .contains("carol@example.com"));
+        assert!(!extract_header(&raw, "To")
+            .unwrap()
+            .contains("secret@example.com"));
+    }
+
+    #[test]
+    fn test_send_multiple_to_recipients() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("alice@example.com, bob@example.com"),
+            subject: "Group".to_string(),
+            body: "Hi all".to_string(),
+            cc: None,
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+        let to_header = extract_header(&raw, "To").unwrap();
+        assert!(to_header.contains("alice@example.com"));
+        assert!(to_header.contains("bob@example.com"));
     }
 }
