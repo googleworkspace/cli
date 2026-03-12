@@ -1,8 +1,7 @@
 use super::*;
 use crate::auth::AccessTokenProvider;
+use crate::helpers::PUBSUB_API_BASE;
 use std::path::PathBuf;
-
-const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
 
 #[derive(Debug, Clone, Default, Builder)]
 #[builder(setter(into))]

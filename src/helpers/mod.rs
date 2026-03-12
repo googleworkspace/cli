@@ -27,6 +27,12 @@ pub mod script;
 pub mod sheets;
 pub mod workflows;
 
+/// Base URL for the Google Cloud Pub/Sub v1 API.
+///
+/// Shared across `events::subscribe` and `gmail::watch` so the constant
+/// is defined in a single place.
+pub(crate) const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
+
 /// A trait for service-specific CLI helpers that inject custom commands.
 pub trait Helper: Send + Sync {
     /// Injects subcommands into the service command.

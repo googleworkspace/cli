@@ -1,7 +1,7 @@
 use super::*;
 use crate::auth::AccessTokenProvider;
+use crate::helpers::PUBSUB_API_BASE;
 
-const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
 const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 
 /// Handles the `+watch` command — Gmail push notifications via Pub/Sub.
@@ -50,7 +50,7 @@ pub(super) async fn handle_watch(
             // Create Pub/Sub topic
             eprintln!("Creating Pub/Sub topic: {t}");
             let resp = client
-                .put(format!("https://pubsub.googleapis.com/v1/{t}"))
+                .put(format!("{PUBSUB_API_BASE}/{t}"))
                 .bearer_auth(&pubsub_token)
                 .header("Content-Type", "application/json")
                 .body("{}")
@@ -79,7 +79,7 @@ pub(super) async fn handle_watch(
                 }
             });
             let resp = client
-                .post(format!("https://pubsub.googleapis.com/v1/{t}:setIamPolicy"))
+                .post(format!("{PUBSUB_API_BASE}/{t}:setIamPolicy"))
                 .bearer_auth(&pubsub_token)
                 .header("Content-Type", "application/json")
                 .json(&iam_body)
@@ -115,7 +115,7 @@ pub(super) async fn handle_watch(
             "ackDeadlineSeconds": 60,
         });
         let resp = client
-            .put(format!("https://pubsub.googleapis.com/v1/{sub}"))
+            .put(format!("{PUBSUB_API_BASE}/{sub}"))
             .bearer_auth(&pubsub_token)
             .header("Content-Type", "application/json")
             .json(&sub_body)
@@ -144,7 +144,7 @@ pub(super) async fn handle_watch(
         }
 
         let resp = client
-            .post("https://gmail.googleapis.com/gmail/v1/users/me/watch")
+            .post(format!("{GMAIL_API_BASE}/users/me/watch"))
             .bearer_auth(&gmail_token)
             .header("Content-Type", "application/json")
             .json(&watch_body)
@@ -186,7 +186,7 @@ pub(super) async fn handle_watch(
 
     // Get initial historyId for tracking
     let profile_resp = client
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+        .get(format!("{GMAIL_API_BASE}/users/me/profile"))
         .bearer_auth(&gmail_token)
         .send()
         .await
@@ -570,7 +570,13 @@ fn parse_watch_args(matches: &ArgMatches) -> Result<WatchConfig, GwsError> {
 
     Ok(WatchConfig {
         project: matches.get_one::<String>("project").cloned(),
-        subscription: matches.get_one::<String>("subscription").cloned(),
+        subscription: matches
+            .get_one::<String>("subscription")
+            .map(|s| {
+                crate::validate::validate_resource_name(s)?;
+                Ok::<_, GwsError>(s.clone())
+            })
+            .transpose()?,
         topic: matches.get_one::<String>("topic").cloned(),
         label_ids: matches.get_one::<String>("label-ids").cloned(),
         max_messages: matches
@@ -785,6 +791,15 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("outside the current directory"));
+    }
+
+    #[test]
+    fn test_parse_watch_args_rejects_traversal_subscription() {
+        let matches = make_matches_watch(&["test", "--subscription", "../../evil"]);
+        let result = parse_watch_args(&matches);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("path traversal"));
     }
 
     #[test]
