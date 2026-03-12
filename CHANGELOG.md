@@ -1,5 +1,28 @@
 # @googleworkspace/cli
 
+## 0.12.0
+
+### Minor Changes
+
+- 247e27a: Add structured exit codes for scriptable error handling
+
+  `gws` now exits with a type-specific code instead of always using `1`:
+
+  | Code | Meaning                                                         |
+  | ---- | --------------------------------------------------------------- |
+  | `0`  | Success                                                         |
+  | `1`  | API error — Google returned a 4xx/5xx response                  |
+  | `2`  | Auth error — credentials missing, expired, or invalid           |
+  | `3`  | Validation error — bad arguments, unknown service, invalid flag |
+  | `4`  | Discovery error — could not fetch the API schema document       |
+  | `5`  | Internal error — unexpected failure                             |
+
+  Exit codes are documented in `gws --help` and in the README.
+
+### Patch Changes
+
+- 087066f: Fix `gws auth login` encrypted credential persistence by enabling native keyring backends for the `keyring` crate on supported desktop platforms instead of silently falling back to the in-memory mock store.
+
 ## 0.11.1
 
 ### Patch Changes
