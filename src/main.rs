@@ -461,12 +461,9 @@ fn print_usage() {
     );
     println!();
     println!("EXIT CODES:");
-    println!("    0    Success");
-    println!("    1    API error  — Google returned an error response");
-    println!("    2    Auth error — credentials missing or invalid");
-    println!("    3    Validation — bad arguments or input");
-    println!("    4    Discovery  — could not fetch API schema");
-    println!("    5    Internal   — unexpected failure");
+    for (code, description) in crate::error::EXIT_CODE_DOCUMENTATION {
+        println!("    {:<5}{}", code, description);
+    }
     println!();
     println!("COMMUNITY:");
     println!("    Star the repo: https://github.com/googleworkspace/cli");

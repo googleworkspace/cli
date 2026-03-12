@@ -39,6 +39,19 @@ pub enum GwsError {
     Other(#[from] anyhow::Error),
 }
 
+/// Human-readable exit code table, keyed by (code, description).
+///
+/// Used by `print_usage()` so the help text stays in sync with the
+/// constants defined below without requiring manual updates in two places.
+pub const EXIT_CODE_DOCUMENTATION: &[(i32, &str)] = &[
+    (0, "Success"),
+    (GwsError::EXIT_CODE_API, "API error  — Google returned an error response"),
+    (GwsError::EXIT_CODE_AUTH, "Auth error — credentials missing or invalid"),
+    (GwsError::EXIT_CODE_VALIDATION, "Validation — bad arguments or input"),
+    (GwsError::EXIT_CODE_DISCOVERY, "Discovery  — could not fetch API schema"),
+    (GwsError::EXIT_CODE_OTHER, "Internal   — unexpected failure"),
+];
+
 impl GwsError {
     /// Exit code for [`GwsError::Api`] variants.
     pub const EXIT_CODE_API: i32 = 1;
