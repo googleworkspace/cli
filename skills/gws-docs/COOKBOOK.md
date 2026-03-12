@@ -147,7 +147,7 @@ gws docs documents batchUpdate \
   }'
 ```
 
-Replace `"bold": true` with `"italic": true` for italic, or combine both with `"fields": "bold,italic"`.
+Replace `"bold": true` with `"italic": true` for italic, or combine both by setting `"textStyle": {"bold": true, "italic": true}` and `"fields": "bold,italic"`.
 
 ### Tips for batch formatting
 
