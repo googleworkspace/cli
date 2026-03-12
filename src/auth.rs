@@ -636,7 +636,9 @@ mod tests {
         let enc_path = dir.path().join("credentials.enc");
 
         // Write garbage data that cannot be decrypted.
-        std::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890").unwrap();
+        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
+            .await
+            .unwrap();
         assert!(enc_path.exists());
 
         let result =
@@ -665,7 +667,9 @@ mod tests {
         let plain_path = dir.path().join("credentials.json");
 
         // Write garbage encrypted data.
-        std::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890").unwrap();
+        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
+            .await
+            .unwrap();
 
         // Write valid plaintext credentials.
         let plain_json = r#"{
@@ -674,7 +678,7 @@ mod tests {
             "refresh_token": "fallback_refresh",
             "type": "authorized_user"
         }"#;
-        std::fs::write(&plain_path, plain_json).unwrap();
+        tokio::fs::write(&plain_path, plain_json).await.unwrap();
 
         let res = load_credentials_inner(None, &enc_path, &plain_path)
             .await
