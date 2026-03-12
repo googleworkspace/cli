@@ -342,77 +342,9 @@ fn format_csv(value: &Value) -> String {
 }
 
 /// Format as CSV, optionally omitting the header row.
-///
-/// Pass `emit_header = false` for all pages after the first when using
-/// `--page-all`, so the combined output has a single header line.
 fn format_csv_page(value: &Value, emit_header: bool) -> String {
-    let items = extract_items(value);
-
-    let arr = if let Some((_key, arr)) = items {
-        arr.as_slice()
-    } else if let Value::Array(arr) = value {
-        arr.as_slice()
-    } else {
-        // Single value — just output it
-        return value_to_cell(value);
-    };
-
-    if arr.is_empty() {
-        return String::new();
-    }
-
-    // Array of non-objects
-    if !arr.iter().any(|v| v.is_object()) {
-        let mut output = String::new();
-        for item in arr {
-            if let Value::Array(inner) = item {
-                let cells: Vec<String> = inner
-                    .iter()
-                    .map(|v| csv_escape(&value_to_cell(v)))
-                    .collect();
-                let _ = writeln!(output, "{}", cells.join(","));
-            } else {
-                let _ = writeln!(output, "{}", csv_escape(&value_to_cell(item)));
-            }
-        }
-        return output;
-    }
-
-    // Collect columns
-    let mut columns: Vec<String> = Vec::new();
-    for item in arr {
-        if let Value::Object(obj) = item {
-            for key in obj.keys() {
-                if !columns.contains(key) {
-                    columns.push(key.clone());
-                }
-            }
-        }
-    }
-
-    let mut output = String::new();
-
-    // Header (omitted on continuation pages)
-    if emit_header {
-        let _ = writeln!(output, "{}", columns.join(","));
-    }
-
-    // Rows
-    for item in arr {
-        let cells: Vec<String> = columns
-            .iter()
-            .map(|col| {
-                if let Value::Object(obj) = item {
-                    csv_escape(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
-                } else {
-                    String::new()
-                }
-            })
-            .collect();
-        let _ = writeln!(output, "{}", cells.join(","));
-    }
-
-    output
+    // Preserve existing behaviour: single scalar values are not CSV-escaped.
+    format_delimited_page(value, emit_header, ",", &csv_escape, false)
 }
 
 fn format_tsv(value: &Value) -> String {
@@ -424,6 +356,22 @@ fn format_tsv(value: &Value) -> String {
 /// Pass `emit_header = false` for all pages after the first when using
 /// `--page-all`, so the combined output has a single header line.
 fn format_tsv_page(value: &Value, emit_header: bool) -> String {
+    format_delimited_page(value, emit_header, "\t", &tsv_escape, true)
+}
+
+/// Shared implementation for delimiter-separated output (CSV and TSV).
+///
+/// `escape_fn`          — per-format value escaping
+/// `escape_single_value` — whether to escape a bare scalar value; CSV
+///                         preserves the historical no-escape behaviour
+///                         while TSV escapes tabs/newlines for correctness.
+fn format_delimited_page(
+    value: &Value,
+    emit_header: bool,
+    separator: &str,
+    escape_fn: &dyn Fn(&str) -> String,
+    escape_single_value: bool,
+) -> String {
     let items = extract_items(value);
 
     let arr = if let Some((_key, arr)) = items {
@@ -431,25 +379,30 @@ fn format_tsv_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         arr.as_slice()
     } else {
-        return tsv_escape(&value_to_cell(value));
+        let cell = value_to_cell(value);
+        return if escape_single_value {
+            escape_fn(&cell)
+        } else {
+            cell
+        };
     };
 
     if arr.is_empty() {
         return String::new();
     }
 
-    // Array of non-objects
+    // Array of non-objects (includes array-of-arrays, e.g. Sheets values API)
     if !arr.iter().any(|v| v.is_object()) {
         let mut output = String::new();
         for item in arr {
             if let Value::Array(inner) = item {
                 let cells: Vec<String> = inner
                     .iter()
-                    .map(|v| tsv_escape(&value_to_cell(v)))
+                    .map(|v| escape_fn(&value_to_cell(v)))
                     .collect();
-                let _ = writeln!(output, "{}", cells.join("\t"));
+                let _ = writeln!(output, "{}", cells.join(separator));
             } else {
-                let _ = writeln!(output, "{}", tsv_escape(&value_to_cell(item)));
+                let _ = writeln!(output, "{}", escape_fn(&value_to_cell(item)));
             }
         }
         return output;
@@ -470,22 +423,25 @@ fn format_tsv_page(value: &Value, emit_header: bool) -> String {
 
     let mut output = String::new();
 
+    // Header row — escape column names so delimiters inside names don't break parsing.
     if emit_header {
-        let _ = writeln!(output, "{}", columns.join("\t"));
+        let header: Vec<String> = columns.iter().map(|c| escape_fn(c)).collect();
+        let _ = writeln!(output, "{}", header.join(separator));
     }
 
+    // Data rows
     for item in arr {
         let cells: Vec<String> = columns
             .iter()
             .map(|col| {
                 if let Value::Object(obj) = item {
-                    tsv_escape(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
+                    escape_fn(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
                 } else {
                     String::new()
                 }
             })
             .collect();
-        let _ = writeln!(output, "{}", cells.join("\t"));
+        let _ = writeln!(output, "{}", cells.join(separator));
     }
 
     output
