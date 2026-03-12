@@ -21,8 +21,55 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
+use serde::Deserialize;
 
 use crate::credential_store;
+
+/// Response from Google's token endpoint
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    #[allow(dead_code)]
+    expires_in: u64,
+    #[allow(dead_code)]
+    token_type: String,
+}
+
+/// Refresh an access token using reqwest (supports HTTP proxy via environment variables).
+/// This is used as a fallback when yup-oauth2's hyper-based client fails due to proxy issues.
+async fn refresh_token_with_reqwest(
+    client_id: &str,
+    client_secret: &str,
+    refresh_token: &str,
+) -> anyhow::Result<String> {
+    let client = reqwest::Client::new();
+    let params = [
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
+
+    let response = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await
+        .context("Failed to send token refresh request")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("Token refresh failed with status {}: {}", status, body);
+    }
+
+    let token_response: TokenResponse = response
+        .json()
+        .await
+        .context("Failed to parse token response")?;
+
+    Ok(token_response.access_token)
+}
 
 /// Returns the project ID to be used for quota and billing (sets the `x-goog-user-project` header).
 ///
@@ -106,14 +153,36 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     get_token_inner(scopes, creds, &token_cache).await
 }
 
+/// Check if HTTP proxy environment variables are set
+fn has_proxy_env() -> bool {
+    std::env::var("http_proxy").is_ok()
+        || std::env::var("HTTP_PROXY").is_ok()
+        || std::env::var("https_proxy").is_ok()
+        || std::env::var("HTTPS_PROXY").is_ok()
+        || std::env::var("all_proxy").is_ok()
+        || std::env::var("ALL_PROXY").is_ok()
+}
+
 async fn get_token_inner(
     scopes: &[&str],
     creds: Credential,
     token_cache_path: &std::path::Path,
 ) -> anyhow::Result<String> {
     match creds {
-        Credential::AuthorizedUser(secret) => {
-            let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret)
+        Credential::AuthorizedUser(ref secret) => {
+            // If proxy env vars are set, use reqwest directly (it supports proxy)
+            // This avoids waiting for yup-oauth2's hyper client to timeout
+            if has_proxy_env() {
+                return refresh_token_with_reqwest(
+                    &secret.client_id,
+                    &secret.client_secret,
+                    &secret.refresh_token,
+                )
+                .await;
+            }
+
+            // No proxy - use yup-oauth2 (faster, has token caching)
+            let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret.clone())
                 .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
                     token_cache_path.to_path_buf(),
                 )))
