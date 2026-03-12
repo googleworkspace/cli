@@ -459,7 +459,8 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
 
     // 1. Fetch the email
     let msg_url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+        "{}/gmail/v1/users/me/messages/{}",
+        crate::helpers::gmail::gmail_api_base(),
         crate::validate::encode_path_segment(message_id),
     );
     let msg_json = get_json(
@@ -588,7 +589,10 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
     // Fetch unread email count
     let gmail_json = get_json(
         &client,
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        &format!(
+            "{}/gmail/v1/users/me/messages",
+            crate::helpers::gmail::gmail_api_base()
+        ),
         &token,
         &[("q", "is:unread"), ("maxResults", "1")],
     )

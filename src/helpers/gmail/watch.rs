@@ -138,7 +138,7 @@ pub(super) async fn handle_watch(
         }
 
         let resp = client
-            .post("https://gmail.googleapis.com/gmail/v1/users/me/watch")
+            .post(&format!("{}/gmail/v1/users/me/watch", gmail_api_base()))
             .bearer_auth(&gmail_token)
             .header("Content-Type", "application/json")
             .json(&watch_body)
@@ -180,7 +180,7 @@ pub(super) async fn handle_watch(
 
     // Get initial historyId for tracking
     let profile_resp = client
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+        .get(&format!("{}/gmail/v1/users/me/profile", gmail_api_base()))
         .bearer_auth(&gmail_token)
         .send()
         .await
@@ -386,7 +386,7 @@ async fn fetch_and_output_messages(
     sanitize_config: &crate::helpers::modelarmor::SanitizeConfig,
 ) -> Result<(), GwsError> {
     let resp = client
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/history")
+        .get(&format!("{}/gmail/v1/users/me/history", gmail_api_base()))
         .query(&[
             ("startHistoryId", &start_history_id.to_string()),
             ("historyTypes", &"messageAdded".to_string()),
@@ -403,7 +403,8 @@ async fn fetch_and_output_messages(
     for msg_id in msg_ids {
         // Fetch full message
         let msg_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+            "{}/gmail/v1/users/me/messages/{}",
+            gmail_api_base(),
             crate::validate::encode_path_segment(&msg_id),
         );
         let msg_resp = client

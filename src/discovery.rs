@@ -183,6 +183,14 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
+fn apply_api_base_override(doc: &mut RestDescription, api_base_override: &Option<String>) {
+    if let Some(ref override_url) = api_base_override {
+        let base = override_url.trim_end_matches('/');
+        doc.root_url = format!("{base}/");
+        doc.base_url = Some(format!("{base}/{}", doc.service_path));
+    }
+}
+
 /// Fetches and caches a Google Discovery Document.
 pub async fn fetch_discovery_document(
     service: &str,
@@ -200,21 +208,29 @@ pub async fn fetch_discovery_document(
 
     let cache_file = cache_dir.join(format!("{service}_{version}.json"));
 
+    let api_base_override = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE").ok();
+
     // Check cache (24hr TTL)
     if cache_file.exists() {
         if let Ok(metadata) = std::fs::metadata(&cache_file) {
             if let Ok(modified) = metadata.modified() {
                 if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
                     let data = std::fs::read_to_string(&cache_file)?;
-                    let doc: RestDescription = serde_json::from_str(&data)?;
+                    let mut doc: RestDescription = serde_json::from_str(&data)?;
+                    apply_api_base_override(&mut doc, &api_base_override);
                     return Ok(doc);
                 }
             }
         }
     }
 
+    let discovery_base = api_base_override
+        .as_deref()
+        .unwrap_or("https://www.googleapis.com");
+
     let url = format!(
-        "https://www.googleapis.com/discovery/v1/apis/{}/{}/rest",
+        "{}/discovery/v1/apis/{}/{}/rest",
+        discovery_base,
         crate::validate::encode_path_segment(service),
         crate::validate::encode_path_segment(version),
     );
@@ -226,12 +242,18 @@ pub async fn fetch_discovery_document(
         resp.text().await?
     } else {
         // Try the $discovery/rest URL pattern used by newer APIs (Forms, Keep, Meet, etc.)
-        let alt_url = format!("https://{service}.googleapis.com/$discovery/rest");
-        let alt_resp = client
-            .get(&alt_url)
-            .query(&[("version", version)])
-            .send()
-            .await?;
+        // When an override is set, preserve the service name in the path so the proxy
+        // can route to the correct upstream.
+        let alt_url = if let Some(ref base) = api_base_override {
+            format!("{}/$discovery/rest", base.trim_end_matches('/'))
+        } else {
+            format!("https://{service}.googleapis.com/$discovery/rest")
+        };
+        let mut alt_req = client.get(&alt_url).query(&[("version", version)]);
+        if api_base_override.is_some() {
+            alt_req = alt_req.query(&[("service", service)]);
+        }
+        let alt_resp = alt_req.send().await?;
         if !alt_resp.status().is_success() {
             anyhow::bail!(
                 "Failed to fetch Discovery Document for {service}/{version}: HTTP {} (tried both standard and $discovery URLs)",
@@ -243,11 +265,12 @@ pub async fn fetch_discovery_document(
 
     // Write to cache
     if let Err(e) = std::fs::write(&cache_file, &body) {
-        // Non-fatal: just warn via stderr-safe approach
         let _ = e;
     }
 
-    let doc: RestDescription = serde_json::from_str(&body)?;
+    let mut doc: RestDescription = serde_json::from_str(&body)?;
+    apply_api_base_override(&mut doc, &api_base_override);
+
     Ok(doc)
 }
 
@@ -319,5 +342,103 @@ mod tests {
         assert_eq!(doc.service_path, ""); // default empty string
         assert!(doc.resources.is_empty());
         assert!(doc.schemas.is_empty());
+    }
+
+    struct EnvVarGuard {
+        name: String,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &str, value: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self {
+                name: name.to_string(),
+                original,
+            }
+        }
+
+        fn remove(name: &str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::remove_var(name);
+            Self {
+                name: name.to_string(),
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var(&self.name, v),
+                None => std::env::remove_var(&self.name),
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_api_base_override_rewrites_doc() {
+        let _guard = EnvVarGuard::set(
+            "GOOGLE_WORKSPACE_CLI_API_BASE",
+            "https://my-proxy.example.com",
+        );
+
+        let doc_json = r#"{
+            "name": "test",
+            "version": "v1",
+            "rootUrl": "https://www.googleapis.com/",
+            "servicePath": "test/v1/"
+        }"#;
+        let mut doc: RestDescription = serde_json::from_str(doc_json).unwrap();
+
+        let api_base_override = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE").ok();
+        apply_api_base_override(&mut doc, &api_base_override);
+
+        assert_eq!(doc.root_url, "https://my-proxy.example.com/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://my-proxy.example.com/test/v1/")
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_api_base_override_unset_preserves_original() {
+        let _guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_API_BASE");
+
+        let doc_json = r#"{
+            "name": "drive",
+            "version": "v3",
+            "rootUrl": "https://www.googleapis.com/",
+            "servicePath": "drive/v3/"
+        }"#;
+
+        let mut doc: RestDescription = serde_json::from_str(doc_json).unwrap();
+
+        let api_base_override = std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE").ok();
+        apply_api_base_override(&mut doc, &api_base_override);
+
+        assert_eq!(doc.root_url, "https://www.googleapis.com/");
+        assert!(doc.base_url.is_none());
+    }
+
+    #[test]
+    fn test_api_base_override_strips_trailing_slash() {
+        let mut doc: RestDescription = serde_json::from_str(
+            r#"{"name": "test", "version": "v1", "rootUrl": "https://x.com/", "servicePath": "t/v1/"}"#,
+        )
+        .unwrap();
+
+        let override_url = Some("https://my-proxy.example.com/".to_string());
+        apply_api_base_override(&mut doc, &override_url);
+
+        assert_eq!(doc.root_url, "https://my-proxy.example.com/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://my-proxy.example.com/t/v1/")
+        );
     }
 }

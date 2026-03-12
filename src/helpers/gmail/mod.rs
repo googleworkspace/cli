@@ -41,6 +41,17 @@ pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modi
 pub(super) const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
 
+static GMAIL_API_BASE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    std::env::var("GOOGLE_WORKSPACE_CLI_API_BASE")
+        .unwrap_or_else(|_| "https://gmail.googleapis.com".to_string())
+        .trim_end_matches('/')
+        .to_string()
+});
+
+pub(super) fn gmail_api_base() -> &'static str {
+    &GMAIL_API_BASE
+}
+
 pub(super) struct OriginalMessage {
     pub thread_id: String,
     pub message_id_header: String,
@@ -170,7 +181,8 @@ pub(super) async fn fetch_message_metadata(
     message_id: &str,
 ) -> Result<OriginalMessage, GwsError> {
     let url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
+        "{}/gmail/v1/users/me/messages/{}",
+        gmail_api_base(),
         crate::validate::encode_path_segment(message_id)
     );
 

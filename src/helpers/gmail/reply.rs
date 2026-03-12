@@ -132,7 +132,7 @@ pub(super) struct ReplyConfig {
 async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<String, GwsError> {
     let resp = crate::client::send_with_retry(|| {
         client
-            .get("https://gmail.googleapis.com/gmail/v1/users/me/profile")
+            .get(&format!("{}/gmail/v1/users/me/profile", gmail_api_base()))
             .bearer_auth(token)
     })
     .await
