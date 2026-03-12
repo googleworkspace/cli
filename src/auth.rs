@@ -100,7 +100,7 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     let config_dir = crate::auth_commands::config_dir();
     let enc_path = credential_store::encrypted_credentials_path();
     let default_path = config_dir.join("credentials.json");
-    let token_cache = config_dir.join("token_cache.json");
+    let token_cache = config_dir.join(crate::auth_commands::TOKEN_CACHE_FILENAME);
 
     let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
     get_token_inner(scopes, creds, &token_cache).await
@@ -131,7 +131,7 @@ async fn get_token_inner(
             let tc_filename = token_cache_path
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| "token_cache.json".to_string());
+                .unwrap_or_else(|| crate::auth_commands::TOKEN_CACHE_FILENAME.to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
             let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
                 Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
@@ -227,7 +227,10 @@ async fn load_credentials_inner(
                     );
                 }
                 // Also remove stale token caches that used the old key.
-                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
+                for cache_file in [
+                    crate::auth_commands::TOKEN_CACHE_FILENAME,
+                    crate::auth_commands::SA_TOKEN_CACHE_FILENAME,
+                ] {
                     let path = enc_path.with_file_name(cache_file);
                     if let Err(err) = tokio::fs::remove_file(&path).await {
                         if err.kind() != std::io::ErrorKind::NotFound {

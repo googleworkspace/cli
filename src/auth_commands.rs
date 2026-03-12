@@ -43,6 +43,9 @@ fn mask_secret(s: &str) -> String {
 ///
 /// These are the safest scopes for unverified OAuth apps and personal Cloud
 /// projects.  Users can request broader access with `--scopes` or `--full`.
+pub const TOKEN_CACHE_FILENAME: &str = "token_cache.json";
+pub const SA_TOKEN_CACHE_FILENAME: &str = "sa_token_cache.json";
+
 pub const MINIMAL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
@@ -125,7 +128,7 @@ fn plain_credentials_path() -> PathBuf {
 }
 
 fn token_cache_path() -> PathBuf {
-    config_dir().join("token_cache.json")
+    config_dir().join(TOKEN_CACHE_FILENAME)
 }
 
 /// Handle `gws auth <subcommand>`.
@@ -1173,7 +1176,7 @@ fn handle_logout() -> Result<(), GwsError> {
     let plain_path = plain_credentials_path();
     let enc_path = credential_store::encrypted_credentials_path();
     let token_cache = token_cache_path();
-    let sa_token_cache = config_dir().join("sa_token_cache.json");
+    let sa_token_cache = config_dir().join(SA_TOKEN_CACHE_FILENAME);
 
     let mut removed = Vec::new();
 
