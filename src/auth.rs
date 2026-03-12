@@ -246,15 +246,14 @@ async fn load_credentials_inner(
         }
     }
 
-    // 3. Plaintext credentials at default path (Default to AuthorizedUser)
+    // 3. Plaintext credentials at default path
     if default_path.exists() {
-        return Ok(Credential::AuthorizedUser(
-            yup_oauth2::read_authorized_user_secret(default_path)
-                .await
-                .with_context(|| {
-                    format!("Failed to read credentials from {}", default_path.display())
-                })?,
-        ));
+        let content = tokio::fs::read_to_string(default_path)
+            .await
+            .with_context(|| {
+                format!("Failed to read credentials from {}", default_path.display())
+            })?;
+        return parse_credential_file(default_path, &content).await;
     }
 
     // 4a. GOOGLE_APPLICATION_CREDENTIALS env var (explicit path — hard error if missing)
