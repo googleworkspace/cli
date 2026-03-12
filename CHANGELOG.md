@@ -1,5 +1,12 @@
 # @googleworkspace/cli
 
+## 0.13.2
+
+### Patch Changes
+
+- 3dcf818: Refresh OAuth access tokens for long-running Gmail watch and Workspace Events subscribe helpers before each Pub/Sub and Gmail request.
+- 86ea6de: Validate `--subscription` resource name in `gmail +watch` and deduplicate `PUBSUB_API_BASE` constant.
+
 ## 0.13.1
 
 ### Patch Changes
