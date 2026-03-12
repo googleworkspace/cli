@@ -426,6 +426,7 @@ pub(super) async fn send_raw_email(
         auth_method,
         None,
         None,
+        None,
         matches.get_flag("dry-run"),
         &pagination,
         None,

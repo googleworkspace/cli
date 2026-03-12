@@ -110,6 +110,7 @@ TIPS:
                     auth_method,
                     None,
                     Some(file_path),
+                    None,
                     matches.get_flag("dry-run"),
                     &executor::PaginationConfig::default(),
                     None,

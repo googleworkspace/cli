@@ -145,6 +145,7 @@ async fn build_http_request(
     page_token: Option<&str>,
     pages_fetched: u32,
     upload_path: Option<&str>,
+    upload_content_type: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, GwsError> {
     let mut request = match method.http_method.as_str() {
         "GET" => client.get(&input.full_url),
@@ -190,7 +191,9 @@ async fn build_http_request(
             })?;
 
             request = request.query(&[("uploadType", "multipart")]);
-            let (multipart_body, content_type) = build_multipart_body(&input.body, &file_bytes)?;
+            let media_mime = resolve_upload_mime(upload_content_type, Some(upload_path), &input.body);
+            let (multipart_body, content_type) =
+                build_multipart_body(&input.body, &file_bytes, &media_mime)?;
             request = request.header("Content-Type", content_type);
             request = request.body(multipart_body);
         } else if let Some(ref body_val) = input.body {
@@ -367,6 +370,7 @@ pub async fn execute_method(
     auth_method: AuthMethod,
     output_path: Option<&str>,
     upload_path: Option<&str>,
+    upload_content_type: Option<&str>,
     dry_run: bool,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
@@ -410,6 +414,7 @@ pub async fn execute_method(
             page_token.as_deref(),
             pages_fetched,
             upload_path,
+            upload_content_type,
         )
         .await?;
 
@@ -728,21 +733,88 @@ fn handle_error_response<T>(
     })
 }
 
+/// Resolves the MIME type for the uploaded media content.
+///
+/// Priority:
+/// 1. `--upload-content-type` flag (explicit override)
+/// 2. File extension inference (best guess for what the bytes actually are)
+/// 3. Metadata `mimeType` (fallback for backward compatibility)
+/// 4. `application/octet-stream`
+///
+/// Extension inference ranks above metadata `mimeType` because in Google
+/// Drive's multipart model, metadata `mimeType` represents the *target* type
+/// (what the file should become in Drive), while the media `Content-Type`
+/// represents the *source* type (what the bytes are). When a user uploads
+/// `notes.md` with `"mimeType":"application/vnd.google-apps.document"`, the
+/// media part should be `text/markdown`, not a Google Workspace MIME type.
+fn resolve_upload_mime(
+    explicit: Option<&str>,
+    upload_path: Option<&str>,
+    metadata: &Option<Value>,
+) -> String {
+    if let Some(mime) = explicit {
+        return mime.to_string();
+    }
+
+    if let Some(path) = upload_path {
+        if let Some(detected) = mime_from_extension(path) {
+            return detected.to_string();
+        }
+    }
+
+    if let Some(mime) = metadata
+        .as_ref()
+        .and_then(|m| m.get("mimeType"))
+        .and_then(|v| v.as_str())
+    {
+        return mime.to_string();
+    }
+
+    "application/octet-stream".to_string()
+}
+
+/// Infers a MIME type from a file path's extension.
+fn mime_from_extension(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?;
+    match ext.to_lowercase().as_str() {
+        "md" | "markdown" => Some("text/markdown"),
+        "html" | "htm" => Some("text/html"),
+        "txt" => Some("text/plain"),
+        "json" => Some("application/json"),
+        "csv" => Some("text/csv"),
+        "xml" => Some("application/xml"),
+        "pdf" => Some("application/pdf"),
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "svg" => Some("image/svg+xml"),
+        "doc" => Some("application/msword"),
+        "docx" => Some(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        "xls" => Some("application/vnd.ms-excel"),
+        "xlsx" => Some(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        "ppt" => Some("application/vnd.ms-powerpoint"),
+        "pptx" => Some(
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ),
+        _ => None,
+    }
+}
+
 /// Builds a multipart/related body for media upload requests.
 ///
 /// Returns the body bytes and the Content-Type header value (with boundary).
 fn build_multipart_body(
     metadata: &Option<Value>,
     file_bytes: &[u8],
+    media_mime: &str,
 ) -> Result<(Vec<u8>, String), GwsError> {
     let boundary = format!("gws_boundary_{:016x}", rand::random::<u64>());
-
-    // Determine the media MIME type from the metadata's mimeType field, or fall back
-    let media_mime = metadata
-        .as_ref()
-        .and_then(|m| m.get("mimeType"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("application/octet-stream");
 
     // Build multipart/related body
     let metadata_json = metadata
@@ -1188,7 +1260,8 @@ mod tests {
         let metadata = Some(json!({ "name": "test.txt", "mimeType": "text/plain" }));
         let content = b"Hello world";
 
-        let (body, content_type) = build_multipart_body(&metadata, content).unwrap();
+        let (body, content_type) =
+            build_multipart_body(&metadata, content, "text/plain").unwrap();
 
         // Check content type has boundary
         assert!(content_type.starts_with("multipart/related; boundary="));
@@ -1209,13 +1282,70 @@ mod tests {
         let metadata = None;
         let content = b"Binary data";
 
-        let (body, content_type) = build_multipart_body(&metadata, content).unwrap();
+        let (body, content_type) =
+            build_multipart_body(&metadata, content, "application/octet-stream").unwrap();
         let boundary = content_type.split("boundary=").nth(1).unwrap();
         let body_str = String::from_utf8(body).unwrap();
 
         assert!(body_str.contains(boundary));
-        assert!(body_str.contains("application/octet-stream")); // Fallback mime
+        assert!(body_str.contains("application/octet-stream"));
         assert!(body_str.contains("Binary data"));
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_explicit_flag() {
+        let metadata = Some(json!({ "mimeType": "image/png" }));
+        let mime = resolve_upload_mime(Some("text/markdown"), Some("file.txt"), &metadata);
+        assert_eq!(mime, "text/markdown", "explicit flag takes top priority");
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_extension_beats_metadata() {
+        let metadata = Some(json!({ "mimeType": "application/vnd.google-apps.document" }));
+        let mime = resolve_upload_mime(None, Some("notes.md"), &metadata);
+        assert_eq!(
+            mime, "text/markdown",
+            "extension inference ranks above metadata mimeType"
+        );
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_metadata_fallback_for_unknown_extension() {
+        let metadata = Some(json!({ "mimeType": "text/plain" }));
+        let mime = resolve_upload_mime(None, Some("file.unknown"), &metadata);
+        assert_eq!(
+            mime, "text/plain",
+            "metadata mimeType is used when extension is unrecognized"
+        );
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_extension_when_no_metadata() {
+        let mime = resolve_upload_mime(None, Some("notes.md"), &None);
+        assert_eq!(mime, "text/markdown");
+
+        let mime = resolve_upload_mime(None, Some("page.html"), &None);
+        assert_eq!(mime, "text/html");
+
+        let mime = resolve_upload_mime(None, Some("data.csv"), &None);
+        assert_eq!(mime, "text/csv");
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_fallback() {
+        let mime = resolve_upload_mime(None, Some("file.unknown"), &None);
+        assert_eq!(mime, "application/octet-stream");
+    }
+
+    #[test]
+    fn test_resolve_upload_mime_explicit_enables_import_conversion() {
+        let metadata = Some(json!({ "mimeType": "application/vnd.google-apps.document" }));
+        let mime =
+            resolve_upload_mime(Some("text/markdown"), Some("impact.md"), &metadata);
+        assert_eq!(
+            mime, "text/markdown",
+            "--upload-content-type overrides metadata for media part"
+        );
     }
 
     #[test]
@@ -1668,6 +1798,7 @@ async fn test_execute_method_dry_run() {
         AuthMethod::None,
         None,
         None,
+        None,
         true, // dry_run
         &pagination,
         None,
@@ -1709,6 +1840,7 @@ async fn test_execute_method_missing_path_param() {
         None,
         None,
         AuthMethod::None,
+        None,
         None,
         None,
         true,
@@ -1888,6 +2020,7 @@ async fn test_post_without_body_sets_content_length_zero() {
         None,
         0,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1928,6 +2061,7 @@ async fn test_post_with_body_does_not_add_content_length_zero() {
         None,
         0,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1965,6 +2099,7 @@ async fn test_get_does_not_set_content_length_zero() {
         &AuthMethod::None,
         None,
         0,
+        None,
         None,
     )
     .await
