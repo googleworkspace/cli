@@ -113,7 +113,7 @@ gws docs documents batchUpdate \
       {
         "updateParagraphStyle": {
           "paragraphStyle": {"namedStyleType": "HEADING_1"},
-          "range": {"startIndex": 1, "endIndex": 11, "tabId": "TAB_ID"},
+          "range": {"startIndex": 1, "endIndex": 12, "tabId": "TAB_ID"},
           "fields": "namedStyleType"
         }
       }
@@ -131,16 +131,20 @@ gws docs documents batchUpdate \
 
 ### Applying bold or italic
 
-Use `updateTextStyle` with a character range:
+Use `updateTextStyle` with a character range to apply styles like bold or italic.
 
 ```bash
-{
-  "updateTextStyle": {
-    "textStyle": {"bold": true},
-    "range": {"startIndex": 1, "endIndex": 11, "tabId": "TAB_ID"},
-    "fields": "bold"
-  }
-}
+gws docs documents batchUpdate \
+  --params '{"documentId": "DOC_ID"}' \
+  --json '{
+    "requests": [{
+      "updateTextStyle": {
+        "textStyle": {"bold": true},
+        "range": {"startIndex": 1, "endIndex": 11, "tabId": "TAB_ID"},
+        "fields": "bold"
+      }
+    }]
+  }'
 ```
 
 Replace `"bold": true` with `"italic": true` for italic, or combine both with `"fields": "bold,italic"`.
