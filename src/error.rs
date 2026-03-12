@@ -40,6 +40,17 @@ pub enum GwsError {
 }
 
 impl GwsError {
+    /// Exit code for [`GwsError::Api`] variants.
+    pub const EXIT_CODE_API: i32 = 1;
+    /// Exit code for [`GwsError::Auth`] variants.
+    pub const EXIT_CODE_AUTH: i32 = 2;
+    /// Exit code for [`GwsError::Validation`] variants.
+    pub const EXIT_CODE_VALIDATION: i32 = 3;
+    /// Exit code for [`GwsError::Discovery`] variants.
+    pub const EXIT_CODE_DISCOVERY: i32 = 4;
+    /// Exit code for [`GwsError::Other`] variants.
+    pub const EXIT_CODE_OTHER: i32 = 5;
+
     /// Map each error variant to a stable, documented exit code.
     ///
     /// | Code | Meaning                                      |
@@ -52,11 +63,11 @@ impl GwsError {
     /// |  5   | Internal error — unexpected failure          |
     pub fn exit_code(&self) -> i32 {
         match self {
-            GwsError::Api { .. } => 1,
-            GwsError::Auth(_) => 2,
-            GwsError::Validation(_) => 3,
-            GwsError::Discovery(_) => 4,
-            GwsError::Other(_) => 5,
+            GwsError::Api { .. } => Self::EXIT_CODE_API,
+            GwsError::Auth(_) => Self::EXIT_CODE_AUTH,
+            GwsError::Validation(_) => Self::EXIT_CODE_VALIDATION,
+            GwsError::Discovery(_) => Self::EXIT_CODE_DISCOVERY,
+            GwsError::Other(_) => Self::EXIT_CODE_OTHER,
         }
     }
 
@@ -154,19 +165,22 @@ mod tests {
             reason: "notFound".to_string(),
             enable_url: None,
         };
-        assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.exit_code(), GwsError::EXIT_CODE_API);
     }
 
     #[test]
     fn test_exit_code_auth() {
-        assert_eq!(GwsError::Auth("bad token".to_string()).exit_code(), 2);
+        assert_eq!(
+            GwsError::Auth("bad token".to_string()).exit_code(),
+            GwsError::EXIT_CODE_AUTH
+        );
     }
 
     #[test]
     fn test_exit_code_validation() {
         assert_eq!(
             GwsError::Validation("missing arg".to_string()).exit_code(),
-            3
+            GwsError::EXIT_CODE_VALIDATION
         );
     }
 
@@ -174,7 +188,7 @@ mod tests {
     fn test_exit_code_discovery() {
         assert_eq!(
             GwsError::Discovery("fetch failed".to_string()).exit_code(),
-            4
+            GwsError::EXIT_CODE_DISCOVERY
         );
     }
 
@@ -182,19 +196,19 @@ mod tests {
     fn test_exit_code_other() {
         assert_eq!(
             GwsError::Other(anyhow::anyhow!("oops")).exit_code(),
-            5
+            GwsError::EXIT_CODE_OTHER
         );
     }
 
     #[test]
     fn test_exit_codes_are_distinct() {
-        // Ensure no two variants share an exit code (regression guard).
+        // Ensure all named constants are unique (regression guard).
         let codes = [
-            GwsError::Api { code: 500, message: String::new(), reason: String::new(), enable_url: None }.exit_code(),
-            GwsError::Auth(String::new()).exit_code(),
-            GwsError::Validation(String::new()).exit_code(),
-            GwsError::Discovery(String::new()).exit_code(),
-            GwsError::Other(anyhow::anyhow!("")).exit_code(),
+            GwsError::EXIT_CODE_API,
+            GwsError::EXIT_CODE_AUTH,
+            GwsError::EXIT_CODE_VALIDATION,
+            GwsError::EXIT_CODE_DISCOVERY,
+            GwsError::EXIT_CODE_OTHER,
         ];
         let unique: std::collections::HashSet<i32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "exit codes must be distinct: {codes:?}");
