@@ -225,7 +225,12 @@ fn resolve_key(
                         // credentials survive keyring loss (e.g. after OS
                         // upgrades, container restarts, daemon changes).
                         if !key_file.exists() {
-                            let _ = save_key_file(key_file, &b64_key);
+                            if let Err(err) = save_key_file(key_file, &b64_key) {
+                                eprintln!(
+                                    "Warning: failed to create keyring backup file at '{}': {err}",
+                                    key_file.display()
+                                );
+                            }
                         }
                         return Ok(arr);
                     }

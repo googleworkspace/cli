@@ -240,10 +240,24 @@ async fn load_credentials_inner(
                     "Warning: removing undecryptable credentials file ({}): {e:#}",
                     enc_path.display()
                 );
-                let _ = std::fs::remove_file(enc_path);
+                if let Err(err) = std::fs::remove_file(enc_path) {
+                    eprintln!(
+                        "Warning: failed to remove stale credentials file '{}': {err}",
+                        enc_path.display()
+                    );
+                }
                 // Also remove stale token caches that used the old key.
-                let _ = std::fs::remove_file(enc_path.with_file_name("token_cache.json"));
-                let _ = std::fs::remove_file(enc_path.with_file_name("sa_token_cache.json"));
+                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
+                    let path = enc_path.with_file_name(cache_file);
+                    if let Err(err) = std::fs::remove_file(&path) {
+                        if err.kind() != std::io::ErrorKind::NotFound {
+                            eprintln!(
+                                "Warning: failed to remove stale token cache '{}': {err}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
                 // Fall through to remaining credential sources below.
             }
         }
