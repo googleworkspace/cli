@@ -285,6 +285,69 @@ gws sheets spreadsheets values append \
   --json '{"values": [["Name", "Score"], ["Alice", 95]]}'
 ```
 
+### Helper Commands
+
+Some services ship hand-crafted helper commands alongside the auto-generated Discovery surface. Helper commands are prefixed with `+` so they are visually distinct and never collide with Discovery-generated method names.
+
+Run `gws <service> --help` to see both Discovery methods and helper commands together.
+
+```bash
+gws gmail --help      # shows +send, +reply, +reply-all, +forward, +triage, +watch …
+gws calendar --help   # shows +insert, +agenda …
+gws drive --help      # shows +upload …
+```
+
+**Full helper reference:**
+
+| Service | Command | Description |
+|---------|---------|-------------|
+| `gmail` | `+send` | Send an email |
+| `gmail` | `+reply` | Reply to a message (handles threading automatically) |
+| `gmail` | `+reply-all` | Reply-all to a message |
+| `gmail` | `+forward` | Forward a message to new recipients |
+| `gmail` | `+triage` | Show unread inbox summary (sender, subject, date) |
+| `gmail` | `+watch` | Watch for new emails and stream them as NDJSON |
+| `sheets` | `+append` | Append a row to a spreadsheet |
+| `sheets` | `+read` | Read values from a spreadsheet |
+| `docs` | `+write` | Append text to a document |
+| `chat` | `+send` | Send a message to a space |
+| `drive` | `+upload` | Upload a file with automatic metadata |
+| `calendar` | `+insert` | Create a new event |
+| `calendar` | `+agenda` | Show upcoming events across all calendars |
+| `script` | `+push` | Upload local files to an Apps Script project |
+| `workflow` | `+standup-report` | Today's meetings + open tasks as a standup summary |
+| `workflow` | `+meeting-prep` | Prepare for your next meeting: agenda, attendees, and linked docs |
+| `workflow` | `+email-to-task` | Convert a Gmail message into a Google Tasks entry |
+| `workflow` | `+weekly-digest` | Weekly summary: this week's meetings + unread email count |
+| `workflow` | `+file-announce` | Announce a Drive file in a Chat space |
+| `events` | `+subscribe` | Subscribe to Workspace events and stream them as NDJSON |
+| `events` | `+renew` | Renew/reactivate Workspace Events subscriptions |
+| `modelarmor` | `+sanitize-prompt` | Sanitize a user prompt through a Model Armor template |
+| `modelarmor` | `+sanitize-response` | Sanitize a model response through a Model Armor template |
+| `modelarmor` | `+create-template` | Create a new Model Armor template |
+
+**Examples:**
+
+```bash
+# Send an email
+gws gmail +send --to alice@example.com --subject "Hello" --body "Hi there"
+
+# Reply to a message
+gws gmail +reply --message-id MESSAGE_ID --body "Thanks!"
+
+# Append a row to a spreadsheet
+gws sheets +append --spreadsheet-id SPREADSHEET_ID --range "Sheet1" --values "Alice,95"
+
+# Show today's calendar agenda
+gws calendar +agenda
+
+# Upload a file to Drive
+gws drive +upload --file ./report.pdf --name "Q1 Report"
+
+# Morning standup summary
+gws workflow +standup-report
+```
+
 ### Model Armor (Response Sanitization)
 
 Integrate [Google Cloud Model Armor](https://cloud.google.com/security/products/model-armor) to scan API responses for prompt injection before they reach your agent.
