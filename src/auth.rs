@@ -240,7 +240,7 @@ async fn load_credentials_inner(
                     "Warning: removing undecryptable credentials file ({}): {e:#}",
                     enc_path.display()
                 );
-                if let Err(err) = std::fs::remove_file(enc_path) {
+                if let Err(err) = tokio::fs::remove_file(enc_path).await {
                     eprintln!(
                         "Warning: failed to remove stale credentials file '{}': {err}",
                         enc_path.display()
@@ -249,7 +249,7 @@ async fn load_credentials_inner(
                 // Also remove stale token caches that used the old key.
                 for cache_file in ["token_cache.json", "sa_token_cache.json"] {
                     let path = enc_path.with_file_name(cache_file);
-                    if let Err(err) = std::fs::remove_file(&path) {
+                    if let Err(err) = tokio::fs::remove_file(&path).await {
                         if err.kind() != std::io::ErrorKind::NotFound {
                             eprintln!(
                                 "Warning: failed to remove stale token cache '{}': {err}",
