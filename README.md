@@ -33,6 +33,7 @@ npm install -g @googleworkspace/cli
 - [AI Agent Skills](#ai-agent-skills)
 - [Advanced Usage](#advanced-usage)
 - [Environment Variables](#environment-variables)
+- [Exit Codes](#exit-codes)
 - [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -316,6 +317,27 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing and fallback for helper commands |
 
 Environment variables can also be set in a `.env` file (loaded via [dotenvy](https://crates.io/crates/dotenvy)).
+
+## Exit Codes
+
+`gws` uses structured exit codes so scripts can branch on the failure type without parsing error output.
+
+| Code | Meaning | Example cause |
+|------|---------|---------------|
+| `0` | Success | Command completed normally |
+| `1` | API error | Google returned a 4xx/5xx response |
+| `2` | Auth error | Credentials missing, expired, or invalid |
+| `3` | Validation error | Bad arguments, unknown service, invalid flag |
+| `4` | Discovery error | Could not fetch the API schema document |
+| `5` | Internal error | Unexpected failure |
+
+```bash
+gws drive files list --params '{"fileId": "bad"}'
+echo $?   # 1 — API error
+
+gws unknown-service files list
+echo $?   # 3 — validation error (unknown service)
+```
 
 ## Architecture
 

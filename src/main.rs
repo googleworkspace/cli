@@ -49,7 +49,7 @@ async fn main() {
 
     if let Err(err) = run().await {
         print_error_json(&err);
-        std::process::exit(1);
+        std::process::exit(err.exit_code());
     }
 }
 
@@ -459,6 +459,14 @@ fn print_usage() {
     println!(
         "    GOOGLE_WORKSPACE_PROJECT_ID              Override the GCP project ID for quota and billing"
     );
+    println!();
+    println!("EXIT CODES:");
+    println!("    0    Success");
+    println!("    1    API error  — Google returned an error response");
+    println!("    2    Auth error — credentials missing or invalid");
+    println!("    3    Validation — bad arguments or input");
+    println!("    4    Discovery  — could not fetch API schema");
+    println!("    5    Internal   — unexpected failure");
     println!();
     println!("COMMUNITY:");
     println!("    Star the repo: https://github.com/googleworkspace/cli");

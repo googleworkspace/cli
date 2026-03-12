@@ -40,6 +40,26 @@ pub enum GwsError {
 }
 
 impl GwsError {
+    /// Map each error variant to a stable, documented exit code.
+    ///
+    /// | Code | Meaning                                      |
+    /// |------|----------------------------------------------|
+    /// |  0   | Success (never returned here)                |
+    /// |  1   | API error — Google returned an error response |
+    /// |  2   | Auth error — credentials missing or invalid  |
+    /// |  3   | Validation error — bad arguments or input    |
+    /// |  4   | Discovery error — could not fetch API schema |
+    /// |  5   | Internal error — unexpected failure          |
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            GwsError::Api { .. } => 1,
+            GwsError::Auth(_) => 2,
+            GwsError::Validation(_) => 3,
+            GwsError::Discovery(_) => 4,
+            GwsError::Other(_) => 5,
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         match self {
             GwsError::Api {
@@ -125,6 +145,60 @@ pub fn print_error_json(err: &GwsError) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_exit_code_api() {
+        let err = GwsError::Api {
+            code: 404,
+            message: "Not Found".to_string(),
+            reason: "notFound".to_string(),
+            enable_url: None,
+        };
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn test_exit_code_auth() {
+        assert_eq!(GwsError::Auth("bad token".to_string()).exit_code(), 2);
+    }
+
+    #[test]
+    fn test_exit_code_validation() {
+        assert_eq!(
+            GwsError::Validation("missing arg".to_string()).exit_code(),
+            3
+        );
+    }
+
+    #[test]
+    fn test_exit_code_discovery() {
+        assert_eq!(
+            GwsError::Discovery("fetch failed".to_string()).exit_code(),
+            4
+        );
+    }
+
+    #[test]
+    fn test_exit_code_other() {
+        assert_eq!(
+            GwsError::Other(anyhow::anyhow!("oops")).exit_code(),
+            5
+        );
+    }
+
+    #[test]
+    fn test_exit_codes_are_distinct() {
+        // Ensure no two variants share an exit code (regression guard).
+        let codes = [
+            GwsError::Api { code: 500, message: String::new(), reason: String::new(), enable_url: None }.exit_code(),
+            GwsError::Auth(String::new()).exit_code(),
+            GwsError::Validation(String::new()).exit_code(),
+            GwsError::Discovery(String::new()).exit_code(),
+            GwsError::Other(anyhow::anyhow!("")).exit_code(),
+        ];
+        let unique: std::collections::HashSet<i32> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len(), "exit codes must be distinct: {codes:?}");
+    }
 
     #[test]
     fn test_error_to_json_api() {
