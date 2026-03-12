@@ -19,6 +19,15 @@ The `codecov/patch` check requires new/modified lines to be covered by tests. Pr
 
 Every PR must include a `.changeset/<name>.md` file. Use `patch` for fixes/chores, `minor` for features, `major` for breaking changes.
 
+## PR Scope
+
+Review comments must stay within the PR's stated scope. If you spot an improvement opportunity that is unrelated to the PR's purpose (e.g., refactoring constants, adding support for a different credential type, making an unrelated function atomic), mark it as a **follow-up** suggestion — not a blocking review comment. Do not request changes that expand the PR beyond its original intent.
+
+Examples of scope creep to avoid:
+- A bug-fix PR should not grow into a refactoring PR.
+- Adding constants for strings used elsewhere is a separate cleanup task.
+- Making a pre-existing function atomic is an enhancement, not a fix for the current PR.
+
 ## Code Style
 
 - Rust: `cargo clippy -- -D warnings` must pass. `cargo fmt` enforced via pre-commit hook.
