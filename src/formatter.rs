@@ -455,12 +455,13 @@ fn format_tsv_page(value: &Value, emit_header: bool) -> String {
         return output;
     }
 
-    // Collect columns
+    // Collect columns, preserving insertion order while deduplicating in O(1).
     let mut columns: Vec<String> = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
     for item in arr {
         if let Value::Object(obj) = item {
             for key in obj.keys() {
-                if !columns.contains(key) {
+                if seen_keys.insert(key.as_str()) {
                     columns.push(key.clone());
                 }
             }
