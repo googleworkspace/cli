@@ -45,10 +45,22 @@ pub enum GwsError {
 /// constants defined below without requiring manual updates in two places.
 pub const EXIT_CODE_DOCUMENTATION: &[(i32, &str)] = &[
     (0, "Success"),
-    (GwsError::EXIT_CODE_API, "API error  — Google returned an error response"),
-    (GwsError::EXIT_CODE_AUTH, "Auth error — credentials missing or invalid"),
-    (GwsError::EXIT_CODE_VALIDATION, "Validation — bad arguments or input"),
-    (GwsError::EXIT_CODE_DISCOVERY, "Discovery  — could not fetch API schema"),
+    (
+        GwsError::EXIT_CODE_API,
+        "API error  — Google returned an error response",
+    ),
+    (
+        GwsError::EXIT_CODE_AUTH,
+        "Auth error — credentials missing or invalid",
+    ),
+    (
+        GwsError::EXIT_CODE_VALIDATION,
+        "Validation — bad arguments or input",
+    ),
+    (
+        GwsError::EXIT_CODE_DISCOVERY,
+        "Discovery  — could not fetch API schema",
+    ),
     (GwsError::EXIT_CODE_OTHER, "Internal   — unexpected failure"),
 ];
 
@@ -224,7 +236,11 @@ mod tests {
             GwsError::EXIT_CODE_OTHER,
         ];
         let unique: std::collections::HashSet<i32> = codes.iter().copied().collect();
-        assert_eq!(unique.len(), codes.len(), "exit codes must be distinct: {codes:?}");
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "exit codes must be distinct: {codes:?}"
+        );
     }
 
     #[test]
