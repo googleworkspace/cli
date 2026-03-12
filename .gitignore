@@ -22,10 +22,12 @@ yarn-error.log*
 # IDE
 .idea/
 .vscode/
-.claude/settings.local.json
 *.swp
 *.swo
 *~
+
+# AI agents
+.claude/settings.local.json
 
 # OS
 .DS_Store
