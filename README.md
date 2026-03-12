@@ -314,6 +314,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
 | `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing and fallback for helper commands |
+| `GOOGLE_WORKSPACE_CLI_API_BASE` | Override base URL for all Google API calls (e.g. `https://my-proxy.example.com`). Routes discovery doc fetches and API requests through the specified URL instead of `*.googleapis.com` |
 
 Environment variables can also be set in a `.env` file (loaded via [dotenvy](https://crates.io/crates/dotenvy)).
 

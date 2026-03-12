@@ -44,7 +44,8 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
     let client = crate::client::build_client()?;
 
     // 1. List message IDs
-    let list_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+    let base = gmail_api_base();
+    let list_url = format!("{base}/gmail/v1/users/me/messages");
 
     let list_resp = client
         .get(list_url)
@@ -97,7 +98,8 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
             let token = &token;
             async move {
                 let get_url = format!(
-                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
+                    "{}/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
+                    gmail_api_base(),
                     msg_id
                 );
 
