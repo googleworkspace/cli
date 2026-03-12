@@ -314,7 +314,7 @@ gws drive --help      # shows +upload …
 | `drive` | `+upload` | Upload a file with automatic metadata |
 | `calendar` | `+insert` | Create a new event |
 | `calendar` | `+agenda` | Show upcoming events across all calendars |
-| `script` | `+push` | Upload local files to an Apps Script project |
+| `script` | `+push` | Replace all files in an Apps Script project with local files |
 | `workflow` | `+standup-report` | Today's meetings + open tasks as a standup summary |
 | `workflow` | `+meeting-prep` | Prepare for your next meeting: agenda, attendees, and linked docs |
 | `workflow` | `+email-to-task` | Convert a Gmail message into a Google Tasks entry |
