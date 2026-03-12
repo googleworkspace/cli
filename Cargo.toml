@@ -53,7 +53,7 @@ ratatui = "0.30.0"
 crossterm = "0.29.0"
 chrono = "0.4.44"
 async-trait = "0.1.89"
-serde_yaml = "0.9.34"
+serde_yml = "0.0"
 percent-encoding = "2.3.2"
 zeroize = { version = "1.8.2", features = ["derive"] }
 

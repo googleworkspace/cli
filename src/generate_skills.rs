@@ -203,7 +203,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         .as_ref()
         .is_none_or(|f| "persona".contains(f.as_str()) || "personas".contains(f.as_str()))
     {
-        if let Ok(registry) = serde_yaml::from_str::<PersonaRegistry>(PERSONAS_YAML) {
+        if let Ok(registry) = serde_yml::from_str::<PersonaRegistry>(PERSONAS_YAML) {
             eprintln!(
                 "Generating skills for {} personas...",
                 registry.personas.len()
@@ -234,7 +234,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         .as_ref()
         .is_none_or(|f| "recipe".contains(f.as_str()) || "recipes".contains(f.as_str()))
     {
-        if let Ok(registry) = serde_yaml::from_str::<RecipeRegistry>(RECIPES_YAML) {
+        if let Ok(registry) = serde_yml::from_str::<RecipeRegistry>(RECIPES_YAML) {
             eprintln!(
                 "Generating skills for {} recipes...",
                 registry.recipes.len()
@@ -968,9 +968,9 @@ mod tests {
     #[test]
     fn test_registry_references() {
         let personas: PersonaRegistry =
-            serde_yaml::from_str(PERSONAS_YAML).expect("valid personas yaml");
+            serde_yml::from_str(PERSONAS_YAML).expect("valid personas yaml");
         let recipes: RecipeRegistry =
-            serde_yaml::from_str(RECIPES_YAML).expect("valid recipes yaml");
+            serde_yml::from_str(RECIPES_YAML).expect("valid recipes yaml");
 
         // Valid services mapped by api_name or alias
         let all_services = services::SERVICES;
