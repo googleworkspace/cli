@@ -142,7 +142,7 @@ pub(super) async fn handle_subscribe(
             // 1. Create Pub/Sub topic
             eprintln!("Creating Pub/Sub topic: {topic}");
             let resp = client
-                .put(format!("https://pubsub.googleapis.com/v1/{topic}"))
+                .put(format!("{PUBSUB_API_BASE}/{topic}"))
                 .bearer_auth(&pubsub_token)
                 .header("Content-Type", "application/json")
                 .body("{}")
@@ -167,7 +167,7 @@ pub(super) async fn handle_subscribe(
                 "ackDeadlineSeconds": 60,
             });
             let resp = client
-                .put(format!("https://pubsub.googleapis.com/v1/{sub}"))
+                .put(format!("{PUBSUB_API_BASE}/{sub}"))
                 .bearer_auth(&pubsub_token)
                 .header("Content-Type", "application/json")
                 .json(&sub_body)
