@@ -205,31 +205,11 @@ async fn load_credentials_inner(
         );
     }
 
-    // 2. Encrypted credentials (always AuthorizedUser for now)
+    // 2. Encrypted credentials
     if enc_path.exists() {
         match credential_store::load_encrypted_from_path(enc_path) {
             Ok(json_str) => {
-                let creds: serde_json::Value = serde_json::from_str(&json_str)
-                    .context("Failed to parse decrypted credentials")?;
-
-                let client_id = creds["client_id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Missing client_id in encrypted credentials"))?;
-                let client_secret = creds["client_secret"].as_str().ok_or_else(|| {
-                    anyhow::anyhow!("Missing client_secret in encrypted credentials")
-                })?;
-                let refresh_token = creds["refresh_token"].as_str().ok_or_else(|| {
-                    anyhow::anyhow!("Missing refresh_token in encrypted credentials")
-                })?;
-
-                return Ok(Credential::AuthorizedUser(
-                    yup_oauth2::authorized_user::AuthorizedUserSecret {
-                        client_id: client_id.to_string(),
-                        client_secret: client_secret.to_string(),
-                        refresh_token: refresh_token.to_string(),
-                        key_type: "authorized_user".to_string(),
-                    },
-                ));
+                return parse_credential_file(enc_path, &json_str).await;
             }
             Err(e) => {
                 // Decryption failed — the encryption key likely changed (e.g. after

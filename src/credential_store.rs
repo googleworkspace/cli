@@ -225,11 +225,13 @@ fn resolve_key(
                         // credentials survive keyring loss (e.g. after OS
                         // upgrades, container restarts, daemon changes).
                         if !key_file.exists() {
-                            if let Err(err) = save_key_file(key_file, &b64_key) {
-                                eprintln!(
-                                    "Warning: failed to create keyring backup file at '{}': {err}",
-                                    key_file.display()
-                                );
+                            if let Err(err) = save_key_file_exclusive(key_file, &b64_key) {
+                                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                                    eprintln!(
+                                        "Warning: failed to create keyring backup file at '{}': {err}",
+                                        key_file.display()
+                                    );
+                                }
                             }
                         }
                         return Ok(arr);
