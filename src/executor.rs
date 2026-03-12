@@ -170,12 +170,12 @@ async fn build_http_request(
         request = request.header("x-goog-user-project", quota_project);
     }
 
-    for (key, value) in &input.query_params {
-        request = request.query(&[(key, value)]);
-    }
-
+    let mut all_query_params = input.query_params.clone();
     if let Some(pt) = page_token {
-        request = request.query(&[("pageToken", pt)]);
+        all_query_params.push(("pageToken".to_string(), pt.to_string()));
+    }
+    if !all_query_params.is_empty() {
+        request = request.query(&all_query_params);
     }
 
     if pages_fetched == 0 {
