@@ -336,13 +336,13 @@ gws gmail +send --to alice@example.com --subject "Hello" --body "Hi there"
 gws gmail +reply --message-id MESSAGE_ID --body "Thanks!"
 
 # Append a row to a spreadsheet
-gws sheets +append --spreadsheet-id SPREADSHEET_ID --range "Sheet1" --values "Alice,95"
+gws sheets +append --spreadsheet SPREADSHEET_ID --values "Alice,95"
 
 # Show today's calendar agenda
 gws calendar +agenda
 
 # Upload a file to Drive
-gws drive +upload --file ./report.pdf --name "Q1 Report"
+gws drive +upload ./report.pdf --name "Q1 Report"
 
 # Morning standup summary
 gws workflow +standup-report
