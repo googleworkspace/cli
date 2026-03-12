@@ -448,11 +448,11 @@ fn format_delimited_page(
 }
 
 /// Escape a value for TSV output.
-/// Tabs and newlines in field values are replaced with spaces to preserve
-/// the column structure. This matches the behaviour of most TSV producers
-/// (e.g. PostgreSQL COPY, Google Sheets TSV export).
+/// Tabs, newlines, and carriage returns in field values are replaced with
+/// spaces to preserve column structure. This matches the behaviour of most
+/// TSV producers (e.g. PostgreSQL COPY, Google Sheets TSV export).
 fn tsv_escape(s: &str) -> String {
-    s.replace(['\t', '\n'], " ").replace('\r', "")
+    s.replace(['\t', '\n', '\r'], " ")
 }
 
 fn csv_escape(s: &str) -> String {
@@ -735,7 +735,8 @@ mod tests {
         assert_eq!(tsv_escape("simple"), "simple");
         assert_eq!(tsv_escape("has\ttab"), "has tab");
         assert_eq!(tsv_escape("has\nnewline"), "has newline");
-        assert_eq!(tsv_escape("has\r\nwindows"), "has windows");
+        assert_eq!(tsv_escape("has\rreturn"), "has return");
+        assert_eq!(tsv_escape("has\r\nwindows"), "has  windows");
     }
 
     #[test]
