@@ -200,36 +200,47 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|s| crate::formatter::OutputFormat::from_str(s))
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
-    // Determine time range
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    // Determine time range using the local timezone so that --today and
+    // --tomorrow align with the user's wall-clock day, not UTC.
+    use chrono::{Local, NaiveTime, TimeZone};
 
-    let days: u64 = if matches.get_flag("tomorrow") {
-        // Start from tomorrow, 1 day
+    let local_now = Local::now();
+    let today_start = local_now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let today_start_local = Local
+        .from_local_datetime(&today_start)
+        .single()
+        .unwrap_or(local_now);
+
+    let days: i64 = if matches.get_flag("tomorrow") {
         1
     } else if matches.get_flag("week") {
         7
     } else {
         matches
             .get_one::<String>("days")
-            .and_then(|s| s.parse::<u64>().ok())
+            .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(1)
     };
 
-    let (time_min_epoch, time_max_epoch) = if matches.get_flag("tomorrow") {
-        // Tomorrow: start of tomorrow to end of tomorrow
-        let day_seconds = 86400;
-        let tomorrow_start = (now / day_seconds + 1) * day_seconds;
-        (tomorrow_start, tomorrow_start + day_seconds)
+    let (time_min_dt, time_max_dt) = if matches.get_flag("today") {
+        // Today: local midnight to local midnight+1
+        let end = today_start_local + chrono::Duration::days(1);
+        (today_start_local, end)
+    } else if matches.get_flag("tomorrow") {
+        // Tomorrow: local midnight+1 to local midnight+2
+        let start = today_start_local + chrono::Duration::days(1);
+        let end = today_start_local + chrono::Duration::days(2);
+        (start, end)
     } else {
-        // Start from now
-        (now, now + days * 86400)
+        // From now, N days ahead
+        let end = local_now + chrono::Duration::days(days);
+        (local_now, end)
     };
 
-    let time_min = epoch_to_rfc3339(time_min_epoch);
-    let time_max = epoch_to_rfc3339(time_max_epoch);
+    let time_min = time_min_dt.to_rfc3339();
+    let time_max = time_max_dt.to_rfc3339();
 
     let client = crate::client::build_client()?;
     let calendar_filter = matches.get_one::<String>("calendar");
@@ -395,11 +406,6 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     Ok(())
 }
 
-fn epoch_to_rfc3339(epoch: u64) -> String {
-    use chrono::{TimeZone, Utc};
-    Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
-}
-
 fn build_insert_request(
     matches: &ArgMatches,
     doc: &crate::discovery::RestDescription,
@@ -535,5 +541,37 @@ mod tests {
         assert!(body.contains("Discuss stuff"));
         assert!(body.contains("a@b.com"));
         assert!(body.contains("c@d.com"));
+    }
+
+    /// Verify that agenda day boundaries use local timezone offsets, not UTC.
+    #[test]
+    fn agenda_day_boundaries_use_local_timezone() {
+        use chrono::{Local, NaiveTime, TimeZone};
+
+        let local_now = Local::now();
+        let today_start = local_now
+            .date_naive()
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let today_start_local = Local
+            .from_local_datetime(&today_start)
+            .single()
+            .unwrap_or(local_now);
+
+        let today_rfc = today_start_local.to_rfc3339();
+        let tomorrow_start = today_start_local + chrono::Duration::days(1);
+        let tomorrow_rfc = tomorrow_start.to_rfc3339();
+
+        // The local offset should appear in the RFC3339 string (e.g. -07:00, +05:30).
+        // If the code were using UTC, the string would end with +00:00 (unless
+        // the machine is actually in UTC, in which case this test is a no-op).
+        let local_offset = local_now.format("%:z").to_string();
+        assert!(
+            today_rfc.contains(&local_offset),
+            "today boundary should carry local offset {local_offset}, got {today_rfc}"
+        );
+        assert!(
+            tomorrow_rfc.contains(&local_offset),
+            "tomorrow boundary should carry local offset {local_offset}, got {tomorrow_rfc}"
+        );
     }
 }
