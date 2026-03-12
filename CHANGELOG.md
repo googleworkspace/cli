@@ -1,5 +1,13 @@
 # @googleworkspace/cli
 
+## 0.13.1
+
+### Patch Changes
+
+- 510024f: Centralize token cache filenames as constants and support ServiceAccount credentials at the default plaintext path
+- 510024f: Auto-recover from stale encrypted credentials after upgrade: remove undecryptable `credentials.enc` and fall through to other credential sources (plaintext, ADC) instead of hard-erroring. Also sync encryption key file backup when keyring has key but file is missing.
+- e104106: Add shell tips section to gws-shared skill warning about zsh `!` history expansion, and replace single quotes with double quotes around sheet ranges containing `!` in recipes and skill examples
+
 ## 0.13.0
 
 ### Minor Changes
