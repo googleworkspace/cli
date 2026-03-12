@@ -992,7 +992,9 @@ pub fn mime_to_extension(mime: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::{JsonSchema, JsonSchemaProperty, RestDescription, RestMethod};
+    use crate::discovery::{
+        JsonSchema, JsonSchemaProperty, MethodParameter, RestDescription, RestMethod,
+    };
     use serde_json::json;
 
     #[test]
