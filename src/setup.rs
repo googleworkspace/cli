@@ -2368,15 +2368,23 @@ mod tests {
 
         scopes.sort_by(compare_scopes);
 
-        // Drive scopes first (alphabetically before Gmail), read-only before write
-        assert_eq!(scopes[0].short, "drive.readonly");
-        // Within Drive write scopes: Sensitive before Restricted
-        assert_eq!(scopes[1].short, "drive.metadata");
+        // Assert the full sort order of scope short names.
+        // Order: by service (alpha), then read-only before write,
+        // then by classification (Sensitive before Restricted), then by short name.
+        let sorted_shorts: Vec<_> = scopes.iter().map(|s| s.short.as_str()).collect();
+        assert_eq!(
+            sorted_shorts,
+            &[
+                "drive.readonly",
+                "drive.metadata",
+                "drive",
+                "gmail.readonly",
+                "gmail",
+            ]
+        );
+
+        // Verify classification sorting for the Drive write scopes.
         assert_eq!(scopes[1].classification, ScopeClassification::Sensitive);
-        assert_eq!(scopes[2].short, "drive");
         assert_eq!(scopes[2].classification, ScopeClassification::Restricted);
-        // Gmail scopes second
-        assert_eq!(scopes[3].short, "gmail.readonly");
-        assert_eq!(scopes[4].short, "gmail");
     }
 }
