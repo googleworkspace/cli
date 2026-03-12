@@ -737,12 +737,17 @@ fn build_multipart_body(
 ) -> Result<(Vec<u8>, String), GwsError> {
     let boundary = format!("gws_boundary_{:016x}", rand::random::<u64>());
 
-    // Determine the media MIME type from the metadata's mimeType field, or fall back
-    let media_mime = metadata
+    // Determine the media MIME type from the metadata's mimeType field, or fall back.
+    // Strip CR/LF to prevent MIME header injection via user-controlled mimeType.
+    let media_mime_raw = metadata
         .as_ref()
         .and_then(|m| m.get("mimeType"))
         .and_then(|v| v.as_str())
         .unwrap_or("application/octet-stream");
+    let media_mime: String = media_mime_raw
+        .chars()
+        .filter(|c| *c != '\r' && *c != '\n')
+        .collect();
 
     // Build multipart/related body
     let metadata_json = metadata

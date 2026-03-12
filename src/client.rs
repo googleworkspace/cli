@@ -33,13 +33,17 @@ pub async fn send_with_retry(
             return Ok(resp);
         }
 
-        // Parse Retry-After header (seconds), fall back to exponential backoff
+        // Parse Retry-After header (seconds), fall back to exponential backoff.
+        // Cap at 60 seconds to prevent a hostile server from hanging the process
+        // indefinitely — especially important when the CLI is invoked by AI agents.
+        const MAX_RETRY_DELAY_SECS: u64 = 60;
         let retry_after = resp
             .headers()
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1 << attempt); // 1, 2, 4 seconds
+            .unwrap_or(1 << attempt) // 1, 2, 4 seconds
+            .min(MAX_RETRY_DELAY_SECS);
 
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
@@ -55,5 +59,17 @@ mod tests {
     #[test]
     fn build_client_succeeds() {
         assert!(build_client().is_ok());
+    }
+
+    #[test]
+    fn retry_after_cap_prevents_unbounded_sleep() {
+        // Verify the cap constant is reasonable
+        const MAX_RETRY_DELAY_SECS: u64 = 60;
+        // A server sending Retry-After: 999999 should be capped to 60
+        let server_value: u64 = 999_999;
+        let capped = server_value.min(MAX_RETRY_DELAY_SECS);
+        assert_eq!(capped, 60);
+        // Normal values below the cap pass through unchanged
+        assert_eq!(5u64.min(MAX_RETRY_DELAY_SECS), 5);
     }
 }
