@@ -31,6 +31,8 @@ pub enum OutputFormat {
     Yaml,
     /// Comma-separated values.
     Csv,
+    /// Tab-separated values.
+    Tsv,
 }
 
 impl OutputFormat {
@@ -45,6 +47,7 @@ impl OutputFormat {
             "table" => Ok(Self::Table),
             "yaml" | "yml" => Ok(Self::Yaml),
             "csv" => Ok(Self::Csv),
+            "tsv" => Ok(Self::Tsv),
             other => Err(other.to_string()),
         }
     }
@@ -64,6 +67,7 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
         OutputFormat::Table => format_table(value),
         OutputFormat::Yaml => format_yaml(value),
         OutputFormat::Csv => format_csv(value),
+        OutputFormat::Tsv => format_tsv(value),
     }
 }
 
@@ -80,6 +84,7 @@ pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_pag
     match format {
         OutputFormat::Json => serde_json::to_string(value).unwrap_or_default(),
         OutputFormat::Csv => format_csv_page(value, is_first_page),
+        OutputFormat::Tsv => format_tsv_page(value, is_first_page),
         OutputFormat::Table => format_table_page(value, is_first_page),
         // Prefix every page with a YAML document separator so that the
         // concatenated stream is parseable as a multi-document YAML file.
@@ -337,10 +342,39 @@ fn format_csv(value: &Value) -> String {
 }
 
 /// Format as CSV, optionally omitting the header row.
+fn format_csv_page(value: &Value, emit_header: bool) -> String {
+    // Preserve existing behaviour: single scalar values are not CSV-escaped.
+    format_delimited_page(value, emit_header, ",", csv_escape, false)
+}
+
+fn format_tsv(value: &Value) -> String {
+    format_tsv_page(value, true)
+}
+
+/// Format as TSV, optionally omitting the header row.
 ///
 /// Pass `emit_header = false` for all pages after the first when using
 /// `--page-all`, so the combined output has a single header line.
-fn format_csv_page(value: &Value, emit_header: bool) -> String {
+fn format_tsv_page(value: &Value, emit_header: bool) -> String {
+    format_delimited_page(value, emit_header, "\t", tsv_escape, true)
+}
+
+/// Shared implementation for delimiter-separated output (CSV and TSV).
+///
+/// `escape_fn`          — per-format value escaping
+/// `escape_single_value` — whether to escape a bare scalar value; CSV
+///                         preserves the historical no-escape behaviour
+///                         while TSV escapes tabs/newlines for correctness.
+fn format_delimited_page<F>(
+    value: &Value,
+    emit_header: bool,
+    separator: &str,
+    escape_fn: F,
+    escape_single_value: bool,
+) -> String
+where
+    F: Fn(&str) -> String,
+{
     let items = extract_items(value);
 
     let arr = if let Some((_key, arr)) = items {
@@ -348,37 +382,42 @@ fn format_csv_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         arr.as_slice()
     } else {
-        // Single value — just output it
-        return value_to_cell(value);
+        let cell = value_to_cell(value);
+        return if escape_single_value {
+            escape_fn(&cell)
+        } else {
+            cell
+        };
     };
 
     if arr.is_empty() {
         return String::new();
     }
 
-    // Array of non-objects
+    // Array of non-objects (includes array-of-arrays, e.g. Sheets values API)
     if !arr.iter().any(|v| v.is_object()) {
         let mut output = String::new();
         for item in arr {
             if let Value::Array(inner) = item {
                 let cells: Vec<String> = inner
                     .iter()
-                    .map(|v| csv_escape(&value_to_cell(v)))
+                    .map(|v| escape_fn(&value_to_cell(v)))
                     .collect();
-                let _ = writeln!(output, "{}", cells.join(","));
+                let _ = writeln!(output, "{}", cells.join(separator));
             } else {
-                let _ = writeln!(output, "{}", csv_escape(&value_to_cell(item)));
+                let _ = writeln!(output, "{}", escape_fn(&value_to_cell(item)));
             }
         }
         return output;
     }
 
-    // Collect columns
+    // Collect columns, preserving insertion order while deduplicating in O(1).
     let mut columns: Vec<String> = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
     for item in arr {
         if let Value::Object(obj) = item {
             for key in obj.keys() {
-                if !columns.contains(key) {
+                if seen_keys.insert(key.as_str()) {
                     columns.push(key.clone());
                 }
             }
@@ -387,27 +426,36 @@ fn format_csv_page(value: &Value, emit_header: bool) -> String {
 
     let mut output = String::new();
 
-    // Header (omitted on continuation pages)
+    // Header row — escape column names so delimiters inside names don't break parsing.
     if emit_header {
-        let _ = writeln!(output, "{}", columns.join(","));
+        let header: Vec<String> = columns.iter().map(|c| escape_fn(c)).collect();
+        let _ = writeln!(output, "{}", header.join(separator));
     }
 
-    // Rows
+    // Data rows
     for item in arr {
         let cells: Vec<String> = columns
             .iter()
             .map(|col| {
                 if let Value::Object(obj) = item {
-                    csv_escape(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
+                    escape_fn(&value_to_cell(obj.get(col).unwrap_or(&Value::Null)))
                 } else {
                     String::new()
                 }
             })
             .collect();
-        let _ = writeln!(output, "{}", cells.join(","));
+        let _ = writeln!(output, "{}", cells.join(separator));
     }
 
     output
+}
+
+/// Escape a value for TSV output.
+/// Tabs, newlines, and carriage returns in field values are replaced with
+/// spaces to preserve column structure. This matches the behaviour of most
+/// TSV producers (e.g. PostgreSQL COPY, Google Sheets TSV export).
+fn tsv_escape(s: &str) -> String {
+    s.replace(['\t', '\n', '\r'], " ")
 }
 
 fn csv_escape(s: &str) -> String {
@@ -627,6 +675,97 @@ mod tests {
         assert_eq!(csv_escape("simple"), "simple");
         assert_eq!(csv_escape("has,comma"), "\"has,comma\"");
         assert_eq!(csv_escape("has\"quote"), "\"has\"\"quote\"");
+    }
+
+    #[test]
+    fn test_output_format_parse_tsv() {
+        assert_eq!(OutputFormat::parse("tsv"), Ok(OutputFormat::Tsv));
+        assert_eq!(OutputFormat::from_str("tsv"), OutputFormat::Tsv);
+    }
+
+    #[test]
+    fn test_format_tsv_array_of_objects() {
+        let val = json!({
+            "files": [
+                {"id": "1", "name": "hello"},
+                {"id": "2", "name": "world"}
+            ]
+        });
+        let output = format_value(&val, &OutputFormat::Tsv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "id\tname");
+        assert_eq!(lines[1], "1\thello");
+        assert_eq!(lines[2], "2\tworld");
+    }
+
+    #[test]
+    fn test_format_tsv_array_of_arrays() {
+        let val = json!({
+            "values": [
+                ["Student Name", "Gender", "Class Level"],
+                ["Alexandra", "Female", "4. Senior"],
+                ["Andrew", "Male", "1. Freshman"]
+            ]
+        });
+        let output = format_value(&val, &OutputFormat::Tsv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "Student Name\tGender\tClass Level");
+        assert_eq!(lines[1], "Alexandra\tFemale\t4. Senior");
+        assert_eq!(lines[2], "Andrew\tMale\t1. Freshman");
+    }
+
+    #[test]
+    fn test_format_tsv_flat_scalars() {
+        let val = json!(["apple", "banana", "cherry"]);
+        let output = format_value(&val, &OutputFormat::Tsv);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "apple");
+    }
+
+    #[test]
+    fn test_format_tsv_tab_in_value_replaced_with_space() {
+        // A tab inside a field value must be replaced with a space so it
+        // doesn't corrupt the column structure of the TSV output.
+        let val = json!([{"name": "hello\tworld"}]);
+        let output = format_value(&val, &OutputFormat::Tsv);
+        let data_line = output.lines().nth(1).unwrap_or("");
+        assert_eq!(data_line, "hello world", "tab inside value must become a space: {output}");
+    }
+
+    #[test]
+    fn test_format_tsv_escape() {
+        assert_eq!(tsv_escape("simple"), "simple");
+        assert_eq!(tsv_escape("has\ttab"), "has tab");
+        assert_eq!(tsv_escape("has\nnewline"), "has newline");
+        assert_eq!(tsv_escape("has\rreturn"), "has return");
+        assert_eq!(tsv_escape("has\r\nwindows"), "has  windows");
+    }
+
+    #[test]
+    fn test_format_value_paginated_tsv_first_page_has_header() {
+        let val = json!({
+            "files": [
+                {"id": "1", "name": "a.txt"},
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Tsv, true);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "id\tname");
+        assert_eq!(lines[1], "1\ta.txt");
+    }
+
+    #[test]
+    fn test_format_value_paginated_tsv_continuation_no_header() {
+        let val = json!({
+            "files": [
+                {"id": "2", "name": "b.txt"}
+            ]
+        });
+        let output = format_value_paginated(&val, &OutputFormat::Tsv, false);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "2\tb.txt");
+        assert!(!output.contains("id\tname"));
     }
 
     #[test]
