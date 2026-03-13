@@ -80,14 +80,21 @@ impl Helper for CalendarHelper {
                         .value_name("EMAIL")
                         .action(ArgAction::Append),
                 )
+                .arg(
+                    Arg::new("conference")
+                        .long("conference")
+                        .help("Add a Google Meet video conference link")
+                        .action(ArgAction::SetTrue),
+                )
                 .after_help("\
 EXAMPLES:
   gws calendar +insert --summary 'Standup' --start '2026-06-17T09:00:00-07:00' --end '2026-06-17T09:30:00-07:00'
   gws calendar +insert --summary 'Review' --start ... --end ... --attendee alice@example.com
+  gws calendar +insert --summary 'Sync' --start ... --end ... --conference
 
 TIPS:
   Use RFC3339 format for times (e.g. 2026-06-17T09:00:00-07:00).
-  For recurring events or conference links, use the raw API instead."),
+  Use --conference to attach a Google Meet link automatically."),
         );
         cmd = cmd.subcommand(
             Command::new("+agenda")
@@ -421,6 +428,7 @@ fn build_insert_request(
     let location = matches.get_one::<String>("location");
     let description = matches.get_one::<String>("description");
     let attendees_vals = matches.get_many::<String>("attendee");
+    let conference = matches.get_flag("conference");
 
     // Find method: events.insert checks
     let events_res = doc
@@ -451,13 +459,31 @@ fn build_insert_request(
         body["attendees"] = json!(attendees_list);
     }
 
+    if conference {
+        // Generate a unique requestId for the conference creation
+        let request_id = format!("gws-{:016x}", rand::random::<u64>());
+        body["conferenceData"] = json!({
+            "createRequest": {
+                "requestId": request_id,
+                "conferenceSolutionKey": {
+                    "type": "hangoutsMeet"
+                }
+            }
+        });
+    }
+
     let body_str = body.to_string();
     let scopes: Vec<String> = insert_method.scopes.iter().map(|s| s.to_string()).collect();
 
-    // events.insert requires 'calendarId' path parameter
-    let params = json!({
+    // events.insert requires 'calendarId' path parameter.
+    // When creating a conference, conferenceDataVersion=1 tells the API
+    // to process the conferenceData.createRequest and generate a Meet link.
+    let mut params = json!({
         "calendarId": calendar_id
     });
+    if conference {
+        params["conferenceDataVersion"] = json!(1);
+    }
     let params_str = params.to_string();
 
     Ok((params_str, body_str, scopes))
@@ -495,6 +521,11 @@ mod tests {
                 Arg::new("attendee")
                     .long("attendee")
                     .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("conference")
+                    .long("conference")
+                    .action(ArgAction::SetTrue),
             );
         cmd.try_get_matches_from(args).unwrap()
     }
@@ -577,5 +608,50 @@ mod tests {
             tomorrow_rfc.contains(&local_offset),
             "tomorrow boundary should carry local offset {local_offset}, got {tomorrow_rfc}"
         );
+    }
+
+    #[test]
+    fn test_build_insert_request_with_conference() {
+        let doc = make_mock_doc();
+        let matches = make_matches_insert(&[
+            "test",
+            "--summary",
+            "Sync",
+            "--start",
+            "2024-01-01T10:00:00Z",
+            "--end",
+            "2024-01-01T11:00:00Z",
+            "--conference",
+        ]);
+        let (params, body, _) = build_insert_request(&matches, &doc).unwrap();
+
+        let body_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let create_req = &body_json["conferenceData"]["createRequest"];
+        assert_eq!(
+            create_req["conferenceSolutionKey"]["type"],
+            "hangoutsMeet"
+        );
+        let request_id = create_req["requestId"].as_str().unwrap();
+        assert!(request_id.starts_with("gws-"));
+
+        assert!(params.contains("conferenceDataVersion"));
+    }
+
+    #[test]
+    fn test_build_insert_request_without_conference() {
+        let doc = make_mock_doc();
+        let matches = make_matches_insert(&[
+            "test",
+            "--summary",
+            "Meeting",
+            "--start",
+            "2024-01-01T10:00:00Z",
+            "--end",
+            "2024-01-01T11:00:00Z",
+        ]);
+        let (params, body, _) = build_insert_request(&matches, &doc).unwrap();
+
+        assert!(!body.contains("conferenceData"));
+        assert!(!params.contains("conferenceDataVersion"));
     }
 }
