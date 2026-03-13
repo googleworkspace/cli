@@ -36,21 +36,28 @@ pub async fn send_with_retry(
             return Ok(resp);
         }
 
-        // Parse Retry-After header (seconds), fall back to exponential backoff.
-        // Cap to MAX_RETRY_DELAY_SECS to prevent indefinite hangs.
-        let retry_after = resp
+        let header_value = resp
             .headers()
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(1 << attempt) // 1, 2, 4 seconds
-            .min(MAX_RETRY_DELAY_SECS);
+            .map(|s| s.to_string());
+        let retry_after = compute_retry_delay(header_value.as_deref(), attempt);
 
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
 
     // Final attempt — return whatever we get
     build_request().send().await
+}
+
+/// Compute the retry delay from a Retry-After header value and attempt number.
+/// Falls back to exponential backoff (1, 2, 4s) when the header is absent or
+/// unparseable. Always caps the result at MAX_RETRY_DELAY_SECS.
+fn compute_retry_delay(header_value: Option<&str>, attempt: u32) -> u64 {
+    header_value
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(1 << attempt)
+        .min(MAX_RETRY_DELAY_SECS)
 }
 
 #[cfg(test)]
@@ -63,12 +70,31 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_cap_prevents_unbounded_sleep() {
-        // A server sending Retry-After: 999999 should be capped
-        let server_value: u64 = 999_999;
-        let capped = server_value.min(MAX_RETRY_DELAY_SECS);
-        assert_eq!(capped, MAX_RETRY_DELAY_SECS);
-        // Normal values below the cap pass through unchanged
-        assert_eq!(5u64.min(MAX_RETRY_DELAY_SECS), 5);
+    fn retry_delay_caps_large_header_value() {
+        assert_eq!(compute_retry_delay(Some("999999"), 0), MAX_RETRY_DELAY_SECS);
+    }
+
+    #[test]
+    fn retry_delay_passes_through_small_header_value() {
+        assert_eq!(compute_retry_delay(Some("5"), 0), 5);
+    }
+
+    #[test]
+    fn retry_delay_falls_back_to_exponential_on_missing_header() {
+        assert_eq!(compute_retry_delay(None, 0), 1); // 2^0
+        assert_eq!(compute_retry_delay(None, 1), 2); // 2^1
+        assert_eq!(compute_retry_delay(None, 2), 4); // 2^2
+    }
+
+    #[test]
+    fn retry_delay_falls_back_on_unparseable_header() {
+        assert_eq!(compute_retry_delay(Some("not-a-number"), 1), 2);
+        assert_eq!(compute_retry_delay(Some(""), 0), 1);
+    }
+
+    #[test]
+    fn retry_delay_caps_at_boundary() {
+        assert_eq!(compute_retry_delay(Some("60"), 0), 60);
+        assert_eq!(compute_retry_delay(Some("61"), 0), MAX_RETRY_DELAY_SECS);
     }
 }

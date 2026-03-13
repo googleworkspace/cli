@@ -1223,6 +1223,31 @@ mod tests {
         assert!(body_str.contains("Binary data"));
     }
 
+    #[tokio::test]
+    async fn test_build_multipart_body_sanitizes_mime_injection() {
+        // A malicious mimeType with CRLF should be stripped to prevent
+        // MIME header injection in the multipart body.
+        let metadata = Some(json!({
+            "name": "evil.txt",
+            "mimeType": "text/plain\r\nX-Injected: malicious"
+        }));
+        let content = b"payload";
+
+        let (body, _) = build_multipart_body(&metadata, content).unwrap();
+        let body_str = String::from_utf8(body).unwrap();
+
+        // After stripping CR/LF, the Content-Type line should NOT have a
+        // line break that would create a separate injected header.
+        // The CRLF between "text/plain" and "X-Injected" is removed,
+        // so the value is concatenated into a single line.
+        assert!(
+            !body_str.contains("Content-Type: text/plain\r\nX-Injected"),
+            "CRLF injection must not produce a separate header line"
+        );
+        // Verify the sanitized mime type appears as one continuous string
+        assert!(body_str.contains("Content-Type: text/plainX-Injected: malicious"));
+    }
+
     #[test]
     fn test_build_url_basic() {
         let doc = RestDescription {
