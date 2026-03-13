@@ -30,13 +30,40 @@ pub(super) async fn handle_renew(
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
     let config = parse_renew_args(matches)?;
+    let dry_run = matches.get_flag("dry-run");
+
+    if dry_run {
+        eprintln!("🏃 DRY RUN — no changes will be made\n");
+
+        // Handle dry-run case and exit early
+        let result = if let Some(name) = config.name {
+            let name = crate::validate::validate_resource_name(&name)?;
+            eprintln!("Reactivating subscription: {name}");
+            json!({
+                "dry_run": true,
+                "action": "Would reactivate subscription",
+                "name": name,
+                "note": "Run without --dry-run to actually reactivate the subscription"
+            })
+        } else {
+            json!({
+                "dry_run": true,
+                "action": "Would list and renew subscriptions expiring within",
+                "within": config.within,
+                "note": "Run without --dry-run to actually renew subscriptions"
+            })
+        };
+        println!("{}", serde_json::to_string_pretty(&result).context("Failed to serialize dry-run output")?);
+        return Ok(());
+    }
+
+    // Real run logic
     let client = crate::client::build_client()?;
     let ws_token = auth::get_token(&[WORKSPACE_EVENTS_SCOPE])
         .await
         .map_err(|e| GwsError::Auth(format!("Failed to get token: {e}")))?;
 
     if let Some(name) = config.name {
-        // Reactivate a specific subscription
         let name = crate::validate::validate_resource_name(&name)?;
         eprintln!("Reactivating subscription: {name}");
         let resp = client
@@ -51,15 +78,9 @@ pub(super) async fn handle_renew(
             .context("Failed to reactivate subscription")?;
 
         let body: Value = resp.json().await.context("Failed to parse response")?;
-
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string_pretty(&body).context("Failed to serialize response body")?);
     } else {
         let within_secs = parse_duration(&config.within)?;
-
-        // List all subscriptions
         let resp = client
             .get("https://workspaceevents.googleapis.com/v1/subscriptions")
             .bearer_auth(&ws_token)
@@ -98,10 +119,7 @@ pub(super) async fn handle_renew(
             "status": "success",
             "renewed": renewed,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string_pretty(&result).context("Failed to serialize result")?);
     }
 
     Ok(())

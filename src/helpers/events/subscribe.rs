@@ -106,26 +106,53 @@ pub(super) async fn handle_subscribe(
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
     let config = parse_subscribe_args(matches)?;
+    let dry_run = matches.get_flag("dry-run");
+
+    if dry_run {
+        eprintln!("🏃 DRY RUN — no changes will be made\n");
+    }
 
     if let Some(ref dir) = config.output_dir {
-        std::fs::create_dir_all(dir).context("Failed to create output dir")?;
+        if !dry_run {
+            std::fs::create_dir_all(dir).context("Failed to create output dir")?;
+        }
     }
 
     let client = crate::client::build_client()?;
     let pubsub_token_provider = auth::token_provider(&[PUBSUB_SCOPE]);
 
-    // Get Pub/Sub token
-    let pubsub_token = auth::get_token(&[PUBSUB_SCOPE])
-        .await
-        .map_err(|e| GwsError::Auth(format!("Failed to get Pub/Sub token: {e}")))?;
-
     let (pubsub_subscription, topic_name, ws_subscription_name, created_resources) =
         if let Some(ref sub_name) = config.subscription {
             // Use existing subscription — no setup needed
+            // (don't fetch Pub/Sub token since we won't need it for existing subscriptions)
+            if dry_run {
+                eprintln!("Would listen to existing subscription: {}", sub_name.0);
+                let result = json!({
+                    "dry_run": true,
+                    "action": "Would listen to existing subscription",
+                    "subscription": sub_name.0,
+                    "note": "Run without --dry-run to actually start listening"
+                });
+                println!("{}", serde_json::to_string_pretty(&result).context("Failed to serialize dry-run output")?);
+                return Ok(());
+            }
             (sub_name.0.clone(), None, None, false)
         } else {
+            // Get Pub/Sub token only when creating new subscription
+            let pubsub_token = if dry_run {
+                None
+            } else {
+                Some(
+                    auth::get_token(&[PUBSUB_SCOPE])
+                        .await
+                        .map_err(|e| GwsError::Auth(format!("Failed to get Pub/Sub token: {e}")))?,
+                )
+            };
+
             // Full setup: create Pub/Sub topic + subscription + Workspace Events subscription
-            let target = config.target.clone().unwrap();
+            // Validate target before use in both dry-run and actual execution paths
+            let target = crate::validate::validate_resource_name(&config.target.clone().unwrap())?
+                .to_string();
             let project =
                 crate::validate::validate_resource_name(&config.project.clone().unwrap().0)?
                     .to_string();
@@ -139,11 +166,34 @@ pub(super) async fn handle_subscribe(
             let topic = format!("projects/{project}/topics/gws-{slug}-{suffix}");
             let sub = format!("projects/{project}/subscriptions/gws-{slug}-{suffix}");
 
+            // Dry-run: print what would be created and exit
+            if dry_run {
+                eprintln!("Would create Pub/Sub topic: {topic}");
+                eprintln!("Would create Pub/Sub subscription: {sub}");
+                eprintln!("Would create Workspace Events subscription for target: {target}");
+                eprintln!("Would listen for event types: {}", config.event_types.join(", "));
+
+                let result = json!({
+                    "dry_run": true,
+                    "action": "Would create Workspace Events subscription",
+                    "pubsub_topic": topic,
+                    "pubsub_subscription": sub,
+                    "target": target,
+                    "event_types": config.event_types,
+                    "note": "Run without --dry-run to actually create subscription"
+                });
+                println!("{}", serde_json::to_string_pretty(&result).context("Failed to serialize dry-run output")?);
+                return Ok(());
+            }
+
             // 1. Create Pub/Sub topic
             eprintln!("Creating Pub/Sub topic: {topic}");
+            let token = pubsub_token
+                .as_ref()
+                .ok_or_else(|| GwsError::Auth("Token unavailable in non-dry-run mode. This indicates a bug.".to_string()))?;
             let resp = client
                 .put(format!("{PUBSUB_API_BASE}/{topic}"))
-                .bearer_auth(&pubsub_token)
+                .bearer_auth(token)
                 .header("Content-Type", "application/json")
                 .body("{}")
                 .send()
@@ -168,7 +218,7 @@ pub(super) async fn handle_subscribe(
             });
             let resp = client
                 .put(format!("{PUBSUB_API_BASE}/{sub}"))
-                .bearer_auth(&pubsub_token)
+                .bearer_auth(token)
                 .header("Content-Type", "application/json")
                 .json(&sub_body)
                 .send()
