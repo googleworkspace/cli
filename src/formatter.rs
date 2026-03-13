@@ -344,7 +344,7 @@ fn format_csv(value: &Value) -> String {
 /// Format as CSV, optionally omitting the header row.
 fn format_csv_page(value: &Value, emit_header: bool) -> String {
     // Preserve existing behaviour: single scalar values are not CSV-escaped.
-    format_delimited_page(value, emit_header, ",", &csv_escape, false)
+    format_delimited_page(value, emit_header, ",", csv_escape, false)
 }
 
 fn format_tsv(value: &Value) -> String {
@@ -356,7 +356,7 @@ fn format_tsv(value: &Value) -> String {
 /// Pass `emit_header = false` for all pages after the first when using
 /// `--page-all`, so the combined output has a single header line.
 fn format_tsv_page(value: &Value, emit_header: bool) -> String {
-    format_delimited_page(value, emit_header, "\t", &tsv_escape, true)
+    format_delimited_page(value, emit_header, "\t", tsv_escape, true)
 }
 
 /// Shared implementation for delimiter-separated output (CSV and TSV).
@@ -365,13 +365,16 @@ fn format_tsv_page(value: &Value, emit_header: bool) -> String {
 /// `escape_single_value` — whether to escape a bare scalar value; CSV
 ///                         preserves the historical no-escape behaviour
 ///                         while TSV escapes tabs/newlines for correctness.
-fn format_delimited_page(
+fn format_delimited_page<F>(
     value: &Value,
     emit_header: bool,
     separator: &str,
-    escape_fn: &dyn Fn(&str) -> String,
+    escape_fn: F,
     escape_single_value: bool,
-) -> String {
+) -> String
+where
+    F: Fn(&str) -> String,
+{
     let items = extract_items(value);
 
     let arr = if let Some((_key, arr)) = items {
