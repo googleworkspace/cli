@@ -365,9 +365,11 @@ mod tests {
     // --- colored output tests ---
 
     #[test]
+    #[serial_test::serial]
     fn test_colorize_respects_no_color_env() {
         // NO_COLOR is the de-facto standard for disabling colors.
         // When set, colorize() should return the plain text.
+        // Uses #[serial] because it modifies a global env var.
         std::env::set_var("NO_COLOR", "1");
         let result = colorize("hello", "31");
         std::env::remove_var("NO_COLOR");
