@@ -39,9 +39,8 @@ pub async fn send_with_retry(
         let header_value = resp
             .headers()
             .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let retry_after = compute_retry_delay(header_value.as_deref(), attempt);
+            .and_then(|v| v.to_str().ok());
+        let retry_after = compute_retry_delay(header_value, attempt);
 
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
