@@ -867,6 +867,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "bytes",
  "chrono",
  "clap",
  "crossterm",
@@ -888,6 +889,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "yup-oauth2",
  "zeroize",
 ]
