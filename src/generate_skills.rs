@@ -224,8 +224,8 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                     });
                 }
             }
-        } else {
-            eprintln!("WARNING: Failed to parse personas.yaml");
+        } else if let Err(e) = serde_yml::from_str::<PersonaRegistry>(PERSONAS_YAML) {
+            eprintln!("WARNING: Failed to parse personas.yaml: {e}");
         }
     }
 
@@ -255,8 +255,8 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                     });
                 }
             }
-        } else {
-            eprintln!("WARNING: Failed to parse recipes.yaml");
+        } else if let Err(e) = serde_yml::from_str::<RecipeRegistry>(RECIPES_YAML) {
+            eprintln!("WARNING: Failed to parse recipes.yaml: {e}");
         }
     }
 
