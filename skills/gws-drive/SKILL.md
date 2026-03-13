@@ -29,8 +29,8 @@ gws drive files list --params '{"driveId": "DRIVE_ID", "corpora": "drive", "incl
 # Get a file from a Shared Drive
 gws drive files get --params '{"fileId": "FILE_ID", "supportsAllDrives": true}'
 
-# Move/copy files to a Shared Drive
-gws drive files update --params '{"fileId": "FILE_ID", "addParents": "FOLDER_ID", "supportsAllDrives": true}'
+# Move a file into a Shared Drive folder (removes from old parent)
+gws drive files update --params '{"fileId": "FILE_ID", "addParents": "SHARED_FOLDER_ID", "removeParents": "OLD_PARENT_ID", "supportsAllDrives": true}'
 ```
 
 ## Helper Commands
