@@ -41,6 +41,13 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("draft-only")
+                .long("draft-only")
+                .help("Draft-only mode: strictly intercept and block any users.messages.send or users.drafts.send requests")
+                .action(clap::ArgAction::SetTrue)
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("format")
                 .long("format")
                 .help("Output format: json (default), table, yaml, csv")

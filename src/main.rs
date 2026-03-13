@@ -219,6 +219,17 @@ async fn run() -> Result<(), GwsError> {
 
     let dry_run = matched_args.get_flag("dry-run");
 
+    let draft_only = matches.get_flag("draft-only") || matched_args.get_flag("draft-only");
+    if draft_only {
+        if let Some(ref id) = method.id {
+            if id == "gmail.users.messages.send" || id == "gmail.users.drafts.send" {
+                return Err(GwsError::Validation(
+                    "Draft-only mode is enabled. Sending emails is blocked.".to_string(),
+                ));
+            }
+        }
+    }
+
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
 

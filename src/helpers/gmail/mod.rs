@@ -579,6 +579,12 @@ pub(super) async fn send_raw_email(
     thread_id: Option<&str>,
     existing_token: Option<&str>,
 ) -> Result<(), GwsError> {
+    if matches.get_flag("draft-only") {
+        return Err(GwsError::Validation(
+            "Draft-only mode is enabled. Sending emails is blocked.".to_string(),
+        ));
+    }
+
     let body = build_raw_send_body(raw_message, thread_id);
     let body_str = body.to_string();
 
