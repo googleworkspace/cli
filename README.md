@@ -420,11 +420,11 @@ All output — success, errors, download metadata — is structured JSON.
 
 Your OAuth app is in **testing mode** and your account is not listed as a test user.
 
-**Fix:** Open the [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) in your GCP project → **Test users** → **Add users** → enter your Google account email. Then retry `gws auth login`.
+**Fix:** Open the [Google Auth Platform Audience screen](https://console.cloud.google.com/auth/audience) in your GCP project → **Test users** → **Add users** → enter your Google account email. Then retry `gws auth login`.
 
 ### "Google hasn't verified this app"
 
-Expected when your app is in testing mode. Click **Advanced** → **Go to \<app name\> (unsafe)** to proceed. This is safe for personal use; verification is only required to publish the app to other users.
+Expected when your app is in testing mode. Click **Continue** to proceed. This is safe for personal use; verification is only required to publish the app to other users.
 
 ### Too many scopes / consent screen error
 
