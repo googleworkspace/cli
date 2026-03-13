@@ -30,78 +30,109 @@ pub(super) async fn handle_renew(
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
     let config = parse_renew_args(matches)?;
+    let dry_run = matches.get_flag("dry-run");
+
+    if dry_run {
+        eprintln!("🏃 DRY RUN — no changes will be made\n");
+    }
+
     let client = crate::client::build_client()?;
-    let ws_token = auth::get_token(&[WORKSPACE_EVENTS_SCOPE])
-        .await
-        .map_err(|e| GwsError::Auth(format!("Failed to get token: {e}")))?;
+    let ws_token: Option<String> = if dry_run {
+        None
+    } else {
+        Some(
+            auth::get_token(&[WORKSPACE_EVENTS_SCOPE])
+                .await
+                .map_err(|e| GwsError::Auth(format!("Failed to get token: {e}")))?,
+        )
+    };
 
     if let Some(name) = config.name {
         // Reactivate a specific subscription
         let name = crate::validate::validate_resource_name(&name)?;
         eprintln!("Reactivating subscription: {name}");
-        let resp = client
-            .post(format!(
-                "https://workspaceevents.googleapis.com/v1/{name}:reactivate"
-            ))
-            .bearer_auth(&ws_token)
-            .header("Content-Type", "application/json")
-            .body("{}")
-            .send()
-            .await
-            .context("Failed to reactivate subscription")?;
+        
+        if !dry_run {
+            let token = ws_token.as_ref().expect("Token should be present in non-dry-run mode");
+            let resp = client
+                .post(format!(
+                    "https://workspaceevents.googleapis.com/v1/{name}:reactivate"
+                ))
+                .bearer_auth(token)
+                .header("Content-Type", "application/json")
+                .body("{}")
+                .send()
+                .await
+                .context("Failed to reactivate subscription")?;
 
-        let body: Value = resp.json().await.context("Failed to parse response")?;
+            let body: Value = resp.json().await.context("Failed to parse response")?;
 
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&body).unwrap_or_default()
-        );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&body).unwrap_or_default()
+            );
+        }
     } else {
         let within_secs = parse_duration(&config.within)?;
 
         // List all subscriptions
-        let resp = client
-            .get("https://workspaceevents.googleapis.com/v1/subscriptions")
-            .bearer_auth(&ws_token)
-            .send()
-            .await
-            .context("Failed to list subscriptions")?;
+        if !dry_run {
+            let token = ws_token.as_ref().expect("Token should be present in non-dry-run mode");
+            let resp = client
+                .get("https://workspaceevents.googleapis.com/v1/subscriptions")
+                .bearer_auth(token)
+                .send()
+                .await
+                .context("Failed to list subscriptions")?;
 
-        let body: Value = resp.json().await.context("Failed to parse response")?;
+            let body: Value = resp.json().await.context("Failed to parse response")?;
 
-        let mut renewed = 0;
-        if let Some(subs) = body.get("subscriptions").and_then(|s| s.as_array()) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+            let mut renewed = 0;
+            if let Some(subs) = body.get("subscriptions").and_then(|s| s.as_array()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
-            let to_renew = filter_subscriptions_to_renew(subs, now, within_secs);
+                let to_renew = filter_subscriptions_to_renew(subs, now, within_secs);
 
-            for name in to_renew {
-                let name = crate::validate::validate_resource_name(&name)?;
-                eprintln!("Renewing {name}...");
-                let _ = client
-                    .post(format!(
-                        "https://workspaceevents.googleapis.com/v1/{name}:reactivate"
-                    ))
-                    .bearer_auth(&ws_token)
-                    .header("Content-Type", "application/json")
-                    .body("{}")
-                    .send()
-                    .await;
-                renewed += 1;
+                for name in to_renew {
+                    let name = crate::validate::validate_resource_name(&name)?;
+                    eprintln!("Renewing {name}...");
+                    let _ = client
+                        .post(format!(
+                            "https://workspaceevents.googleapis.com/v1/{name}:reactivate"
+                        ))
+                        .bearer_auth(token)
+                        .header("Content-Type", "application/json")
+                        .body("{}")
+                        .send()
+                        .await;
+                    renewed += 1;
+                }
             }
-        }
 
-        let result = json!({
-            "status": "success",
-            "renewed": renewed,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        );
+            let result = json!({
+                "status": "success",
+                "renewed": renewed,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).unwrap_or_default()
+            );
+        } else {
+            // In dry-run mode, just print what would happen
+            let result = json!({
+                "dry_run": true,
+                "action": "Would list and renew subscriptions expiring within",
+                "within": config.within,
+                "note": "Run without --dry-run to actually renew subscriptions"
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).unwrap_or_default()
+            );
+        }
     }
 
     Ok(())
