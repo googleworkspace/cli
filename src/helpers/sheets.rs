@@ -102,7 +102,7 @@ TIPS:
     ) -> Pin<Box<dyn Future<Output = Result<bool, GwsError>> + Send + 'a>> {
         Box::pin(async move {
             if let Some(matches) = matches.subcommand_matches("+append") {
-                let config = parse_append_args(matches);
+                let config = parse_append_args(matches)?;
                 let (params_str, body_str, scopes) = build_append_request(&config, doc)?;
 
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
@@ -259,6 +259,7 @@ fn build_read_request(
 /// Configuration for appending values to a spreadsheet.
 ///
 /// Holds the parsed arguments for the `+append` subcommand.
+#[derive(Debug)]
 pub struct AppendConfig {
     /// The ID of the spreadsheet to append to.
     pub spreadsheet_id: String,
@@ -269,7 +270,8 @@ pub struct AppendConfig {
 /// Parses arguments for the `+append` command.
 ///
 /// Supports both `--values` (single row) and `--json-values` (single or multi-row).
-pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
+/// Returns a validation error if `--json-values` contains invalid JSON.
+pub fn parse_append_args(matches: &ArgMatches) -> Result<AppendConfig, GwsError> {
     let values = if let Some(json_str) = matches.get_one::<String>("json-values") {
         // Try parsing as array-of-arrays (multi-row) first
         if let Ok(parsed) = serde_json::from_str::<Vec<Vec<String>>>(json_str) {
@@ -278,10 +280,9 @@ pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
             // Single flat array — treat as one row
             vec![parsed]
         } else {
-            eprintln!(
-                "Warning: --json-values is not valid JSON; expected an array or array-of-arrays"
-            );
-            Vec::new()
+            return Err(GwsError::Validation(format!(
+                "--json-values is not valid JSON: expected an array like '[\"a\",\"b\"]' or array-of-arrays like '[[\"a\",\"b\"],[\"c\",\"d\"]]'."
+            )));
         }
     } else if let Some(values_str) = matches.get_one::<String>("values") {
         vec![values_str.split(',').map(|s| s.to_string()).collect()]
@@ -289,10 +290,10 @@ pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
         Vec::new()
     };
 
-    AppendConfig {
+    Ok(AppendConfig {
         spreadsheet_id: matches.get_one::<String>("spreadsheet").unwrap().clone(),
         values,
-    }
+    })
 }
 
 /// Configuration for reading values from a spreadsheet.
@@ -397,7 +398,7 @@ mod tests {
     #[test]
     fn test_parse_append_args_values() {
         let matches = make_matches_append(&["test", "--spreadsheet", "123", "--values", "a,b,c"]);
-        let config = parse_append_args(&matches);
+        let config = parse_append_args(&matches).unwrap();
         assert_eq!(config.spreadsheet_id, "123");
         assert_eq!(config.values, vec![vec!["a", "b", "c"]]);
     }
@@ -411,7 +412,7 @@ mod tests {
             "--json-values",
             r#"["a","b","c"]"#,
         ]);
-        let config = parse_append_args(&matches);
+        let config = parse_append_args(&matches).unwrap();
         assert_eq!(config.values, vec![vec!["a", "b", "c"]]);
     }
 
@@ -424,7 +425,7 @@ mod tests {
             "--json-values",
             r#"[["Alice","100"],["Bob","200"]]"#,
         ]);
-        let config = parse_append_args(&matches);
+        let config = parse_append_args(&matches).unwrap();
         assert_eq!(
             config.values,
             vec![vec!["Alice", "100"], vec!["Bob", "200"]]
@@ -447,6 +448,36 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(values[0], json!(["Alice", "100"]));
         assert_eq!(values[1], json!(["Bob", "200"]));
+    }
+
+    #[test]
+    fn test_parse_append_args_json_valid() {
+        let matches = make_matches_append(&[
+            "test",
+            "--spreadsheet",
+            "123",
+            "--json-values",
+            r#"["a","b","c"]"#,
+        ]);
+        let config = parse_append_args(&matches).unwrap();
+        assert_eq!(config.values, vec![vec!["a", "b", "c"]]);
+    }
+
+    #[test]
+    fn test_parse_append_args_json_invalid_returns_error() {
+        let matches = make_matches_append(&[
+            "test",
+            "--spreadsheet",
+            "123",
+            "--json-values",
+            "not valid json",
+        ]);
+        let err = parse_append_args(&matches).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--json-values is not valid JSON"),
+            "expected JSON error message, got: {msg}"
+        );
     }
 
     #[test]
