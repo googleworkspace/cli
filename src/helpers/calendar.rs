@@ -595,6 +595,9 @@ mod tests {
         let tomorrow_start = today_start_local + chrono::Duration::days(1);
         let tomorrow_rfc = tomorrow_start.to_rfc3339();
 
+        // The local offset should appear in the RFC3339 string (e.g. -07:00, +05:30).
+        // If the code were using UTC, the string would end with +00:00 (unless
+        // the machine is actually in UTC, in which case this test is a no-op).
         let local_offset = local_now.format("%:z").to_string();
         assert!(
             today_rfc.contains(&local_offset),
