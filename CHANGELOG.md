@@ -1,5 +1,19 @@
 # @googleworkspace/cli
 
+## 0.13.3
+
+### Patch Changes
+
+- 8ef27a2: fix(calendar): use local timezone for agenda day boundaries instead of UTC
+- 4d7b420: Fix `+append --json-values` flattening multi-row arrays into a single row by preserving the `Vec<Vec<String>>` row structure through to the API request body
+- bb94016: fix(security): validate space name in chat +send to prevent path traversal
+- 4b827cd: chore: fix maintainer email typo in flake.nix and harden coverage.sh
+- 44767ed: Map People service to `contacts` and `directory` scope prefixes so `gws auth login -s people` includes the required OAuth scopes
+- 8fce003: fix(docs): correct flag names in recipes (--spreadsheet-id, --attendees, --duration)
+- 21b1840: Expose `repeated: true` in `gws schema` output and expand JSON arrays into repeated query parameters for `repeated` fields
+- 1346d47: Sync generated skills with latest Google Discovery API specs
+- 957b999: test(gmail): add unit tests for +triage argument parsing and format selection
+
 ## 0.13.2
 
 ### Patch Changes
