@@ -422,7 +422,10 @@ pub async fn execute_method(
         )
         .await?;
 
+        let method_id = method.id.as_deref().unwrap_or("unknown");
+        let start = std::time::Instant::now();
         let response = request.send().await.context("HTTP request failed")?;
+        let latency_ms = start.elapsed().as_millis() as u64;
 
         let status = response.status();
         let content_type = response
@@ -434,8 +437,26 @@ pub async fn execute_method(
 
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
+            tracing::warn!(
+                api_method = method_id,
+                http_method = %method.http_method,
+                status = status.as_u16(),
+                latency_ms = latency_ms,
+                "API error"
+            );
             return handle_error_response(status, &error_body, &auth_method);
         }
+
+        tracing::debug!(
+            api_method = method_id,
+            http_method = %method.http_method,
+            status = status.as_u16(),
+            latency_ms = latency_ms,
+            content_type = %content_type,
+            is_upload = input.is_upload,
+            page = pages_fetched,
+            "API request"
+        );
 
         let is_json =
             content_type.contains("application/json") || content_type.contains("text/json");

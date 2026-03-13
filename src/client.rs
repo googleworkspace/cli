@@ -41,6 +41,13 @@ pub async fn send_with_retry(
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(1 << attempt); // 1, 2, 4 seconds
 
+        tracing::debug!(
+            attempt = attempt + 1,
+            max_retries = MAX_RETRIES,
+            retry_after_secs = retry_after,
+            "Rate limited, retrying"
+        );
+
         tokio::time::sleep(std::time::Duration::from_secs(retry_after)).await;
     }
 

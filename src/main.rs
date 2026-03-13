@@ -31,6 +31,7 @@ mod formatter;
 mod fs_util;
 mod generate_skills;
 mod helpers;
+mod logging;
 mod oauth_config;
 mod schema;
 mod services;
@@ -46,6 +47,9 @@ use error::{print_error_json, GwsError};
 async fn main() {
     // Load .env file if present (silently ignored if missing)
     let _ = dotenvy::dotenv();
+
+    // Initialize structured logging (no-op if env vars are unset)
+    logging::init_logging();
 
     if let Err(err) = run().await {
         print_error_json(&err);
@@ -465,6 +469,10 @@ fn print_usage() {
     );
     println!(
         "    GOOGLE_WORKSPACE_PROJECT_ID              Override the GCP project ID for quota and billing"
+    );
+    println!("    GOOGLE_WORKSPACE_CLI_LOG                 Log level for stderr (e.g., gws=debug)");
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_LOG_FILE            Directory for JSON log files (daily rotation)"
     );
     println!();
     println!("EXIT CODES:");

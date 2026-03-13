@@ -207,6 +207,7 @@ pub async fn fetch_discovery_document(
                 if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
                     let data = std::fs::read_to_string(&cache_file)?;
                     let doc: RestDescription = serde_json::from_str(&data)?;
+                    tracing::debug!(service = %service, version = %version, "Discovery cache hit");
                     return Ok(doc);
                 }
             }
@@ -219,6 +220,7 @@ pub async fn fetch_discovery_document(
         crate::validate::encode_path_segment(version),
     );
 
+    tracing::debug!(service = %service, version = %version, "Fetching discovery document");
     let client = crate::client::build_client()?;
     let resp = client.get(&url).send().await?;
 

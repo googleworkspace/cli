@@ -56,6 +56,7 @@ The CLI uses a **two-phase argument parsing** strategy:
 | `src/executor.rs`         | HTTP request construction, response handling, schema validation                           |
 | `src/schema.rs`           | `gws schema` command — introspect API method schemas                                      |
 | `src/error.rs`            | Structured JSON error output                                                              |
+| `src/logging.rs`          | Opt-in structured logging (stderr + file) via `tracing`                                   |
 
 ## Demo Videos
 
@@ -201,5 +202,12 @@ Use these labels to categorize pull requests and issues:
 | Variable | Description |
 |---|---|
 | `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing and fallback for helper commands (overridden by `--project` flag) |
+
+### Logging
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WORKSPACE_CLI_LOG` | Log level filter for stderr output (e.g., `gws=debug`). Off by default. |
+| `GOOGLE_WORKSPACE_CLI_LOG_FILE` | Directory for JSON-line log files with daily rotation. Off by default. |
 
 All variables can also live in a `.env` file (loaded via `dotenvy`).
