@@ -108,7 +108,12 @@ TIPS:
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
                 let (token, auth_method) = match auth::get_token(&scope_strs).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                    Err(_) => (None, executor::AuthMethod::None),
+                    Err(_) if matches.get_flag("dry-run") => {
+                        (None, executor::AuthMethod::None)
+                    }
+                    Err(e) => {
+                        return Err(GwsError::Auth(format!("Sheets auth failed: {e}")))
+                    }
                 };
 
                 let spreadsheets_res = doc.resources.get("spreadsheets").ok_or_else(|| {
@@ -167,7 +172,12 @@ TIPS:
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
                 let (token, auth_method) = match auth::get_token(&scope_strs).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                    Err(_) => (None, executor::AuthMethod::None),
+                    Err(_) if matches.get_flag("dry-run") => {
+                        (None, executor::AuthMethod::None)
+                    }
+                    Err(e) => {
+                        return Err(GwsError::Auth(format!("Sheets auth failed: {e}")))
+                    }
                 };
 
                 executor::execute_method(

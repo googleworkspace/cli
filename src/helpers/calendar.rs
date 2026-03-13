@@ -151,7 +151,12 @@ TIPS:
                 let scopes_str: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
                 let (token, auth_method) = match auth::get_token(&scopes_str).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                    Err(_) => (None, executor::AuthMethod::None),
+                    Err(_) if matches.get_flag("dry-run") => {
+                        (None, executor::AuthMethod::None)
+                    }
+                    Err(e) => {
+                        return Err(GwsError::Auth(format!("Calendar auth failed: {e}")))
+                    }
                 };
 
                 let events_res = doc.resources.get("events").ok_or_else(|| {

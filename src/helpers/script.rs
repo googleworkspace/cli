@@ -105,7 +105,12 @@ TIPS:
                 let scopes: Vec<&str> = update_method.scopes.iter().map(|s| s.as_str()).collect();
                 let (token, auth_method) = match auth::get_token(&scopes).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                    Err(_) => (None, executor::AuthMethod::None),
+                    Err(_) if matches.get_flag("dry-run") => {
+                        (None, executor::AuthMethod::None)
+                    }
+                    Err(e) => {
+                        return Err(GwsError::Auth(format!("Script auth failed: {e}")))
+                    }
                 };
 
                 let params = json!({
