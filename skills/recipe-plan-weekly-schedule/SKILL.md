@@ -21,6 +21,6 @@ Review your Google Calendar week, identify gaps, and add events to fill them.
 
 1. Check this week's agenda: `gws calendar +agenda`
 2. Check free/busy for the week: `gws calendar freebusy query --json '{"timeMin": "2025-01-20T00:00:00Z", "timeMax": "2025-01-25T00:00:00Z", "items": [{"id": "primary"}]}'`
-3. Add a new event: `gws calendar +insert --summary 'Deep Work Block' --start '2025-01-21T14:00' --duration 120`
+3. Add a new event: `gws calendar +insert --summary 'Deep Work Block' --start '2026-01-21T14:00:00' --end '2026-01-21T16:00:00'`
 4. Review updated schedule: `gws calendar +agenda`
 
