@@ -1598,6 +1598,21 @@ fn prompt_login_after_setup() -> Result<bool, GwsError> {
 
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
+    // Early-return for --help/-h so we never start the wizard or check for gcloud.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "Usage: gws auth setup [options]\n\n\
+             Configure a GCP project, enable Workspace APIs, and create OAuth\n\
+             credentials — all in one guided wizard.\n\n\
+             Options:\n\
+             \x20 --project <ID>  Use an existing GCP project instead of creating one\n\
+             \x20 --dry-run       Show what would be done without making changes\n\
+             \x20 --login         Run `gws auth login` after successful setup\n\
+             \x20 -h, --help      Show this help message"
+        );
+        return Ok(());
+    }
+
     let opts = parse_setup_args(args);
     let dry_run = opts.dry_run;
     let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin()) && !dry_run;
@@ -2311,5 +2326,25 @@ mod tests {
         } else {
             assert_eq!(bin, "gcloud");
         }
+    }
+
+    #[tokio::test]
+    async fn run_setup_help_flag_returns_ok_without_starting_wizard() {
+        // --help should print usage and return Ok without requiring gcloud.
+        let result = run_setup(&["--help".to_string()]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_setup_short_help_flag_returns_ok() {
+        let result = run_setup(&["-h".to_string()]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_setup_help_with_other_args_returns_ok() {
+        // --help should take priority even when combined with other flags.
+        let result = run_setup(&["--project".to_string(), "my-proj".to_string(), "--help".to_string()]).await;
+        assert!(result.is_ok());
     }
 }
