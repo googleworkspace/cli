@@ -277,17 +277,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
 
     // Today's time range using local timezone so boundaries align with the
     // user's wall-clock day, not UTC midnight.
-    use chrono::{Local, NaiveTime, TimeZone};
-
-    let local_now = Local::now();
-    let today_start = local_now
-        .date_naive()
-        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    let today_start_local = Local
-        .from_local_datetime(&today_start)
-        .earliest()
-        .unwrap_or(local_now);
-    let today_end_local = today_start_local + chrono::Duration::days(1);
+    let (today_start_local, today_end_local) = local_today_boundaries();
 
     let time_min = today_start_local.to_rfc3339();
     let time_max = today_end_local.to_rfc3339();
@@ -362,7 +352,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         "meetingCount": meetings.len(),
         "tasks": open_tasks,
         "taskCount": open_tasks.len(),
-        "date": local_now.format("%Y-%m-%d").to_string(),
+        "date": today_start_local.format("%Y-%m-%d").to_string(),
     });
 
     format_and_print(&output, matches);
@@ -697,6 +687,25 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
 // Utilities
 // ---------------------------------------------------------------------------
 
+/// Returns (start_of_today, end_of_today) in the local timezone.
+///
+/// Uses `chrono::Local` to derive midnight boundaries from the user's
+/// wall-clock time. Handles DST transitions via `.earliest()`.
+fn local_today_boundaries() -> (chrono::DateTime<chrono::Local>, chrono::DateTime<chrono::Local>) {
+    use chrono::{Local, NaiveTime, TimeZone};
+
+    let local_now = Local::now();
+    let today_midnight = local_now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let today_start = Local
+        .from_local_datetime(&today_midnight)
+        .earliest()
+        .expect("midnight should be representable in the local timezone");
+    let today_end = today_start + chrono::Duration::days(1);
+    (today_start, today_end)
+}
+
 fn epoch_to_rfc3339(epoch: u64) -> String {
     use chrono::{TimeZone, Utc};
     Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
@@ -735,34 +744,22 @@ mod tests {
     }
 
     #[test]
-    fn test_standup_today_boundaries_use_local_timezone() {
-        // Verify that the local-day calculation produces boundaries that
+    fn test_local_today_boundaries() {
+        // Verify that the shared helper produces boundaries that
         // contain "now" and span exactly 24 hours.
-        use chrono::{Local, NaiveTime, TimeZone};
-
-        let local_now = Local::now();
-        let today_start = local_now
-            .date_naive()
-            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-        let today_start_local = Local
-            .from_local_datetime(&today_start)
-            .earliest()
-            .unwrap_or(local_now);
-        let today_end_local = today_start_local + chrono::Duration::days(1);
+        let local_now = chrono::Local::now();
+        let (start, end) = local_today_boundaries();
 
         // "now" must fall within [start, end)
-        assert!(local_now >= today_start_local);
-        assert!(local_now < today_end_local);
+        assert!(local_now >= start);
+        assert!(local_now < end);
 
         // The span must be exactly 24 hours (86400 seconds)
-        let span = today_end_local
-            .signed_duration_since(today_start_local)
-            .num_seconds();
+        let span = end.signed_duration_since(start).num_seconds();
         assert_eq!(span, 86400);
 
-        // The RFC 3339 output must include the local offset, not "+00:00"
-        // (unless the machine is actually in UTC)
-        let rfc = today_start_local.to_rfc3339();
+        // The RFC 3339 output must include the local offset
+        let rfc = start.to_rfc3339();
         assert!(rfc.contains('T'));
     }
 
