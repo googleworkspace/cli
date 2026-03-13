@@ -763,12 +763,17 @@ fn build_multipart_body(
 ) -> Result<(Vec<u8>, String), GwsError> {
     let boundary = format!("gws_boundary_{:016x}", rand::random::<u64>());
 
-    // Determine the media MIME type from the metadata's mimeType field, or fall back
-    let media_mime = metadata
+    // Determine the media MIME type from the metadata's mimeType field, or fall back.
+    // Strip CR/LF to prevent MIME header injection via user-controlled mimeType.
+    let media_mime_raw = metadata
         .as_ref()
         .and_then(|m| m.get("mimeType"))
         .and_then(|v| v.as_str())
         .unwrap_or("application/octet-stream");
+    let media_mime: String = media_mime_raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
 
     // Build multipart/related body
     let metadata_json = metadata
@@ -1244,6 +1249,31 @@ mod tests {
         assert!(body_str.contains(boundary));
         assert!(body_str.contains("application/octet-stream")); // Fallback mime
         assert!(body_str.contains("Binary data"));
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_body_sanitizes_mime_injection() {
+        // A malicious mimeType with CRLF should be stripped to prevent
+        // MIME header injection in the multipart body.
+        let metadata = Some(json!({
+            "name": "evil.txt",
+            "mimeType": "text/plain\r\nX-Injected: malicious"
+        }));
+        let content = b"payload";
+
+        let (body, _) = build_multipart_body(&metadata, content).unwrap();
+        let body_str = String::from_utf8(body).unwrap();
+
+        // After stripping CR/LF, the Content-Type line should NOT have a
+        // line break that would create a separate injected header.
+        // The CRLF between "text/plain" and "X-Injected" is removed,
+        // so the value is concatenated into a single line.
+        assert!(
+            !body_str.contains("Content-Type: text/plain\r\nX-Injected"),
+            "CRLF injection must not produce a separate header line"
+        );
+        // Verify the sanitized mime type appears as one continuous string
+        assert!(body_str.contains("Content-Type: text/plainX-Injected: malicious"));
     }
 
     #[test]
