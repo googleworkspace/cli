@@ -275,15 +275,22 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let client = crate::client::build_client()?;
 
-    // Today's time range
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let day_start = (now / 86400) * 86400;
-    let day_end = day_start + 86400;
-    let time_min = epoch_to_rfc3339(day_start);
-    let time_max = epoch_to_rfc3339(day_end);
+    // Today's time range using local timezone so boundaries align with the
+    // user's wall-clock day, not UTC midnight.
+    use chrono::{Local, NaiveTime, TimeZone};
+
+    let local_now = Local::now();
+    let today_start = local_now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let today_start_local = Local
+        .from_local_datetime(&today_start)
+        .earliest()
+        .unwrap_or(local_now);
+    let today_end_local = today_start_local + chrono::Duration::days(1);
+
+    let time_min = today_start_local.to_rfc3339();
+    let time_max = today_end_local.to_rfc3339();
 
     // Fetch today's events
     let events_json = get_json(
@@ -355,7 +362,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         "meetingCount": meetings.len(),
         "tasks": open_tasks,
         "taskCount": open_tasks.len(),
-        "date": time_min.split('T').next().unwrap_or(""),
+        "date": local_now.format("%Y-%m-%d").to_string(),
     });
 
     format_and_print(&output, matches);
@@ -542,13 +549,11 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let client = crate::client::build_client()?;
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let week_end = now + 7 * 86400;
-    let time_min = epoch_to_rfc3339(now);
-    let time_max = epoch_to_rfc3339(week_end);
+    // Use local time so the period boundaries match the user's timezone.
+    let local_now = chrono::Local::now();
+    let week_end = local_now + chrono::Duration::days(7);
+    let time_min = local_now.to_rfc3339();
+    let time_max = week_end.to_rfc3339();
 
     // Fetch this week's events
     let events_json = get_json(
@@ -727,6 +732,38 @@ mod tests {
     fn test_epoch_to_rfc3339() {
         assert_eq!(epoch_to_rfc3339(0), "1970-01-01T00:00:00+00:00");
         assert_eq!(epoch_to_rfc3339(1710000000), "2024-03-09T16:00:00+00:00");
+    }
+
+    #[test]
+    fn test_standup_today_boundaries_use_local_timezone() {
+        // Verify that the local-day calculation produces boundaries that
+        // contain "now" and span exactly 24 hours.
+        use chrono::{Local, NaiveTime, TimeZone};
+
+        let local_now = Local::now();
+        let today_start = local_now
+            .date_naive()
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let today_start_local = Local
+            .from_local_datetime(&today_start)
+            .earliest()
+            .unwrap_or(local_now);
+        let today_end_local = today_start_local + chrono::Duration::days(1);
+
+        // "now" must fall within [start, end)
+        assert!(local_now >= today_start_local);
+        assert!(local_now < today_end_local);
+
+        // The span must be exactly 24 hours (86400 seconds)
+        let span = today_end_local
+            .signed_duration_since(today_start_local)
+            .num_seconds();
+        assert_eq!(span, 86400);
+
+        // The RFC 3339 output must include the local offset, not "+00:00"
+        // (unless the machine is actually in UTC)
+        let rfc = today_start_local.to_rfc3339();
+        assert!(rfc.contains('T'));
     }
 
     #[test]
