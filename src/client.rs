@@ -20,6 +20,9 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
 }
 
 const MAX_RETRIES: u32 = 3;
+/// Maximum seconds to sleep on a 429 Retry-After header. Prevents a hostile
+/// or misconfigured server from hanging the process indefinitely.
+const MAX_RETRY_DELAY_SECS: u64 = 60;
 
 /// Send an HTTP request with automatic retry on 429 (rate limit) responses.
 /// Respects the `Retry-After` header; falls back to exponential backoff (1s, 2s, 4s).
@@ -34,9 +37,7 @@ pub async fn send_with_retry(
         }
 
         // Parse Retry-After header (seconds), fall back to exponential backoff.
-        // Cap at 60 seconds to prevent a hostile server from hanging the process
-        // indefinitely — especially important when the CLI is invoked by AI agents.
-        const MAX_RETRY_DELAY_SECS: u64 = 60;
+        // Cap to MAX_RETRY_DELAY_SECS to prevent indefinite hangs.
         let retry_after = resp
             .headers()
             .get("retry-after")
@@ -63,12 +64,10 @@ mod tests {
 
     #[test]
     fn retry_after_cap_prevents_unbounded_sleep() {
-        // Verify the cap constant is reasonable
-        const MAX_RETRY_DELAY_SECS: u64 = 60;
-        // A server sending Retry-After: 999999 should be capped to 60
+        // A server sending Retry-After: 999999 should be capped
         let server_value: u64 = 999_999;
         let capped = server_value.min(MAX_RETRY_DELAY_SECS);
-        assert_eq!(capped, 60);
+        assert_eq!(capped, MAX_RETRY_DELAY_SECS);
         // Normal values below the cap pass through unchanged
         assert_eq!(5u64.min(MAX_RETRY_DELAY_SECS), 5);
     }
