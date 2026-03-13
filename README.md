@@ -296,6 +296,8 @@ gws sheets spreadsheets values append \
 
 Some services ship hand-crafted helper commands alongside the auto-generated Discovery surface. Helper commands are prefixed with `+` so they are visually distinct and never collide with Discovery-generated method names.
 
+Time-aware helpers (`+agenda`, `+standup-report`, `+weekly-digest`, `+meeting-prep`) automatically use your **Google account timezone** (fetched from Calendar Settings API and cached for 24 hours). Override with `--timezone`/`--tz` on `+agenda`, or set the `--timezone` flag for explicit control.
+
 Run `gws <service> --help` to see both Discovery methods and helper commands together.
 
 ```bash
@@ -320,7 +322,7 @@ gws drive --help      # shows +upload …
 | `chat` | `+send` | Send a message to a space |
 | `drive` | `+upload` | Upload a file with automatic metadata |
 | `calendar` | `+insert` | Create a new event |
-| `calendar` | `+agenda` | Show upcoming events across all calendars |
+| `calendar` | `+agenda` | Show upcoming events (uses Google account timezone; override with `--timezone`) |
 | `script` | `+push` | Replace all files in an Apps Script project with local files |
 | `workflow` | `+standup-report` | Today's meetings + open tasks as a standup summary |
 | `workflow` | `+meeting-prep` | Prepare for your next meeting: agenda, attendees, and linked docs |
@@ -353,6 +355,9 @@ gws drive +upload ./report.pdf --name "Q1 Report"
 
 # Morning standup summary
 gws workflow +standup-report
+
+# Show today's agenda in a specific timezone
+gws calendar +agenda --today --timezone America/New_York
 ```
 
 ### Model Armor (Response Sanitization)

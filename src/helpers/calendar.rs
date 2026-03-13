@@ -122,6 +122,13 @@ TIPS:
                         .help("Filter to specific calendar name or ID")
                         .value_name("NAME"),
                 )
+                .arg(
+                    Arg::new("timezone")
+                        .long("timezone")
+                        .alias("tz")
+                        .help("IANA timezone override (e.g. America/Denver). Defaults to Google account timezone.")
+                        .value_name("TZ"),
+                )
                 .after_help(
                     "\
 EXAMPLES:
@@ -129,10 +136,12 @@ EXAMPLES:
   gws calendar +agenda --today
   gws calendar +agenda --week --format table
   gws calendar +agenda --days 3 --calendar 'Work'
+  gws calendar +agenda --today --timezone America/New_York
 
 TIPS:
   Read-only — never modifies events.
-  Queries all calendars by default; use --calendar to filter.",
+  Queries all calendars by default; use --calendar to filter.
+  Uses your Google account timezone by default; override with --timezone.",
                 ),
         );
         cmd
@@ -201,21 +210,14 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|s| crate::formatter::OutputFormat::from_str(s))
         .unwrap_or(crate::formatter::OutputFormat::Table);
 
-    // Determine time range using the local timezone so that --today and
-    // --tomorrow align with the user's wall-clock day, not UTC.
-    use chrono::{Local, NaiveTime, TimeZone};
+    let client = crate::client::build_client()?;
+    let tz_override = matches.get_one::<String>("timezone").map(|s| s.as_str());
+    let tz = crate::timezone::resolve_account_timezone(&client, &token, tz_override).await?;
 
-    let local_now = Local::now();
-    let today_start = local_now
-        .date_naive()
-        .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    // Use .earliest() to handle DST transitions where midnight may be
-    // ambiguous or non-existent. Falls back to current time if resolution
-    // fails entirely (should not happen for midnight in practice).
-    let today_start_local = Local
-        .from_local_datetime(&today_start)
-        .earliest()
-        .unwrap_or(local_now);
+    // Determine time range using the account timezone so that --today and
+    // --tomorrow align with the user's Google account day, not the machine.
+    let now_in_tz = chrono::Utc::now().with_timezone(&tz);
+    let today_start_tz = crate::timezone::start_of_today(tz)?;
 
     let days: i64 = if matches.get_flag("tomorrow") {
         1
@@ -229,24 +231,24 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     };
 
     let (time_min_dt, time_max_dt) = if matches.get_flag("today") {
-        // Today: local midnight to local midnight+1
-        let end = today_start_local + chrono::Duration::days(1);
-        (today_start_local, end)
+        // Today: account tz midnight to midnight+1
+        let end = today_start_tz + chrono::Duration::days(1);
+        (today_start_tz, end)
     } else if matches.get_flag("tomorrow") {
-        // Tomorrow: local midnight+1 to local midnight+2
-        let start = today_start_local + chrono::Duration::days(1);
-        let end = today_start_local + chrono::Duration::days(2);
+        // Tomorrow: account tz midnight+1 to midnight+2
+        let start = today_start_tz + chrono::Duration::days(1);
+        let end = today_start_tz + chrono::Duration::days(2);
         (start, end)
     } else {
         // From now, N days ahead
-        let end = local_now + chrono::Duration::days(days);
-        (local_now, end)
+        let end = now_in_tz + chrono::Duration::days(days);
+        (now_in_tz, end)
     };
 
     let time_min = time_min_dt.to_rfc3339();
     let time_max = time_max_dt.to_rfc3339();
 
-    let client = crate::client::build_client()?;
+    // client already built above for timezone resolution
     let calendar_filter = matches.get_one::<String>("calendar");
 
     // 1. List all calendars
@@ -547,35 +549,35 @@ mod tests {
         assert!(body.contains("c@d.com"));
     }
 
-    /// Verify that agenda day boundaries use local timezone offsets, not UTC.
+    /// Verify that agenda day boundaries use a specific timezone, not UTC.
     #[test]
-    fn agenda_day_boundaries_use_local_timezone() {
-        use chrono::{Local, NaiveTime, TimeZone};
+    fn agenda_day_boundaries_use_account_timezone() {
+        use chrono::{NaiveTime, TimeZone, Utc};
 
-        let local_now = Local::now();
-        let today_start = local_now
+        // Simulate using a known account timezone (America/Denver = UTC-7 / UTC-6 DST)
+        let tz = chrono_tz::America::Denver;
+        let now_in_tz = Utc::now().with_timezone(&tz);
+        let today_start = now_in_tz
             .date_naive()
             .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-        let today_start_local = Local
+        let today_start_tz = tz
             .from_local_datetime(&today_start)
             .earliest()
-            .unwrap_or(local_now.into());
+            .expect("midnight should resolve");
 
-        let today_rfc = today_start_local.to_rfc3339();
-        let tomorrow_start = today_start_local + chrono::Duration::days(1);
+        let today_rfc = today_start_tz.to_rfc3339();
+        let tomorrow_start = today_start_tz + chrono::Duration::days(1);
         let tomorrow_rfc = tomorrow_start.to_rfc3339();
 
-        // The local offset should appear in the RFC3339 string (e.g. -07:00, +05:30).
-        // If the code were using UTC, the string would end with +00:00 (unless
-        // the machine is actually in UTC, in which case this test is a no-op).
-        let local_offset = local_now.format("%:z").to_string();
+        // The Denver offset should appear in the RFC3339 string (-07:00 or -06:00 for DST).
+        // Crucially, it should NOT be +00:00 (UTC).
         assert!(
-            today_rfc.contains(&local_offset),
-            "today boundary should carry local offset {local_offset}, got {today_rfc}"
+            today_rfc.contains("-07:00") || today_rfc.contains("-06:00"),
+            "today boundary should carry Denver offset, got {today_rfc}"
         );
         assert!(
-            tomorrow_rfc.contains(&local_offset),
-            "tomorrow boundary should carry local offset {local_offset}, got {tomorrow_rfc}"
+            tomorrow_rfc.contains("-07:00") || tomorrow_rfc.contains("-06:00"),
+            "tomorrow boundary should carry Denver offset, got {tomorrow_rfc}"
         );
     }
 }

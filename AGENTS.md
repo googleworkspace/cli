@@ -57,6 +57,7 @@ The CLI uses a **two-phase argument parsing** strategy:
 | `src/schema.rs`           | `gws schema` command — introspect API method schemas                                      |
 | `src/error.rs`            | Structured JSON error output                                                              |
 | `src/logging.rs`          | Opt-in structured logging (stderr + file) via `tracing`                                   |
+| `src/timezone.rs`         | Account timezone resolution: `--timezone` flag, Calendar Settings API, 24h cache           |
 
 ## Demo Videos
 

@@ -1191,6 +1191,9 @@ fn handle_logout() -> Result<(), GwsError> {
         }
     }
 
+    // Invalidate cached account timezone (may belong to old account)
+    crate::timezone::invalidate_cache();
+
     let output = if removed.is_empty() {
         json!({
             "status": "success",

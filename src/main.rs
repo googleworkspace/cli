@@ -38,6 +38,7 @@ mod services;
 mod setup;
 mod setup_tui;
 mod text;
+mod timezone;
 mod token_storage;
 pub(crate) mod validate;
 

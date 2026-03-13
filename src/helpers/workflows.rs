@@ -275,15 +275,13 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let client = crate::client::build_client()?;
 
-    // Today's time range
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let day_start = (now / 86400) * 86400;
-    let day_end = day_start + 86400;
-    let time_min = epoch_to_rfc3339(day_start);
-    let time_max = epoch_to_rfc3339(day_end);
+    // Resolve account timezone for day boundaries
+    let tz = crate::timezone::resolve_account_timezone(&client, &token, None).await?;
+    let now_in_tz = chrono::Utc::now().with_timezone(&tz);
+    let today_start_tz = crate::timezone::start_of_today(tz)?;
+    let today_end_tz = today_start_tz + chrono::Duration::days(1);
+    let time_min = today_start_tz.to_rfc3339();
+    let time_max = today_end_tz.to_rfc3339();
 
     // Fetch today's events
     let events_json = get_json(
@@ -355,7 +353,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         "meetingCount": meetings.len(),
         "tasks": open_tasks,
         "taskCount": open_tasks.len(),
-        "date": time_min.split('T').next().unwrap_or(""),
+        "date": now_in_tz.format("%Y-%m-%d").to_string(),
     });
 
     format_and_print(&output, matches);
@@ -374,13 +372,9 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|s| s.as_str())
         .unwrap_or("primary");
 
-    // Fetch next upcoming event
-    let now_rfc = epoch_to_rfc3339(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    );
+    // Use account timezone for current time
+    let tz = crate::timezone::resolve_account_timezone(&client, &token, None).await?;
+    let now_rfc = chrono::Utc::now().with_timezone(&tz).to_rfc3339();
 
     let events_url = format!(
         "https://www.googleapis.com/calendar/v3/calendars/{}/events",
@@ -542,13 +536,12 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let client = crate::client::build_client()?;
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let week_end = now + 7 * 86400;
-    let time_min = epoch_to_rfc3339(now);
-    let time_max = epoch_to_rfc3339(week_end);
+    // Resolve account timezone for week boundaries
+    let tz = crate::timezone::resolve_account_timezone(&client, &token, None).await?;
+    let now_in_tz = chrono::Utc::now().with_timezone(&tz);
+    let week_end = now_in_tz + chrono::Duration::days(7);
+    let time_min = now_in_tz.to_rfc3339();
+    let time_max = week_end.to_rfc3339();
 
     // Fetch this week's events
     let events_json = get_json(
@@ -692,10 +685,7 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
 // Utilities
 // ---------------------------------------------------------------------------
 
-fn epoch_to_rfc3339(epoch: u64) -> String {
-    use chrono::{TimeZone, Utc};
-    Utc.timestamp_opt(epoch as i64, 0).unwrap().to_rfc3339()
-}
+// (epoch_to_rfc3339 removed — replaced by account timezone resolution)
 
 #[cfg(test)]
 mod tests {
@@ -723,11 +713,7 @@ mod tests {
         assert!(WorkflowHelper.helper_only());
     }
 
-    #[test]
-    fn test_epoch_to_rfc3339() {
-        assert_eq!(epoch_to_rfc3339(0), "1970-01-01T00:00:00+00:00");
-        assert_eq!(epoch_to_rfc3339(1710000000), "2024-03-09T16:00:00+00:00");
-    }
+    // (test_epoch_to_rfc3339 removed — function replaced by timezone resolution)
 
     #[test]
     fn test_build_standup_report_cmd() {
