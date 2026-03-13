@@ -118,6 +118,50 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
     Ok(canonical)
 }
 
+/// Validates that a file path (e.g. `--upload` or `--output`) is safe.
+///
+/// Rejects paths that escape above CWD via `..` traversal, contain
+/// control characters, or follow symlinks to locations outside CWD.
+/// Absolute paths are allowed for `--upload` (reading an existing file)
+/// but the resolved target must not escape CWD for `--output`.
+pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
+    reject_control_chars(path_str, flag_name)?;
+
+    let path = Path::new(path_str);
+    let cwd = std::env::current_dir()
+        .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
+
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+
+    // For existing files, canonicalize to resolve symlinks.
+    // For non-existing files, normalize the path.
+    let canonical = if resolved.exists() {
+        resolved.canonicalize().map_err(|e| {
+            GwsError::Validation(format!("Failed to resolve {flag_name} '{}': {e}", path_str))
+        })?
+    } else {
+        normalize_non_existing(&resolved)?
+    };
+
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+    })?;
+
+    if !canonical.starts_with(&canonical_cwd) {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} '{}' resolves to '{}' which is outside the current directory",
+            path_str,
+            canonical.display()
+        )));
+    }
+
+    Ok(canonical)
+}
+
 /// Rejects strings containing null bytes or ASCII control characters
 /// (including DEL, 0x7F).
 fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
@@ -565,5 +609,70 @@ mod tests {
     #[test]
     fn test_validate_api_identifier_empty() {
         assert!(validate_api_identifier("").is_err());
+    }
+
+    // --- validate_safe_file_path ---
+
+    #[test]
+    #[serial]
+    fn test_file_path_relative_is_ok() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        fs::write(canonical_dir.join("test.txt"), "data").unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_file_path("test.txt", "--upload");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    #[test]
+    #[serial]
+    fn test_file_path_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_file_path("../../etc/passwd", "--upload");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_err(), "path traversal should be rejected");
+        assert!(
+            result.unwrap_err().to_string().contains("outside"),
+            "error should mention 'outside'"
+        );
+    }
+
+    #[test]
+    fn test_file_path_rejects_control_chars() {
+        let result = validate_safe_file_path("file\x00.txt", "--output");
+        assert!(result.is_err(), "null bytes should be rejected");
+    }
+
+    #[test]
+    #[serial]
+    fn test_file_path_rejects_symlink_escape() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        // Create a symlink that points outside the directory
+        #[cfg(unix)]
+        {
+            let link_path = canonical_dir.join("escape");
+            std::os::unix::fs::symlink("/tmp", &link_path).unwrap();
+
+            let saved_cwd = std::env::current_dir().unwrap();
+            std::env::set_current_dir(&canonical_dir).unwrap();
+
+            let result = validate_safe_file_path("escape/secret.txt", "--output");
+            std::env::set_current_dir(&saved_cwd).unwrap();
+
+            assert!(result.is_err(), "symlink escape should be rejected");
+        }
     }
 }

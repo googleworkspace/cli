@@ -222,6 +222,14 @@ async fn run() -> Result<(), GwsError> {
         .flatten()
         .map(|s| s.as_str());
 
+    // Validate file paths against traversal before any I/O.
+    if let Some(p) = upload_path {
+        crate::validate::validate_safe_file_path(p, "--upload")?;
+    }
+    if let Some(p) = output_path {
+        crate::validate::validate_safe_file_path(p, "--output")?;
+    }
+
     let dry_run = matched_args.get_flag("dry-run");
 
     // Build pagination config from flags
