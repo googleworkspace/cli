@@ -186,7 +186,7 @@ async fn build_http_request(
 
             let file_meta = tokio::fs::metadata(upload_path).await.map_err(|e| {
                 GwsError::Validation(format!(
-                    "Failed to read upload file '{}': {}",
+                    "Failed to get metadata for upload file '{}': {}",
                     upload_path, e
                 ))
             })?;
@@ -868,10 +868,16 @@ fn build_multipart_stream(
     let postamble_bytes: bytes::Bytes = postamble.into_bytes().into();
 
     let file_path_owned = file_path.to_owned();
-    let file_stream =
-        futures_util::stream::once(async move { tokio::fs::File::open(file_path_owned).await })
-            .map_ok(tokio_util::io::ReaderStream::new)
-            .try_flatten();
+    let file_stream = futures_util::stream::once(async move {
+        tokio::fs::File::open(&file_path_owned).await.map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("failed to open upload file '{}': {}", file_path_owned, e),
+            )
+        })
+    })
+    .map_ok(tokio_util::io::ReaderStream::new)
+    .try_flatten();
 
     let stream = futures_util::stream::once(async { Ok::<_, std::io::Error>(preamble_bytes) })
         .chain(file_stream)
