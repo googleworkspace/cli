@@ -44,6 +44,7 @@ gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@examp
 ## Tips
 
 - Includes the original message with sender, date, subject, and recipients.
+- Sends the forward as a new message rather than forcing it into the original thread.
 
 ## See Also
 
