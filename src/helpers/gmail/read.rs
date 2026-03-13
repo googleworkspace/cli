@@ -13,36 +13,8 @@ pub(super) async fn handle_read(
 
     let client = crate::client::build_client()?;
 
-    let url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
-        crate::validate::encode_path_segment(&config.message_id),
-    );
-
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .query(&[("format", "full")])
-        .send()
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(GwsError::Api {
-            code: status,
-            message: format!("Failed to fetch message {}: {err}", config.message_id),
-            reason: "fetchFailed".to_string(),
-            enable_url: None,
-        });
-    }
-
-    let msg: Value = resp
-        .json()
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
-
-    let parsed = super::parse_original_message(&msg);
+    // Reuse the shared fetch helper which includes send_with_retry.
+    let parsed = super::fetch_message_metadata(&client, &token, &config.message_id).await?;
 
     let fmt = matches
         .get_one::<String>("format")
