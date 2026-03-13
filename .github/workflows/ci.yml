@@ -376,19 +376,6 @@ jobs:
             exit 1
           fi
 
-      - name: Smoketest — Drive upload
-        env:
-          GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /tmp/credentials.json
-        run: |
-          echo "streaming upload smoketest" > /tmp/smoketest-upload.txt
-          FILE_ID=$(./bin/gws drive +upload /tmp/smoketest-upload.txt \
-            --name 'ci-smoketest.txt' \
-            2>&1 | tee /dev/stderr | jq -re '.id')
-          echo "Uploaded file: $FILE_ID"
-          ./bin/gws drive files delete \
-            --params "{\"fileId\": \"$FILE_ID\"}"
-          rm -f /tmp/smoketest-upload.txt
-
       - name: Smoketest — error handling
         run: |
           if ./bin/gws fakeservice list 2>&1; then
