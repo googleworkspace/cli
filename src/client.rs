@@ -56,7 +56,7 @@ pub async fn send_with_retry(
 fn compute_retry_delay(header_value: Option<&str>, attempt: u32) -> u64 {
     header_value
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(1 << attempt)
+        .unwrap_or(1u64 << attempt)
         .min(MAX_RETRY_DELAY_SECS)
 }
 

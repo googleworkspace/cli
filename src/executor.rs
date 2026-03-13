@@ -746,7 +746,7 @@ fn build_multipart_body(
         .unwrap_or("application/octet-stream");
     let media_mime: String = media_mime_raw
         .chars()
-        .filter(|c| *c != '\r' && *c != '\n')
+        .filter(|c| !c.is_control())
         .collect();
 
     // Build multipart/related body
