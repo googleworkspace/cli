@@ -448,6 +448,56 @@ pub(super) fn encode_header_value(value: &str) -> String {
     encoded_words.join("\r\n ")
 }
 
+/// RFC 2047 encode non-ASCII display names in an address header value.
+///
+/// Parses a comma-separated mailbox list (e.g. `"José <j@ex.com>, alice@ex.com"`),
+/// encodes only the display-name portion of each mailbox if it contains
+/// non-ASCII characters, and leaves email addresses untouched.
+///
+/// Examples:
+/// - `"alice@example.com"` → `"alice@example.com"` (bare email, unchanged)
+/// - `"José García <jose@example.com>"` → `"=?UTF-8?B?...?= <jose@example.com>"`
+/// - `"Alice <a@ex.com>, José <j@ex.com>"` → `"Alice <a@ex.com>, =?UTF-8?B?...?= <j@ex.com>"`
+pub(super) fn encode_address_header(value: &str) -> String {
+    /// Strip all ASCII control characters (C0 range 0x00–0x1F plus DEL 0x7F)
+    /// from a parsed component. This is defense-in-depth beyond the caller's
+    /// `sanitize_header_value` which only strips CR/LF.
+    fn sanitize_component(s: &str) -> String {
+        s.chars().filter(|c| !c.is_ascii_control()).collect()
+    }
+
+    let mailboxes = split_mailbox_list(value);
+    let encoded: Vec<String> = mailboxes
+        .into_iter()
+        .map(|mailbox| {
+            let email = sanitize_component(extract_email(mailbox));
+            let display = sanitize_component(extract_display_name(mailbox));
+
+            // Bare email address — no display name to encode.
+            // Only keep characters valid in email addresses to strip any
+            // residual injection data glued by CRLF stripping.
+            if email == display {
+                return email
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || "@._-+%".contains(*c))
+                    .collect();
+            }
+
+            // Non-ASCII display name — RFC 2047 encode it
+            if !display.is_ascii() {
+                let encoded_name = encode_header_value(&display);
+                return format!("{} <{}>", encoded_name, email);
+            }
+
+            // ASCII display name — reconstruct from parsed components
+            // to strip any potential residual injection data.
+            format!("{} <{}>", display, email)
+        })
+        .collect();
+
+    encoded.join(", ")
+}
+
 /// In-Reply-To and References values for threading a reply or forward.
 #[derive(Clone, Copy)]
 pub(super) struct ThreadingHeaders<'a> {
@@ -482,7 +532,7 @@ impl MessageBuilder<'_> {
 
         let mut headers = format!(
             "To: {}\r\nSubject: {}",
-            sanitize_header_value(self.to),
+            encode_address_header(&sanitize_header_value(self.to)),
             // Sanitize first: stripping CRLF before encoding prevents injection
             // in encoded-words.
             encode_header_value(&sanitize_header_value(self.subject)),
@@ -506,17 +556,26 @@ impl MessageBuilder<'_> {
         ));
 
         if let Some(from) = self.from {
-            headers.push_str(&format!("\r\nFrom: {}", sanitize_header_value(from)));
+            headers.push_str(&format!(
+                "\r\nFrom: {}",
+                encode_address_header(&sanitize_header_value(from))
+            ));
         }
 
         if let Some(cc) = self.cc {
-            headers.push_str(&format!("\r\nCc: {}", sanitize_header_value(cc)));
+            headers.push_str(&format!(
+                "\r\nCc: {}",
+                encode_address_header(&sanitize_header_value(cc))
+            ));
         }
 
         // The Gmail API reads the Bcc header to route to those recipients,
         // then strips it before delivery.
         if let Some(bcc) = self.bcc {
-            headers.push_str(&format!("\r\nBcc: {}", sanitize_header_value(bcc)));
+            headers.push_str(&format!(
+                "\r\nBcc: {}",
+                encode_address_header(&sanitize_header_value(bcc))
+            ));
         }
 
         format!("{}\r\n\r\n{}", headers, body)
@@ -1247,6 +1306,187 @@ mod tests {
             let decoded = STANDARD.decode(b64).expect("valid base64");
             String::from_utf8(decoded).expect("each chunk must be valid UTF-8");
         }
+    }
+
+    #[test]
+    fn test_encode_address_header_bare_email() {
+        assert_eq!(
+            encode_address_header("alice@example.com"),
+            "alice@example.com"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_ascii_display_name() {
+        let input = "Alice Smith <alice@example.com>";
+        assert_eq!(encode_address_header(input), input);
+    }
+
+    #[test]
+    fn test_encode_address_header_non_ascii_display_name() {
+        let encoded = encode_address_header("José García <jose@example.com>");
+        assert!(
+            encoded.contains("=?UTF-8?B?"),
+            "Should contain encoded-word: {encoded}"
+        );
+        assert!(
+            encoded.contains("<jose@example.com>"),
+            "Email should be preserved: {encoded}"
+        );
+        assert!(
+            !encoded.contains("José"),
+            "Raw non-ASCII should not appear: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_multiple_mixed() {
+        let input = "Alice <alice@example.com>, José <jose@example.com>";
+        let encoded = encode_address_header(input);
+        assert!(
+            encoded.starts_with("Alice <alice@example.com>, "),
+            "ASCII address should be unchanged: {encoded}"
+        );
+        assert!(
+            encoded.contains("=?UTF-8?B?"),
+            "Non-ASCII name should be encoded: {encoded}"
+        );
+        assert!(
+            encoded.contains("<jose@example.com>"),
+            "Email should be preserved: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_quoted_non_ascii() {
+        let encoded = encode_address_header("\"下野祐太\" <shimono@example.com>");
+        assert!(
+            encoded.contains("=?UTF-8?B?"),
+            "Should contain encoded-word: {encoded}"
+        );
+        assert!(
+            encoded.contains("<shimono@example.com>"),
+            "Email should be preserved: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_message_builder_non_ascii_address_headers() {
+        let raw = MessageBuilder {
+            to: "José <jose@example.com>",
+            subject: "Test",
+            from: Some("田中太郎 <tanaka@example.com>"),
+            cc: Some("Ñoño <nono@example.com>"),
+            bcc: Some("Ünsal <unsal@example.com>"),
+            threading: None,
+            html: false,
+        }
+        .build("body");
+
+        // To header should have encoded display name
+        assert!(
+            raw.contains("To: =?UTF-8?B?"),
+            "To should be RFC 2047 encoded: {raw}"
+        );
+        // From header should have encoded display name
+        assert!(
+            raw.contains("From: =?UTF-8?B?"),
+            "From should be RFC 2047 encoded: {raw}"
+        );
+        // Cc header should have encoded display name
+        assert!(
+            raw.contains("Cc: =?UTF-8?B?"),
+            "Cc should be RFC 2047 encoded: {raw}"
+        );
+        // Bcc header should have encoded display name
+        assert!(
+            raw.contains("Bcc: =?UTF-8?B?"),
+            "Bcc should be RFC 2047 encoded: {raw}"
+        );
+        // Email addresses should be untouched
+        assert!(raw.contains("<jose@example.com>"));
+        assert!(raw.contains("<tanaka@example.com>"));
+        assert!(raw.contains("<nono@example.com>"));
+        assert!(raw.contains("<unsal@example.com>"));
+    }
+
+    #[test]
+    fn test_encode_address_header_strips_trailing_garbage() {
+        // After sanitize_header_value strips \r\n, residual Bcc: header text
+        // would remain appended. Reconstruction must drop it.
+        let sanitized = sanitize_header_value("Alice <a@ex.com>\r\nBcc: evil@ex.com");
+        let encoded = encode_address_header(&sanitized);
+        assert!(
+            !encoded.contains("evil"),
+            "Trailing injection data should be stripped: {encoded}"
+        );
+        assert!(
+            encoded.contains("<a@ex.com>"),
+            "Original email should be preserved: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_strips_null_bytes() {
+        let encoded = encode_address_header("Alice\0Bob <alice@ex.com>");
+        assert!(
+            !encoded.contains('\0'),
+            "Null bytes should be stripped: {encoded:?}"
+        );
+        assert!(encoded.contains("AliceBob"));
+        assert!(encoded.contains("<alice@ex.com>"));
+    }
+
+    #[test]
+    fn test_encode_address_header_strips_tab_in_email() {
+        let encoded = encode_address_header("alice\t@ex.com");
+        assert!(
+            !encoded.contains('\t'),
+            "Tab should be stripped: {encoded:?}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_injection_bare_email() {
+        // Bare email with injection attempt after sanitize strips CRLF.
+        // "Bcc" letters are valid email chars, but the colon is not.
+        let sanitized = sanitize_header_value("foo@bar.com\r\nBcc: evil@ex.com");
+        let encoded = encode_address_header(&sanitized);
+        assert!(
+            !encoded.contains("evil"),
+            "Injection in bare email should be stripped: {encoded}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_injection_bare_email_no_space() {
+        // No space between address and injected header (Bcc:evil)
+        let sanitized = sanitize_header_value("foo@bar.com\r\nBcc:evil@ex.com");
+        let encoded = encode_address_header(&sanitized);
+        assert!(
+            !encoded.contains("evil"),
+            "No-space injection should be stripped: {encoded}"
+        );
+        assert_eq!(encoded, "foo@bar.comBcc");
+    }
+
+    #[test]
+    fn test_encode_address_header_injection_angle_brackets_in_bare_email() {
+        // When angle brackets are injected into a bare email, extract_email
+        // parses the angle brackets and takes the non-bare reconstruction
+        // path. This is safe from header injection (no CRLF = one header
+        // line). The email changes but the original was already corrupted.
+        let sanitized = sanitize_header_value("foo@bar.com\r\n<evil@ex.com>");
+        let encoded = encode_address_header(&sanitized);
+        // Takes the Name <email> reconstruction path — not a header injection
+        assert!(encoded.contains("<evil@ex.com>"));
+        assert!(!encoded.contains('\r'));
+        assert!(!encoded.contains('\n'));
+    }
+
+    #[test]
+    fn test_encode_address_header_empty_input() {
+        assert_eq!(encode_address_header(""), "");
     }
 
     #[test]
