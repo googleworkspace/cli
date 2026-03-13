@@ -876,6 +876,7 @@ dependencies = [
  "futures-util",
  "hostname",
  "keyring",
+ "libc",
  "percent-encoding",
  "rand 0.8.5",
  "ratatui",

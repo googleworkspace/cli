@@ -144,7 +144,7 @@ async fn build_http_request(
     auth_method: &AuthMethod,
     page_token: Option<&str>,
     pages_fetched: u32,
-    upload_path: Option<&str>,
+    upload_bytes: Option<&[u8]>,
 ) -> Result<reqwest::RequestBuilder, GwsError> {
     let mut request = match method.http_method.as_str() {
         "GET" => client.get(&input.full_url),
@@ -180,17 +180,11 @@ async fn build_http_request(
 
     if pages_fetched == 0 {
         if input.is_upload {
-            let upload_path = upload_path.expect("upload_path must be Some when is_upload is true");
-
-            let file_bytes = tokio::fs::read(upload_path).await.map_err(|e| {
-                GwsError::Validation(format!(
-                    "Failed to read upload file '{}': {}",
-                    upload_path, e
-                ))
-            })?;
+            let file_bytes =
+                upload_bytes.expect("upload bytes must be Some when is_upload is true");
 
             request = request.query(&[("uploadType", "multipart")]);
-            let (multipart_body, content_type) = build_multipart_body(&input.body, &file_bytes)?;
+            let (multipart_body, content_type) = build_multipart_body(&input.body, file_bytes)?;
             request = request.header("Content-Type", content_type);
             request = request.body(multipart_body);
         } else if let Some(ref body_val) = input.body {
@@ -307,16 +301,26 @@ async fn handle_binary_response(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let file_path = if let Some(p) = output_path {
-        PathBuf::from(p)
+    let (mut file, file_path) = if let Some(path) = output_path {
+        let path_owned = path.to_string();
+        let (file, canonical_path) = tokio::task::spawn_blocking(move || {
+            crate::validate::open_safe_output_file(&path_owned)
+        })
+        .await
+        .map_err(|e| {
+            GwsError::Other(anyhow::anyhow!(
+                "Output file open/validation task failed: {e}"
+            ))
+        })??;
+        (tokio::fs::File::from_std(file), canonical_path)
     } else {
         let ext = mime_to_extension(content_type);
-        PathBuf::from(format!("download.{ext}"))
+        let file_path = PathBuf::from(format!("download.{ext}"));
+        let file = tokio::fs::File::create(&file_path)
+            .await
+            .context("Failed to create output file")?;
+        (file, file_path)
     };
-
-    let mut file = tokio::fs::File::create(&file_path)
-        .await
-        .context("Failed to create output file")?;
 
     let mut stream = response.bytes_stream();
     let mut total_bytes: u64 = 0;
@@ -374,7 +378,38 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload_path)?;
+    // Validate untrusted filesystem paths before any network or file I/O.
+    let safe_output_path = if let Some(path) = output_path {
+        let path_owned = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            crate::validate::validate_safe_output_file_path(&path_owned)
+        })
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Path validation task failed: {e}")))??;
+        Some(path.to_string())
+    } else {
+        None
+    };
+
+    let safe_upload_path = if let Some(path) = upload_path {
+        let path_owned = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            crate::validate::validate_safe_upload_file_path(&path_owned)
+        })
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Path validation task failed: {e}")))??;
+        Some(path.to_string())
+    } else {
+        None
+    };
+
+    let input = parse_and_validate_inputs(
+        doc,
+        method,
+        params_json,
+        body_json,
+        safe_upload_path.as_deref(),
+    )?;
 
     if dry_run {
         let dry_run_info = json!({
@@ -395,6 +430,21 @@ pub async fn execute_method(
         return Ok(None);
     }
 
+    let upload_bytes = if input.is_upload {
+        let upload_path = safe_upload_path
+            .as_deref()
+            .expect("safe_upload_path must be Some when is_upload is true")
+            .to_string();
+        let bytes = tokio::task::spawn_blocking(move || {
+            crate::validate::read_safe_upload_file(&upload_path)
+        })
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Upload file read task failed: {e}")))??;
+        Some(bytes)
+    } else {
+        None
+    };
+
     let mut page_token: Option<String> = None;
     let mut pages_fetched: u32 = 0;
     let mut captured_values = Vec::new();
@@ -409,7 +459,7 @@ pub async fn execute_method(
             &auth_method,
             page_token.as_deref(),
             pages_fetched,
-            upload_path,
+            upload_bytes.as_deref(),
         )
         .await?;
 
@@ -456,7 +506,7 @@ pub async fn execute_method(
         } else if let Some(res) = handle_binary_response(
             response,
             &content_type,
-            output_path,
+            safe_output_path.as_deref(),
             output_format,
             capture_output,
         )
@@ -1727,6 +1777,70 @@ async fn test_execute_method_missing_path_param() {
         .contains("Required path parameter"));
 }
 
+#[tokio::test]
+async fn test_execute_method_rejects_unsafe_upload_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        flat_path: Some("files".to_string()),
+        ..Default::default()
+    };
+
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        None,
+        Some("bad\0path"),
+        true,
+        &PaginationConfig::default(),
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("--upload"));
+}
+
+#[tokio::test]
+async fn test_execute_method_rejects_unsafe_output_path() {
+    let doc = RestDescription::default();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        flat_path: Some("files".to_string()),
+        ..Default::default()
+    };
+
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        Some("bad\0path"),
+        None,
+        true,
+        &PaginationConfig::default(),
+        None,
+        &crate::helpers::modelarmor::SanitizeMode::Warn,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("--output"));
+}
+
 #[test]
 fn test_handle_error_response_non_json() {
     let err = handle_error_response::<()>(
@@ -1975,4 +2089,48 @@ async fn test_get_does_not_set_content_length_zero() {
         built.headers().get("Content-Length").is_none(),
         "GET with no body should not have Content-Length header"
     );
+}
+
+#[tokio::test]
+async fn test_build_http_request_upload_uses_provided_bytes() {
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "files".to_string(),
+        supports_media_upload: true,
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: Some(json!({"name": "x.txt"})),
+        params: Map::new(),
+        query_params: HashMap::new(),
+        is_upload: true,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        None,
+        &AuthMethod::None,
+        None,
+        0,
+        Some(b"hello"),
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    assert!(built
+        .url()
+        .query()
+        .unwrap_or_default()
+        .contains("uploadType=multipart"));
+    let content_type = built
+        .headers()
+        .get("Content-Type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(content_type.starts_with("multipart/related; boundary="));
 }
