@@ -16,7 +16,7 @@ use super::Helper;
 use crate::auth;
 use crate::error::GwsError;
 use crate::executor;
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde_json::{json, Value};
 use std::future::Future;
 use std::path::Path;
@@ -51,16 +51,24 @@ impl Helper for DriveHelper {
                         .help("Target filename (defaults to source filename)")
                         .value_name("NAME"),
                 )
+                .arg(
+                    Arg::new("convert")
+                        .long("convert")
+                        .help("Convert to Google Docs format (auto-enabled for .md files)")
+                        .action(ArgAction::SetTrue),
+                )
                 .after_help(
                     "\
 EXAMPLES:
   gws drive +upload ./report.pdf
   gws drive +upload ./report.pdf --parent FOLDER_ID
   gws drive +upload ./data.csv --name 'Sales Data.csv'
+  gws drive +upload ./notes.md --convert
 
 TIPS:
-  MIME type is detected automatically.
-  Filename is inferred from the local path unless --name is given.",
+  MIME type is detected automatically from the file extension.
+  Markdown (.md) files are auto-converted to Google Docs.
+  Use --convert to force conversion for other text formats.",
                 ),
         );
         cmd
@@ -81,6 +89,10 @@ TIPS:
                 // Determine filename
                 let filename = determine_filename(file_path, name_arg.map(|s| s.as_str()))?;
 
+                // Auto-convert markdown files to Google Docs, or when --convert is set
+                let is_markdown = infer_upload_mime(&filename) == Some("text/markdown");
+                let convert = matches.get_flag("convert") || is_markdown;
+
                 // Find method: files.create
                 let files_res = doc
                     .resources
@@ -90,8 +102,8 @@ TIPS:
                     GwsError::Discovery("Method 'files.create' not found".to_string())
                 })?;
 
-                // Build metadata
-                let metadata = build_metadata(&filename, parent_id.map(|s| s.as_str()));
+                // Build metadata — when converting, sets target mimeType to Google Docs
+                let metadata = build_metadata(&filename, parent_id.map(|s| s.as_str()), convert);
 
                 let body_str = metadata.to_string();
 
@@ -138,10 +150,34 @@ fn determine_filename(file_path: &str, name_arg: Option<&str>) -> Result<String,
     }
 }
 
-fn build_metadata(filename: &str, parent_id: Option<&str>) -> Value {
+/// Infer the upload MIME type from the file extension.
+/// Returns None for unknown extensions (the API will auto-detect).
+fn infer_upload_mime(filename: &str) -> Option<&'static str> {
+    match Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("md" | "markdown") => Some("text/markdown"),
+        Some("csv") => Some("text/csv"),
+        Some("html" | "htm") => Some("text/html"),
+        Some("txt") => Some("text/plain"),
+        Some("json") => Some("application/json"),
+        _ => None,
+    }
+}
+
+fn build_metadata(filename: &str, parent_id: Option<&str>, convert: bool) -> Value {
     let mut metadata = json!({
         "name": filename
     });
+
+    // When converting, set the target Google Docs MIME type so the Drive API
+    // converts the upload (e.g., markdown → Google Docs).
+    if convert {
+        metadata["mimeType"] = json!("application/vnd.google-apps.document");
+    }
 
     if let Some(parent) = parent_id {
         metadata["parents"] = json!([parent]);
@@ -178,15 +214,38 @@ mod tests {
 
     #[test]
     fn test_build_metadata_no_parent() {
-        let meta = build_metadata("file.txt", None);
+        let meta = build_metadata("file.txt", None, false);
         assert_eq!(meta["name"], "file.txt");
         assert!(meta.get("parents").is_none());
+        assert!(meta.get("mimeType").is_none());
     }
 
     #[test]
     fn test_build_metadata_with_parent() {
-        let meta = build_metadata("file.txt", Some("folder123"));
+        let meta = build_metadata("file.txt", Some("folder123"), false);
         assert_eq!(meta["name"], "file.txt");
         assert_eq!(meta["parents"][0], "folder123");
+    }
+
+    #[test]
+    fn test_build_metadata_convert() {
+        let meta = build_metadata("notes.md", None, true);
+        assert_eq!(meta["name"], "notes.md");
+        assert_eq!(meta["mimeType"], "application/vnd.google-apps.document");
+    }
+
+    #[test]
+    fn test_infer_upload_mime_markdown() {
+        assert_eq!(infer_upload_mime("notes.md"), Some("text/markdown"));
+        assert_eq!(infer_upload_mime("README.markdown"), Some("text/markdown"));
+        assert_eq!(infer_upload_mime("NOTES.MD"), Some("text/markdown"));
+    }
+
+    #[test]
+    fn test_infer_upload_mime_other() {
+        assert_eq!(infer_upload_mime("data.csv"), Some("text/csv"));
+        assert_eq!(infer_upload_mime("page.html"), Some("text/html"));
+        assert_eq!(infer_upload_mime("report.pdf"), None);
+        assert_eq!(infer_upload_mime("image.png"), None);
     }
 }
