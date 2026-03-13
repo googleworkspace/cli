@@ -14,12 +14,14 @@
 
 use super::Helper;
 pub mod forward;
+pub mod read;
 pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
 use forward::handle_forward;
+use read::handle_read;
 use reply::handle_reply;
 use send::handle_send;
 use triage::handle_triage;
@@ -731,6 +733,49 @@ TIPS:
         );
 
         cmd = cmd.subcommand(
+            Command::new("+read")
+                .about("[Helper] Read a message and extract its body as plain text")
+                .arg(
+                    Arg::new("message-id")
+                        .long("message-id")
+                        .help("Gmail message ID to read")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("html")
+                        .long("html")
+                        .help("Return HTML body instead of plain text")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("body-only")
+                        .long("body-only")
+                        .help("Print only the message body (no headers/metadata)")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Output format: json (default), table, yaml, csv")
+                        .value_name("FORMAT"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +read --message-id 18f1a2b3c4d
+  gws gmail +read --message-id 18f1a2b3c4d --body-only
+  gws gmail +read --message-id 18f1a2b3c4d --html
+  gws gmail +read --message-id 18f1a2b3c4d --format json | jq '.body'
+
+TIPS:
+  Read-only — never modifies your mailbox.
+  Use --body-only to pipe the message content to other tools.
+  Use --html to get the rich HTML body when available.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
             Command::new("+reply")
                 .about("[Helper] Reply to a message (handles threading automatically)")
                 .arg(
@@ -1055,6 +1100,11 @@ TIPS:
 
             if let Some(matches) = matches.subcommand_matches("+forward") {
                 handle_forward(doc, matches).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+read") {
+                handle_read(doc, matches).await?;
                 return Ok(true);
             }
 
