@@ -506,17 +506,26 @@ impl MessageBuilder<'_> {
         ));
 
         if let Some(from) = self.from {
-            headers.push_str(&format!("\r\nFrom: {}", sanitize_header_value(from)));
+            headers.push_str(&format!(
+                "\r\nFrom: {}",
+                encode_header_value(&sanitize_header_value(from))
+            ));
         }
 
         if let Some(cc) = self.cc {
-            headers.push_str(&format!("\r\nCc: {}", sanitize_header_value(cc)));
+            headers.push_str(&format!(
+                "\r\nCc: {}",
+                encode_header_value(&sanitize_header_value(cc))
+            ));
         }
 
         // The Gmail API reads the Bcc header to route to those recipients,
         // then strips it before delivery.
         if let Some(bcc) = self.bcc {
-            headers.push_str(&format!("\r\nBcc: {}", sanitize_header_value(bcc)));
+            headers.push_str(&format!(
+                "\r\nBcc: {}",
+                encode_header_value(&sanitize_header_value(bcc))
+            ));
         }
 
         format!("{}\r\n\r\n{}", headers, body)
@@ -1314,6 +1323,27 @@ mod tests {
 
         assert!(raw.contains("=?UTF-8?B?"));
         assert!(!raw.contains("Solar — Quote Request"));
+    }
+
+    #[test]
+    fn test_message_builder_encodes_non_ascii_optional_headers() {
+        let raw = MessageBuilder {
+            to: "alice@example.com",
+            subject: "Hello",
+            from: Some("\"日本語名前\" <from@example.com>"),
+            cc: Some("\"日本語名前\" <cc@example.com>"),
+            bcc: Some("\"日本語名前\" <bcc@example.com>"),
+            threading: None,
+            html: false,
+        }
+        .build("Body");
+
+        assert!(raw.contains("From: =?UTF-8?B?"));
+        assert!(raw.contains("Cc: =?UTF-8?B?"));
+        assert!(raw.contains("Bcc: =?UTF-8?B?"));
+        assert!(!raw.contains("From: \"日本語名前\" <from@example.com>"));
+        assert!(!raw.contains("Cc: \"日本語名前\" <cc@example.com>"));
+        assert!(!raw.contains("Bcc: \"日本語名前\" <bcc@example.com>"));
     }
 
     #[test]
