@@ -810,6 +810,12 @@ impl Helper for GmailHelper {
                             .help("Email body (plain text, or HTML with --html)")
                             .required(true)
                             .value_name("TEXT"),
+                    )
+                    .arg(
+                        Arg::new("from")
+                            .long("from")
+                            .help("Sender address (for send-as/alias; omit to use account default)")
+                            .value_name("EMAIL"),
                     ),
             )
             .after_help(
@@ -819,9 +825,11 @@ EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
   gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
 
 TIPS:
   Handles RFC 5322 formatting and base64 encoding automatically.
+  Use --from to send from a configured send-as alias instead of your primary address.
   With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.
   For attachments, use the raw API instead: gws gmail users messages send --json '...'",
             ),
