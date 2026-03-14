@@ -161,11 +161,21 @@ impl KeyringProvider for OsKeyring {
 /// Which backend to use for encryption key storage.
 ///
 /// Controlled by `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND`:
-/// - `"keyring"` (default): Use OS keyring, fall back to `.encryption_key` file
-/// - `"file"`: Use `.encryption_key` file only (for Docker/CI/headless)
+/// - `"keyring"` (default): OS keyring only — no `.encryption_key` file backup
+/// - `"keyring-with-file"`: OS keyring with `.encryption_key` file as durable backup
+/// - `"file"`: `.encryption_key` file only (for Docker/CI/headless)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyringBackend {
+    /// OS keyring only. The encryption key is never written to disk, giving the
+    /// strongest security on platforms with a native keychain (macOS Keychain,
+    /// Windows Credential Manager). Falls back to reading an existing
+    /// `.encryption_key` file for migration, but will not create or update one.
     Keyring,
+    /// OS keyring with `.encryption_key` file kept in sync as a durable backup.
+    /// Suitable for environments where the keyring may be ephemeral (e.g. after
+    /// OS upgrades or container restarts).
+    KeyringWithFile,
+    /// `.encryption_key` file only — no keyring interaction.
     File,
 }
 
@@ -174,13 +184,13 @@ impl KeyringBackend {
         let raw = std::env::var("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND").unwrap_or_default();
         let lower = raw.to_lowercase();
         match lower.as_str() {
-            "file" => KeyringBackend::File,
             "keyring" | "" => KeyringBackend::Keyring,
+            "keyring-with-file" => KeyringBackend::KeyringWithFile,
+            "file" => KeyringBackend::File,
             other => {
-                // Item 1: warn on unrecognized values
                 eprintln!(
                     "Warning: unknown GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=\"{other}\", \
-                     defaulting to \"keyring\". Valid values: \"keyring\", \"file\"."
+                     defaulting to \"keyring\". Valid values: \"keyring\", \"keyring-with-file\", \"file\"."
                 );
                 KeyringBackend::Keyring
             }
@@ -191,21 +201,37 @@ impl KeyringBackend {
     fn as_str(&self) -> &'static str {
         match self {
             KeyringBackend::Keyring => "keyring",
+            KeyringBackend::KeyringWithFile => "keyring-with-file",
             KeyringBackend::File => "file",
         }
+    }
+
+    /// Whether this backend reads/writes the OS keyring.
+    fn uses_keyring(&self) -> bool {
+        matches!(
+            self,
+            KeyringBackend::Keyring | KeyringBackend::KeyringWithFile
+        )
+    }
+
+    /// Whether this backend persists the encryption key to a local file.
+    fn saves_to_file(&self) -> bool {
+        matches!(self, KeyringBackend::KeyringWithFile | KeyringBackend::File)
     }
 }
 
 /// Core key-resolution logic, separated from caching for testability.
 ///
-/// When `backend` is `Keyring`:
-///   1. Try keyring → 2. Try file → 3. Generate (save to keyring + file)
+/// - `Keyring` (keyring-only):
+///   1. Try keyring → 2. Read file (migration only) → 3. Generate (keyring only).
+///      The `.encryption_key` file is never created or updated.
 ///
-/// When `backend` is `File`:
-///   1. Try file → 2. Generate (save to file only)
+/// - `KeyringWithFile`:
+///   1. Try keyring → 2. Try file → 3. Generate (save to keyring + file).
+///      The `.encryption_key` file is kept in sync as a durable backup.
 ///
-/// The `.encryption_key` file is **never deleted** — it always serves as a
-/// durable fallback for environments where the keyring is ephemeral.
+/// - `File`:
+///   1. Try file → 2. Generate (save to file only).
 fn resolve_key(
     backend: KeyringBackend,
     provider: &dyn KeyringProvider,
@@ -213,22 +239,21 @@ fn resolve_key(
 ) -> anyhow::Result<[u8; 32]> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    // --- 1. Try keyring (only when backend = Keyring) --------------------
-    if backend == KeyringBackend::Keyring {
+    // --- 1. Try keyring (Keyring and KeyringWithFile) --------------------
+    if backend.uses_keyring() {
         match provider.get_password() {
             Ok(b64_key) => {
                 if let Ok(decoded) = STANDARD.decode(&b64_key) {
                     if decoded.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&decoded);
-                        // Ensure file backup stays in sync with keyring so
-                        // credentials survive keyring loss (e.g. after OS
-                        // upgrades, container restarts, daemon changes).
-                        if let Err(err) = save_key_file(key_file, &b64_key) {
-                            eprintln!(
-                                "Warning: failed to sync keyring backup file at '{}': {err}",
-                                key_file.display()
-                            );
+                        if backend.saves_to_file() {
+                            if let Err(err) = save_key_file(key_file, &b64_key) {
+                                eprintln!(
+                                    "Warning: failed to sync keyring backup file at '{}': {err}",
+                                    key_file.display()
+                                );
+                            }
                         }
                         return Ok(arr);
                     }
@@ -238,8 +263,15 @@ fn resolve_key(
             Err(keyring::Error::NoEntry) => {
                 // Keyring is reachable but empty — check file, then generate.
                 if let Some(key) = read_key_file(key_file) {
-                    // Best-effort: copy file key into keyring for future runs.
-                    let _ = provider.set_password(&STANDARD.encode(key));
+                    if provider.set_password(&STANDARD.encode(key)).is_ok()
+                        && !backend.saves_to_file()
+                    {
+                        eprintln!(
+                            "Note: encryption key migrated to OS keyring. \
+                             You can remove {} for keyring-only security.",
+                            key_file.display()
+                        );
+                    }
                     return Ok(key);
                 }
 
@@ -247,48 +279,56 @@ fn resolve_key(
                 let key = generate_random_key();
                 let b64_key = STANDARD.encode(key);
 
-                // Best-effort: store in keyring.
                 let _ = provider.set_password(&b64_key);
 
-                // Atomically create the file; if another process raced us,
-                // use their key instead.
-                match save_key_file_exclusive(key_file, &b64_key) {
-                    Ok(()) => return Ok(key),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        if let Some(winner) = read_key_file(key_file) {
-                            // Sync the winner's key into the keyring so both
-                            // backends stay consistent after the race.
-                            let _ = provider.set_password(&STANDARD.encode(winner));
-                            return Ok(winner);
+                if backend.saves_to_file() {
+                    match save_key_file_exclusive(key_file, &b64_key) {
+                        Ok(()) => return Ok(key),
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                            if let Some(winner) = read_key_file(key_file) {
+                                let _ = provider.set_password(&STANDARD.encode(winner));
+                                return Ok(winner);
+                            }
+                            save_key_file(key_file, &b64_key)?;
+                            return Ok(key);
                         }
-                        // File exists but is unreadable/corrupt — overwrite.
-                        save_key_file(key_file, &b64_key)?;
-                        return Ok(key);
+                        Err(e) => return Err(e.into()),
                     }
-                    Err(e) => return Err(e.into()),
                 }
+
+                return Ok(key);
             }
             Err(e) => {
-                eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
+                if backend.saves_to_file() {
+                    eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
+                } else {
+                    eprintln!("Warning: keyring access failed: {e}");
+                }
             }
         }
     }
 
-    // --- 2. File fallback ------------------------------------------------
+    // --- 2. File fallback (read existing file for all backends) -----------
     if let Some(key) = read_key_file(key_file) {
         return Ok(key);
     }
 
-    // --- 3. Generate new key, save to file (race-safe) -------------------
-    let key = generate_random_key();
-    let b64_key = STANDARD.encode(key);
-    match save_key_file_exclusive(key_file, &b64_key) {
-        Ok(()) => Ok(key),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            // Another process created the file first — use their key.
-            read_key_file(key_file).ok_or_else(|| anyhow::anyhow!("key file exists but is corrupt"))
+    // --- 3. Generate new key ---------------------------------------------
+    if backend.saves_to_file() {
+        let key = generate_random_key();
+        let b64_key = STANDARD.encode(key);
+        match save_key_file_exclusive(key_file, &b64_key) {
+            Ok(()) => Ok(key),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => read_key_file(key_file)
+                .ok_or_else(|| anyhow::anyhow!("key file exists but is corrupt")),
+            Err(e) => Err(e.into()),
         }
-        Err(e) => Err(e.into()),
+    } else {
+        anyhow::bail!(
+            "OS keyring is unavailable and no .encryption_key fallback file found. \
+             Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=keyring-with-file or =file \
+             to enable file-based key storage."
+        )
     }
 }
 
@@ -522,10 +562,10 @@ mod tests {
         (key, path)
     }
 
-    // ---- Backend::Keyring tests ----
+    // ---- Backend::Keyring (keyring-only) tests ----
 
     #[test]
-    fn keyring_backend_returns_keyring_key() {
+    fn keyring_only_returns_key_without_file_write() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
@@ -533,17 +573,94 @@ mod tests {
         let mock = MockKeyring::with_password(&STANDARD.encode(expected));
         let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
         assert_eq!(result, expected);
+        assert!(
+            !key_file.exists(),
+            "keyring-only must NOT create a file backup"
+        );
     }
 
     #[test]
-    fn keyring_backend_creates_file_backup_when_missing() {
+    fn keyring_only_no_entry_reads_file_for_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let (expected, key_file) = write_test_key(dir.path());
+        let mock = MockKeyring::no_entry();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+        assert!(
+            mock.last_set.borrow().is_some(),
+            "should copy file key into keyring for migration"
+        );
+    }
+
+    #[test]
+    fn keyring_only_no_entry_no_file_generates_keyring_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let mock = MockKeyring::no_entry();
+        let key = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(key.len(), 32);
+        assert!(!key_file.exists(), "keyring-only must NOT create a file");
+        assert!(mock.last_set.borrow().is_some(), "should store in keyring");
+    }
+
+    #[test]
+    fn keyring_only_platform_error_reads_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (expected, key_file) = write_test_key(dir.path());
+        let mock = MockKeyring::platform_error();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn keyring_only_platform_error_no_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let mock = MockKeyring::platform_error();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file);
+        assert!(
+            result.is_err(),
+            "should fail when keyring is unavailable and no file exists"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("keyring-with-file"),
+            "error should suggest keyring-with-file alternative"
+        );
+    }
+
+    #[test]
+    fn keyring_only_invalid_keyring_data_uses_file() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let (expected, key_file) = write_test_key(dir.path());
+        let mock = MockKeyring::with_password(&STANDARD.encode([1u8; 16])); // wrong length
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    // ---- Backend::KeyringWithFile tests ----
+
+    #[test]
+    fn keyring_with_file_returns_keyring_key() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let expected = [7u8; 32];
+        let mock = MockKeyring::with_password(&STANDARD.encode(expected));
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn keyring_with_file_creates_file_backup_when_missing() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
         let expected = [7u8; 32];
         let mock = MockKeyring::with_password(&STANDARD.encode(expected));
         assert!(!key_file.exists(), "file must not exist before test");
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(result, expected);
         assert!(
             key_file.exists(),
@@ -557,15 +674,14 @@ mod tests {
     }
 
     #[test]
-    fn keyring_backend_syncs_file_when_keyring_differs() {
+    fn keyring_with_file_syncs_file_when_keyring_differs() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
-        // Write a file with one key, but put a different key in the keyring.
         let (file_key, key_file) = write_test_key(dir.path());
         let keyring_key = [7u8; 32];
         assert_ne!(file_key, keyring_key, "keys must differ for this test");
         let mock = MockKeyring::with_password(&STANDARD.encode(keyring_key));
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(result, keyring_key, "should return keyring key");
         assert!(key_file.exists(), "file must NOT be deleted");
         let synced = read_key_file(&key_file).unwrap();
@@ -576,11 +692,11 @@ mod tests {
     }
 
     #[test]
-    fn keyring_backend_no_entry_reads_file() {
+    fn keyring_with_file_no_entry_reads_file() {
         let dir = tempfile::tempdir().unwrap();
         let (expected, key_file) = write_test_key(dir.path());
         let mock = MockKeyring::no_entry();
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(result, expected);
         assert!(key_file.exists(), "file must NOT be deleted");
         assert!(
@@ -590,11 +706,11 @@ mod tests {
     }
 
     #[test]
-    fn keyring_backend_no_entry_no_file_generates_and_saves_both() {
+    fn keyring_with_file_no_entry_no_file_generates_and_saves_both() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
         let mock = MockKeyring::no_entry();
-        let key = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let key = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(key.len(), 32);
         assert!(key_file.exists(), "file must be created as fallback");
         assert!(mock.last_set.borrow().is_some(), "should store in keyring");
@@ -603,11 +719,11 @@ mod tests {
     }
 
     #[test]
-    fn keyring_backend_no_entry_no_file_keyring_set_fails() {
+    fn keyring_with_file_no_entry_no_file_keyring_set_fails() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
         let mock = MockKeyring::no_entry().with_set_failure();
-        let key = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let key = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(key.len(), 32);
         assert!(key_file.exists(), "file must be created when keyring fails");
         let file_key = read_key_file(&key_file).unwrap();
@@ -615,31 +731,31 @@ mod tests {
     }
 
     #[test]
-    fn keyring_backend_platform_error_falls_back_to_file() {
+    fn keyring_with_file_platform_error_falls_back_to_file() {
         let dir = tempfile::tempdir().unwrap();
         let (expected, key_file) = write_test_key(dir.path());
         let mock = MockKeyring::platform_error();
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(result, expected);
     }
 
     #[test]
-    fn keyring_backend_platform_error_no_file_generates() {
+    fn keyring_with_file_platform_error_no_file_generates() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
         let mock = MockKeyring::platform_error();
-        let key = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let key = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(key.len(), 32);
         assert!(key_file.exists());
     }
 
     #[test]
-    fn keyring_backend_invalid_keyring_data_uses_file() {
+    fn keyring_with_file_invalid_keyring_data_uses_file() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
         let (expected, key_file) = write_test_key(dir.path());
         let mock = MockKeyring::with_password(&STANDARD.encode([1u8; 16])); // wrong length
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(result, expected);
     }
 
@@ -686,8 +802,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
         let mock = MockKeyring::platform_error();
-        let key1 = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
-        let key2 = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let key1 = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
+        let key2 = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
         assert_eq!(key1, key2);
     }
 
@@ -695,8 +811,21 @@ mod tests {
 
     #[test]
     fn backend_default_is_keyring() {
-        // from_env reads the env; default (empty/unset) → Keyring
-        assert_eq!(KeyringBackend::from_env(), KeyringBackend::Keyring);
+        assert_eq!(parse_backend(""), KeyringBackend::Keyring);
+    }
+
+    #[test]
+    fn backend_uses_keyring() {
+        assert!(KeyringBackend::Keyring.uses_keyring());
+        assert!(KeyringBackend::KeyringWithFile.uses_keyring());
+        assert!(!KeyringBackend::File.uses_keyring());
+    }
+
+    #[test]
+    fn backend_saves_to_file() {
+        assert!(!KeyringBackend::Keyring.saves_to_file());
+        assert!(KeyringBackend::KeyringWithFile.saves_to_file());
+        assert!(KeyringBackend::File.saves_to_file());
     }
 
     // ---- read_key_file tests ----
@@ -843,38 +972,44 @@ mod tests {
 
     #[test]
     fn backend_from_env_file_lowercase() {
-        // We can't easily set env vars in parallel tests, but we can test
-        // the parsing logic directly via the match arm.
-        assert_eq!(
-            match "file" {
-                "file" => KeyringBackend::File,
-                _ => KeyringBackend::Keyring,
-            },
-            KeyringBackend::File
-        );
+        assert_eq!(parse_backend("file"), KeyringBackend::File);
     }
 
     #[test]
     fn backend_from_env_file_uppercase() {
-        // to_lowercase() should handle "FILE" → "file"
+        assert_eq!(parse_backend("FILE"), KeyringBackend::File);
+    }
+
+    #[test]
+    fn backend_from_env_keyring_with_file() {
         assert_eq!(
-            match "FILE".to_lowercase().as_str() {
-                "file" => KeyringBackend::File,
-                _ => KeyringBackend::Keyring,
-            },
-            KeyringBackend::File
+            parse_backend("keyring-with-file"),
+            KeyringBackend::KeyringWithFile
+        );
+    }
+
+    #[test]
+    fn backend_from_env_keyring_with_file_uppercase() {
+        assert_eq!(
+            parse_backend("KEYRING-WITH-FILE"),
+            KeyringBackend::KeyringWithFile
         );
     }
 
     #[test]
     fn backend_from_env_invalid_defaults_to_keyring() {
-        assert_eq!(
-            match "foobar".to_lowercase().as_str() {
-                "file" => KeyringBackend::File,
-                _ => KeyringBackend::Keyring,
-            },
-            KeyringBackend::Keyring
-        );
+        assert_eq!(parse_backend("foobar"), KeyringBackend::Keyring);
+    }
+
+    /// Parse a backend string using the same logic as `from_env()`.
+    fn parse_backend(s: &str) -> KeyringBackend {
+        let lower = s.to_lowercase();
+        match lower.as_str() {
+            "keyring" | "" => KeyringBackend::Keyring,
+            "keyring-with-file" => KeyringBackend::KeyringWithFile,
+            "file" => KeyringBackend::File,
+            _ => KeyringBackend::Keyring,
+        }
     }
 
     // ---- Race condition tests ----
@@ -895,7 +1030,7 @@ mod tests {
                 std::fs::write(&race_key_file, &race_winner_b64).unwrap();
             }
         });
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
 
         assert_eq!(result, winner_key);
         let synced = mock.last_set.borrow().clone().unwrap();
@@ -911,7 +1046,7 @@ mod tests {
         std::fs::write(&key_file, "corrupt-data").unwrap();
 
         let mock = MockKeyring::no_entry();
-        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        let result = resolve_key(KeyringBackend::KeyringWithFile, &mock, &key_file).unwrap();
 
         // Should generate a new key and overwrite the corrupt file.
         assert_eq!(result.len(), 32);

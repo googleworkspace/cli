@@ -122,7 +122,7 @@ The CLI supports multiple auth workflows so it works on your laptop, in CI, and 
 
 ### Interactive (local desktop)
 
-Credentials are encrypted at rest (AES-256-GCM) with the key stored in your OS keyring (or `~/.config/gws/.encryption_key` when `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file`).
+Credentials are encrypted at rest (AES-256-GCM) with the key stored in your OS keyring. Set `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=keyring-with-file` to also keep a durable `.encryption_key` file backup, or `=file` for file-only storage (Docker/CI/headless).
 
 ```bash
 gws auth setup       # one-time: creates a Cloud project, enables APIs, logs you in
