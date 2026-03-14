@@ -920,6 +920,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "yup-oauth2",
  "zeroize",
 ]

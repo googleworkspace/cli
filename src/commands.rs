@@ -46,6 +46,14 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .help("Output format: json (default), table, yaml, csv")
                 .value_name("FORMAT")
                 .global(true),
+        )
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .short('v')
+                .help("Print request and response details to stderr (method, URL, status, timing)")
+                .action(clap::ArgAction::SetTrue)
+                .global(true),
         );
 
     // Inject helper commands
@@ -278,5 +286,20 @@ mod tests {
             sanitize_arg.is_some(),
             "--sanitize arg should be present on root command"
         );
+    }
+
+    #[test]
+    fn test_verbose_arg_present_and_global() {
+        let doc = make_doc();
+        let cmd = build_cli(&doc);
+
+        let args: Vec<_> = cmd.get_arguments().collect();
+        let verbose_arg = args.iter().find(|a| a.get_id() == "verbose");
+        assert!(
+            verbose_arg.is_some(),
+            "--verbose arg should be present on root command"
+        );
+        let verbose_arg = verbose_arg.unwrap();
+        assert!(verbose_arg.is_global_set(), "--verbose should be global");
     }
 }
