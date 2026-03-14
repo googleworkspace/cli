@@ -279,7 +279,22 @@ fn resolve_key(
                 let key = generate_random_key();
                 let b64_key = STANDARD.encode(key);
 
-                let _ = provider.set_password(&b64_key);
+                if let Err(e) = provider.set_password(&b64_key) {
+                    if backend.saves_to_file() {
+                        eprintln!(
+                            "Warning: failed to store key in OS keyring: {e}. \
+                             Falling back to file storage."
+                        );
+                    } else {
+                        anyhow::bail!(
+                            "Failed to store encryption key in OS keyring: {e}. \
+                             The key cannot be persisted, so credentials would be \
+                             unrecoverable after this process exits. \
+                             Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=keyring-with-file \
+                             or =file to enable file-based key storage."
+                        );
+                    }
+                }
 
                 if backend.saves_to_file() {
                     match save_key_file_exclusive(key_file, &b64_key) {
@@ -601,6 +616,27 @@ mod tests {
         assert_eq!(key.len(), 32);
         assert!(!key_file.exists(), "keyring-only must NOT create a file");
         assert!(mock.last_set.borrow().is_some(), "should store in keyring");
+    }
+
+    #[test]
+    fn keyring_only_no_entry_no_file_set_password_fails_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+        let mock = MockKeyring::no_entry().with_set_failure();
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file);
+        assert!(
+            result.is_err(),
+            "must fail when keyring set_password fails in keyring-only mode"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Failed to store encryption key"),
+            "error should explain the failure: {msg}"
+        );
+        assert!(
+            !key_file.exists(),
+            "must NOT create a file in keyring-only mode"
+        );
     }
 
     #[test]
