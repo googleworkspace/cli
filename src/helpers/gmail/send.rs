@@ -30,6 +30,7 @@ pub(super) struct SendConfig {
     pub to: Vec<Mailbox>,
     pub subject: String,
     pub body: String,
+    pub from: Option<Vec<Mailbox>>,
     pub cc: Option<Vec<Mailbox>>,
     pub bcc: Option<Vec<Mailbox>>,
     pub html: bool,
@@ -40,7 +41,12 @@ fn create_send_raw_message(config: &SendConfig) -> Result<String, GwsError> {
         .to(to_mb_address_list(&config.to))
         .subject(&config.subject);
 
-    let mb = apply_optional_headers(mb, None, config.cc.as_deref(), config.bcc.as_deref());
+    let mb = apply_optional_headers(
+        mb,
+        config.from.as_deref(),
+        config.cc.as_deref(),
+        config.bcc.as_deref(),
+    );
 
     finalize_message(mb, &config.body, config.html)
 }
@@ -56,6 +62,7 @@ fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
         to,
         subject: matches.get_one::<String>("subject").unwrap().to_string(),
         body: matches.get_one::<String>("body").unwrap().to_string(),
+        from: parse_optional_mailboxes(matches, "from"),
         cc: parse_optional_mailboxes(matches, "cc"),
         bcc: parse_optional_mailboxes(matches, "bcc"),
         html: matches.get_flag("html"),
@@ -72,6 +79,7 @@ mod tests {
             .arg(Arg::new("to").long("to"))
             .arg(Arg::new("subject").long("subject"))
             .arg(Arg::new("body").long("body"))
+            .arg(Arg::new("from").long("from"))
             .arg(Arg::new("cc").long("cc"))
             .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("html").long("html").action(ArgAction::SetTrue));
@@ -94,8 +102,41 @@ mod tests {
         assert_eq!(config.to[0].email, "me@example.com");
         assert_eq!(config.subject, "Hi");
         assert_eq!(config.body, "Body");
+        assert!(config.from.is_none());
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
+    }
+
+    #[test]
+    fn test_parse_send_args_with_from() {
+        let matches = make_matches_send(&[
+            "test",
+            "--to",
+            "me@example.com",
+            "--subject",
+            "Hi",
+            "--body",
+            "Body",
+            "--from",
+            "alias@example.com",
+        ]);
+        let config = parse_send_args(&matches).unwrap();
+        assert_eq!(config.from.as_ref().unwrap()[0].email, "alias@example.com");
+
+        // Whitespace-only --from becomes None
+        let matches = make_matches_send(&[
+            "test",
+            "--to",
+            "me@example.com",
+            "--subject",
+            "Hi",
+            "--body",
+            "Body",
+            "--from",
+            "  ",
+        ]);
+        let config = parse_send_args(&matches).unwrap();
+        assert!(config.from.is_none());
     }
 
     #[test]
@@ -181,6 +222,7 @@ mod tests {
             to: Mailbox::parse_list("bob@example.com"),
             subject: "HTML test".to_string(),
             body: "<p>Hello <b>world</b></p>".to_string(),
+            from: None,
             cc: None,
             bcc: None,
             html: true,
@@ -205,6 +247,7 @@ mod tests {
             to: Mailbox::parse_list("bob@example.com"),
             subject: "Hello".to_string(),
             body: "World".to_string(),
+            from: None,
             cc: None,
             bcc: None,
             html: false,
@@ -225,6 +268,7 @@ mod tests {
             to: Mailbox::parse_list("alice@example.com"),
             subject: "Test".to_string(),
             body: "Body".to_string(),
+            from: None,
             cc: Some(Mailbox::parse_list("carol@example.com")),
             bcc: Some(Mailbox::parse_list("secret@example.com")),
             html: false,
@@ -250,11 +294,49 @@ mod tests {
     }
 
     #[test]
+    fn test_send_with_from() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("bob@example.com"),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            from: Some(Mailbox::parse_list("alias@example.com")),
+            cc: None,
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        assert!(extract_header(&raw, "From")
+            .unwrap()
+            .contains("alias@example.com"));
+        assert!(extract_header(&raw, "To")
+            .unwrap()
+            .contains("bob@example.com"));
+    }
+
+    #[test]
+    fn test_send_without_from_has_no_from_header() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("bob@example.com"),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            from: None,
+            cc: None,
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        assert!(extract_header(&raw, "From").is_none());
+    }
+
+    #[test]
     fn test_send_multiple_to_recipients() {
         let config = SendConfig {
             to: Mailbox::parse_list("alice@example.com, bob@example.com"),
             subject: "Group".to_string(),
             body: "Hi all".to_string(),
+            from: None,
             cc: None,
             bcc: None,
             html: false,
@@ -263,5 +345,55 @@ mod tests {
         let to_header = extract_header(&raw, "To").unwrap();
         assert!(to_header.contains("alice@example.com"));
         assert!(to_header.contains("bob@example.com"));
+    }
+
+    #[test]
+    fn test_send_crlf_injection_in_from_does_not_create_header() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("alice@example.com"),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            from: Some(Mailbox::parse_list(
+                "sender@example.com\r\nBcc: evil@attacker.com",
+            )),
+            cc: None,
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        // The CRLF injection should not create a Bcc header
+        assert!(
+            extract_header(&raw, "Bcc").is_none(),
+            "CRLF injection via --from should not create Bcc header"
+        );
+        // The From header should contain the sanitized email
+        assert!(extract_header(&raw, "From")
+            .unwrap()
+            .contains("sender@example.com"));
+    }
+
+    #[test]
+    fn test_send_crlf_injection_in_cc_does_not_create_header() {
+        let config = SendConfig {
+            to: Mailbox::parse_list("alice@example.com"),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            from: None,
+            cc: Some(Mailbox::parse_list("carol@example.com\r\nX-Injected: yes")),
+            bcc: None,
+            html: false,
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        // CRLF stripped → "X-Injected: yes" is concatenated into the email,
+        // not emitted as a separate header line
+        assert!(
+            extract_header(&raw, "X-Injected").is_none(),
+            "CRLF injection via --cc should not create X-Injected header"
+        );
+        assert!(extract_header(&raw, "Cc")
+            .unwrap()
+            .contains("carol@example.com"));
     }
 }
