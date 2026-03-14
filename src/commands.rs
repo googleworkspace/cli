@@ -43,7 +43,7 @@ pub fn build_cli(doc: &RestDescription) -> Command {
         .arg(
             clap::Arg::new("format")
                 .long("format")
-                .help("Output format: json (default), table, yaml, csv, tsv")
+                .help("Output format: json (default), table, yaml, csv")
                 .value_name("FORMAT")
                 .global(true),
         )

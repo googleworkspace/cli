@@ -445,11 +445,9 @@ pub async fn execute_method(
                 if params.is_empty() {
                     input.full_url.clone()
                 } else {
-                    let qs = params
-                        .iter()
-                        .map(|(k, v)| format!("{k}={v}"))
-                        .collect::<Vec<_>>()
-                        .join("&");
+                    let qs = url::form_urlencoded::Serializer::new(String::new())
+                        .extend_pairs(&params)
+                        .finish();
                     format!("{}?{}", input.full_url, qs)
                 }
             };

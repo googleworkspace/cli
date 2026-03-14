@@ -179,7 +179,7 @@ async fn run() -> Result<(), GwsError> {
             Ok(fmt) => fmt,
             Err(unknown) => {
                 eprintln!(
-                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv, tsv)"
+                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
                 );
                 formatter::OutputFormat::Json
             }
@@ -436,7 +436,7 @@ fn print_usage() {
     println!("    --upload <PATH>       Local file to upload as media content (multipart)");
     println!("    --upload-content-type <MIME>  MIME type of the uploaded file (auto-detected from extension if omitted)");
     println!("    --output <PATH>       Output file path for binary responses");
-    println!("    --format <FMT>        Output format: json (default), table, yaml, csv, tsv");
+    println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
     println!("    --verbose / -v        Print request/response details to stderr");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
