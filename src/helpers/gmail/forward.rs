@@ -36,6 +36,11 @@ pub(super) async fn handle_forward(
         (orig, Some(t))
     };
 
+    let attachments = match matches.get_many::<String>("attachment") {
+        Some(paths) => read_attachments(&paths.cloned().collect::<Vec<_>>())?,
+        None => Vec::new(),
+    };
+
     let subject = build_forward_subject(&original.subject);
     let envelope = ForwardEnvelope {
         to: &config.to,
@@ -46,7 +51,7 @@ pub(super) async fn handle_forward(
         body: config.body.as_deref(),
         html: config.html,
     };
-    let raw = create_forward_raw_message(&envelope, &original);
+    let raw = create_forward_raw_message(&envelope, &original, &attachments);
 
     super::send_raw_email(
         doc,
@@ -90,7 +95,11 @@ fn build_forward_subject(original_subject: &str) -> String {
     }
 }
 
-fn create_forward_raw_message(envelope: &ForwardEnvelope, original: &OriginalMessage) -> String {
+fn create_forward_raw_message(
+    envelope: &ForwardEnvelope,
+    original: &OriginalMessage,
+    attachments: &[Attachment],
+) -> String {
     let references = build_references(&original.references, &original.message_id_header);
     let builder = MessageBuilder {
         to: envelope.to,
@@ -115,7 +124,7 @@ fn create_forward_raw_message(envelope: &ForwardEnvelope, original: &OriginalMes
         None => forwarded_block,
     };
 
-    builder.build(&body)
+    builder.build_with_attachments(&body, attachments)
 }
 
 fn format_forwarded_message(original: &OriginalMessage) -> String {
@@ -232,7 +241,7 @@ mod tests {
             body: None,
             html: false,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("To: dave@example.com"));
         assert!(raw.contains("Subject: Fwd: Hello"));
@@ -271,7 +280,7 @@ mod tests {
             body: Some("FYI see below"),
             html: false,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Cc: eve@example.com"));
         assert!(raw.contains("Bcc: secret@example.com"));
@@ -305,7 +314,7 @@ mod tests {
             body: None,
             html: false,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("In-Reply-To: <msg-2@example.com>"));
         assert!(
@@ -522,7 +531,7 @@ mod tests {
             body: None,
             html: true,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
         assert!(raw.contains("gmail_quote"));
@@ -556,7 +565,7 @@ mod tests {
             body: Some("<p>FYI</p>"),
             html: true,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
         assert!(raw.contains("<p>FYI</p><br>\r\n<div class=\"gmail_quote gmail_quote_container\">"));
@@ -589,7 +598,7 @@ mod tests {
             body: Some("<p>FYI</p>"),
             html: true,
         };
-        let raw = create_forward_raw_message(&envelope, &original);
+        let raw = create_forward_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
         assert!(raw.contains("<p>FYI</p>"));
