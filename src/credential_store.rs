@@ -60,24 +60,38 @@ fn save_key_file_exclusive(path: &std::path::Path, b64_key: &str) -> std::io::Re
 }
 
 /// Persist the base64-encoded encryption key to a local file with restrictive
-/// permissions (0600 file, 0700 directory). Overwrites any existing file.
+/// permissions (0600 file, 0700 directory). Overwrites any existing file
+/// atomically via a sibling `.tmp` file + rename so a crash mid-write never
+/// leaves the key file truncated or corrupt.
 fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
     use std::io::Write;
     ensure_key_dir(path)?;
 
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let tmp_path = path.with_file_name(format!("{}.tmp", file_name.to_string_lossy()));
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true).mode(0o600);
-        let mut file = options.open(path)?;
-        file.write_all(b64_key.as_bytes())?;
-        file.sync_all()?; // fsync: ensure key is durable before returning
+        let mut tmp = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp_path)?;
+        tmp.write_all(b64_key.as_bytes())?;
+        tmp.sync_all()?;
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, b64_key)?;
+        let mut tmp = std::fs::File::create(&tmp_path)?;
+        tmp.write_all(b64_key.as_bytes())?;
+        tmp.sync_all()?;
     }
+
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
