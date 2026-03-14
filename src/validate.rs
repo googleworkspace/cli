@@ -141,15 +141,17 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
 /// (including DEL, 0x7F), or dangerous Unicode characters such as
 /// zero-width chars, bidi overrides, and Unicode line/paragraph separators.
 fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
-    if value.bytes().any(|b| b < 0x20 || b == 0x7F) {
-        return Err(GwsError::Validation(format!(
-            "{flag_name} contains invalid control characters"
-        )));
-    }
-    if value.chars().any(is_rejected_unicode) {
-        return Err(GwsError::Validation(format!(
-            "{flag_name} contains invalid Unicode characters"
-        )));
+    for c in value.chars() {
+        if (c as u32) < 0x20 || c as u32 == 0x7F {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid control characters"
+            )));
+        }
+        if is_rejected_unicode(c) {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid Unicode characters"
+            )));
+        }
     }
     Ok(())
 }
@@ -226,14 +228,9 @@ pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
             "Resource name must not contain path traversal ('..') segments: {s}"
         )));
     }
-    if s.contains('\0') || s.chars().any(|c| c.is_control()) {
+    if s.chars().any(|c| c == '\0' || c.is_control() || is_rejected_unicode(c)) {
         return Err(GwsError::Validation(format!(
             "Resource name contains invalid characters: {s}"
-        )));
-    }
-    if s.chars().any(is_rejected_unicode) {
-        return Err(GwsError::Validation(format!(
-            "Resource name contains invalid Unicode characters: {s}"
         )));
     }
     // Reject URL-special characters that could inject query params or fragments
