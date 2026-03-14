@@ -21,6 +21,25 @@
 use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
+/// Returns `true` for Unicode characters that are dangerous but not caught by
+/// ASCII-range byte checks or `char::is_control()`: zero-width chars, bidi
+/// overrides, Unicode line/paragraph separators, and directional isolates.
+///
+/// Using `matches!` with char ranges gives O(1) per character instead of the
+/// O(M) linear scan that a slice `.contains()` would require.
+fn is_rejected_unicode(c: char) -> bool {
+    matches!(c,
+        // zero-width: ZWSP, ZWNJ, ZWJ, BOM/ZWNBSP
+        '\u{200B}'..='\u{200D}' | '\u{FEFF}' |
+        // bidi: LRE, RLE, PDF, LRO, RLO
+        '\u{202A}'..='\u{202E}' |
+        // line / paragraph separators
+        '\u{2028}'..='\u{2029}' |
+        // directional isolates: LRI, RLI, FSI, PDI
+        '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Validates that `dir` is a safe output directory.
 ///
 /// The path is resolved relative to CWD. The function rejects paths that
@@ -118,13 +137,21 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
     Ok(canonical)
 }
 
-/// Rejects strings containing null bytes or ASCII control characters
-/// (including DEL, 0x7F).
+/// Rejects strings containing null bytes, ASCII control characters
+/// (including DEL, 0x7F), or dangerous Unicode characters such as
+/// zero-width chars, bidi overrides, and Unicode line/paragraph separators.
 fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
-    if value.bytes().any(|b| b < 0x20 || b == 0x7F) {
-        return Err(GwsError::Validation(format!(
-            "{flag_name} contains invalid control characters"
-        )));
+    for c in value.chars() {
+        if (c as u32) < 0x20 || c as u32 == 0x7F {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid control characters"
+            )));
+        }
+        if is_rejected_unicode(c) {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid Unicode characters"
+            )));
+        }
     }
     Ok(())
 }
@@ -201,7 +228,7 @@ pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
             "Resource name must not contain path traversal ('..') segments: {s}"
         )));
     }
-    if s.contains('\0') || s.chars().any(|c| c.is_control()) {
+    if s.chars().any(|c| c == '\0' || c.is_control() || is_rejected_unicode(c)) {
         return Err(GwsError::Validation(format!(
             "Resource name contains invalid characters: {s}"
         )));
@@ -528,6 +555,112 @@ mod tests {
         assert!(validate_resource_name("spaces/%2e%2e/etc").is_err());
         // Just % should be rejected too
         assert!(validate_resource_name("spaces/100%").is_err());
+    }
+
+    // --- reject_control_chars Unicode ---
+
+    #[test]
+    fn test_reject_control_chars_zero_width_space() {
+        // U+200B zero-width space
+        assert!(reject_control_chars("foo\u{200B}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_bom() {
+        // U+FEFF byte-order mark / zero-width no-break space
+        assert!(reject_control_chars("foo\u{FEFF}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_rtl_override() {
+        // U+202E RIGHT-TO-LEFT OVERRIDE
+        assert!(reject_control_chars("foo\u{202E}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_unicode_line_separator() {
+        // U+2028 LINE SEPARATOR
+        assert!(reject_control_chars("foo\u{2028}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_paragraph_separator() {
+        // U+2029 PARAGRAPH SEPARATOR
+        assert!(reject_control_chars("foo\u{2029}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_zero_width_joiner() {
+        // U+200D ZERO WIDTH JOINER
+        assert!(reject_control_chars("foo\u{200D}bar", "test").is_err());
+    }
+
+    #[test]
+    fn test_reject_control_chars_normal_unicode_ok() {
+        // CJK, accented characters and emoji should pass
+        assert!(reject_control_chars("日本語", "test").is_ok());
+        assert!(reject_control_chars("café", "test").is_ok());
+        assert!(reject_control_chars("αβγ", "test").is_ok());
+    }
+
+    // --- path validator Unicode (via validate_safe_output_dir) ---
+
+    #[test]
+    fn test_output_dir_rejects_zero_width_chars() {
+        // U+200B in a path segment
+        assert!(validate_safe_output_dir("foo\u{200B}bar").is_err());
+    }
+
+    #[test]
+    fn test_output_dir_rejects_rtl_override() {
+        assert!(validate_safe_output_dir("foo\u{202E}bar").is_err());
+    }
+
+    #[test]
+    fn test_output_dir_rejects_unicode_line_separator() {
+        assert!(validate_safe_output_dir("foo\u{2028}bar").is_err());
+    }
+
+    // --- validate_resource_name Unicode ---
+
+    #[test]
+    fn test_validate_resource_name_zero_width_chars() {
+        // U+200B, U+200D, U+FEFF all rejected
+        assert!(validate_resource_name("foo\u{200B}bar").is_err());
+        assert!(validate_resource_name("foo\u{200D}bar").is_err());
+        assert!(validate_resource_name("foo\u{FEFF}bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_unicode_line_seps() {
+        assert!(validate_resource_name("foo\u{2028}bar").is_err());
+        assert!(validate_resource_name("foo\u{2029}bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_rtl_override() {
+        assert!(validate_resource_name("foo\u{202E}bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_bidi_embedding() {
+        // U+202A LEFT-TO-RIGHT EMBEDDING, U+202B RIGHT-TO-LEFT EMBEDDING
+        assert!(validate_resource_name("foo\u{202A}bar").is_err());
+        assert!(validate_resource_name("foo\u{202B}bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_resource_name_homoglyphs_pass_through() {
+        // Cyrillic lookalikes are intentionally allowed (homoglyph detection
+        // is out of scope for this validator — see validate_resource_name docs).
+        assert!(validate_resource_name("spaces/ΑΒС").is_ok()); // Cyrillic С
+    }
+
+    #[test]
+    fn test_validate_resource_name_overlong_accepted() {
+        // No length limit — documents current behaviour.
+        let long = "a".repeat(10_000);
+        assert!(validate_resource_name(&long).is_ok());
     }
 
     // --- validate_api_identifier ---
