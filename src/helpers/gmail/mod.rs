@@ -507,11 +507,157 @@ pub(super) struct ThreadingHeaders<'a> {
 
 /// Shared builder for RFC 2822 email messages.
 ///
+/// Represents a file attachment for email messages.
+#[derive(Debug)]
+pub(super) struct Attachment {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+/// Guess the MIME content type from a file extension.
+pub(super) fn guess_content_type(filename: &str) -> &'static str {
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "gz" | "gzip" => "application/gzip",
+        "tar" => "application/x-tar",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "eml" => "message/rfc822",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read attachment files from a list of paths.
+///
+/// Each path is resolved relative to the current working directory and
+/// canonicalized to resolve symlinks and `..` components. Both relative
+/// and absolute paths are accepted. Uses only the basename of the
+/// resolved path as the attachment filename to avoid leaking local
+/// directory structure.
+pub(super) fn read_attachments(paths: &[String]) -> Result<Vec<Attachment>, GwsError> {
+    let cwd = std::env::current_dir().map_err(|e| {
+        GwsError::Other(anyhow::anyhow!("Failed to determine current directory: {e}"))
+    })?;
+
+    let mut attachments = Vec::new();
+    for path_str in paths {
+        let path_str = path_str.trim();
+        if path_str.is_empty() {
+            continue;
+        }
+        let raw_path = std::path::Path::new(path_str);
+        let path = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else {
+            cwd.join(path_str)
+        };
+        // Open, check metadata, and read from the same file handle to
+        // avoid TOCTOU race conditions (symlink swap between check and read).
+        let mut file = std::fs::File::open(&path).map_err(|e| {
+            GwsError::Other(anyhow::anyhow!(
+                "Failed to open attachment '{}': {}",
+                path_str,
+                e
+            ))
+        })?;
+        let metadata = file.metadata().map_err(|e| {
+            GwsError::Other(anyhow::anyhow!(
+                "Failed to read metadata for attachment '{}': {}",
+                path_str,
+                e
+            ))
+        })?;
+        if !metadata.is_file() {
+            return Err(GwsError::Other(anyhow::anyhow!(
+                "Attachment path '{}' is not a regular file",
+                path_str,
+            )));
+        }
+        let mut data = Vec::with_capacity(metadata.len() as usize);
+        use std::io::Read;
+        file.read_to_end(&mut data).map_err(|e| {
+            GwsError::Other(anyhow::anyhow!(
+                "Failed to read attachment '{}': {}",
+                path_str,
+                e
+            ))
+        })?;
+        // Canonicalize after reading for the basename only.
+        let canonical = path.canonicalize().unwrap_or(path);
+        // Use only the basename to avoid leaking local paths.
+        let filename = canonical
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment")
+            .to_string();
+        let content_type = guess_content_type(&filename).to_string();
+        attachments.push(Attachment {
+            filename,
+            content_type,
+            data,
+        });
+    }
+    Ok(attachments)
+}
+
+/// Escape a filename for use in a MIME quoted-string parameter.
+/// Backslashes and double quotes are escaped per RFC 2045/2822.
+fn escape_quoted_string(s: &str) -> String {
+    sanitize_header_value(s)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+/// Encode a filename for MIME Content-Type/Content-Disposition headers.
+///
+/// For ASCII-only filenames, returns a simple `name="filename"` pair with
+/// proper escaping. For non-ASCII filenames, uses RFC 2231 encoding
+/// (`name*=UTF-8''...`) which is supported by all modern email clients.
+fn encode_mime_filename(param: &str, filename: &str) -> String {
+    if filename.is_ascii() {
+        format!("{}=\"{}\"", param, escape_quoted_string(filename))
+    } else {
+        // RFC 2231: parameter*=charset'language'value
+        // Percent-encode non-ASCII bytes and RFC 5987 special chars.
+        let mut encoded = String::new();
+        for &byte in filename.as_bytes() {
+            if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+                encoded.push(byte as char);
+            } else {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+        format!("{}*=UTF-8''{}", param, encoded)
+    }
+}
+
 /// Handles header construction with CRLF sanitization, RFC 2047
 /// encoding of non-ASCII subjects, and Content-Type selection
 /// (`text/plain` or `text/html` based on the `html` field). Each helper
 /// owns its body assembly (quoted reply, forwarded block, or standalone
-/// body) and passes it to `build()`.
+/// body) and passes it to `build()` or `build_with_attachments()`.
 pub(super) struct MessageBuilder<'a> {
     pub to: &'a str,
     pub subject: &'a str,
@@ -523,8 +669,11 @@ pub(super) struct MessageBuilder<'a> {
 }
 
 impl MessageBuilder<'_> {
-    /// Build the complete RFC 2822 message (headers + blank line + body).
-    pub fn build(&self, body: &str) -> String {
+    /// Build the common RFC 2822 headers shared by both plain and multipart
+    /// messages. The `content_type_line` parameter supplies the Content-Type
+    /// header value (e.g. "text/plain; charset=utf-8" or
+    /// "multipart/mixed; boundary=\"...\"").
+    fn build_headers(&self, content_type_line: &str) -> String {
         debug_assert!(
             !self.to.is_empty(),
             "MessageBuilder: `to` must not be empty"
@@ -546,13 +695,8 @@ impl MessageBuilder<'_> {
             ));
         }
 
-        let content_type = if self.html {
-            "text/html; charset=utf-8"
-        } else {
-            "text/plain; charset=utf-8"
-        };
         headers.push_str(&format!(
-            "\r\nMIME-Version: 1.0\r\nContent-Type: {content_type}"
+            "\r\nMIME-Version: 1.0\r\nContent-Type: {content_type_line}"
         ));
 
         if let Some(from) = self.from {
@@ -578,7 +722,87 @@ impl MessageBuilder<'_> {
             ));
         }
 
+        headers
+    }
+
+    /// Build the complete RFC 2822 message (headers + blank line + body).
+    pub fn build(&self, body: &str) -> String {
+        let content_type = if self.html {
+            "text/html; charset=utf-8"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        let headers = self.build_headers(content_type);
         format!("{}\r\n\r\n{}", headers, body)
+    }
+
+    /// Build a complete RFC 2822 message, optionally with MIME attachments.
+    ///
+    /// When `attachments` is empty, delegates to `build()` for backward
+    /// compatibility. When attachments are present, produces a
+    /// multipart/mixed message per RFC 2046.
+    pub fn build_with_attachments(&self, body: &str, attachments: &[Attachment]) -> String {
+        if attachments.is_empty() {
+            return self.build(body);
+        }
+
+        use base64::engine::general_purpose::STANDARD;
+        use rand::Rng;
+
+        // Generate a random boundary string.
+        let mut rng = rand::thread_rng();
+        let boundary = format!("{:016x}{:016x}", rng.gen::<u64>(), rng.gen::<u64>());
+
+        let headers =
+            self.build_headers(&format!("multipart/mixed; boundary=\"{}\"", boundary));
+
+        // Start the multipart body.
+        let mut message = format!("{}\r\n\r\n", headers);
+
+        // Text body part.
+        let body_content_type = if self.html {
+            "text/html; charset=utf-8"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        message.push_str(&format!(
+            "--{}\r\nContent-Type: {}\r\n\r\n{}\r\n",
+            boundary, body_content_type, body
+        ));
+
+        // Attachment parts.
+        for att in attachments {
+            let encoded = STANDARD.encode(&att.data);
+            // Fold base64 into 76-character lines per RFC 2045.
+            // Base64 output is pure ASCII, so byte-index slicing is safe.
+            let mut folded = String::with_capacity(encoded.len() + (encoded.len() / 76) * 2);
+            let mut offset = 0;
+            while offset < encoded.len() {
+                if offset > 0 {
+                    folded.push_str("\r\n");
+                }
+                let end = (offset + 76).min(encoded.len());
+                folded.push_str(&encoded[offset..end]);
+                offset = end;
+            }
+
+            let ct_name = encode_mime_filename("name", &att.filename);
+            let cd_filename = encode_mime_filename("filename", &att.filename);
+            message.push_str(&format!(
+                "--{}\r\n\
+                 Content-Type: {}; {}\r\n\
+                 Content-Disposition: attachment; {}\r\n\
+                 Content-Transfer-Encoding: base64\r\n\
+                 \r\n\
+                 {}\r\n",
+                boundary, att.content_type, ct_name, cd_filename, folded,
+            ));
+        }
+
+        // Closing boundary.
+        message.push_str(&format!("--{}--\r\n", boundary));
+
+        message
     }
 }
 
@@ -740,17 +964,24 @@ impl Helper for GmailHelper {
                         .help("Show the request that would be sent without executing it")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("attachment")
+                        .long("attachment")
+                        .help("File path(s) to attach (use multiple --attachment flags for multiple files)")
+                        .action(ArgAction::Append)
+                        .value_name("FILE"),
+                )
                 .after_help(
                     "\
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
-  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
-  gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
+  gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached' --attachment report.pdf
+  gws gmail +send --to alice@example.com --subject 'Files' --body 'Multiple files' --attachment a.pdf --attachment b.csv
 
 TIPS:
   Handles RFC 2822 formatting and base64 encoding automatically.
-  For attachments, use the raw API instead: gws gmail users messages send --json '...'",
+  Use --attachment for each file to attach. Both relative and absolute paths are supported.",
                 ),
         );
 
@@ -843,14 +1074,19 @@ TIPS:
                         .help("Show the request that would be sent without executing it")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("attachment")
+                        .long("attachment")
+                        .help("File path(s) to attach (use multiple --attachment flags for multiple files)")
+                        .action(ArgAction::Append)
+                        .value_name("FILE"),
+                )
                 .after_help(
                     "\
 EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
-  gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
-  gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
-  gws gmail +reply --message-id 18f1a2b3c4d --body '<b>Bold reply</b>' --html
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Here is the file' --attachment report.pdf
 
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
@@ -919,22 +1155,26 @@ TIPS:
                         .help("Show the request that would be sent without executing it")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("attachment")
+                        .long("attachment")
+                        .help("File path(s) to attach (use multiple --attachment flags for multiple files)")
+                        .action(ArgAction::Append)
+                        .value_name("FILE"),
+                )
                 .after_help(
                     "\
 EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body '<i>Noted</i>' --html
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'See attached' --attachment report.pdf
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
   Use --to to add extra recipients to the To field.
   Use --cc to add new CC recipients.
   Use --bcc for recipients who should not be visible to others.
-  Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
+  Use --remove to exclude recipients from the outgoing reply.
   The command fails if no To recipient remains after exclusions and --to additions.",
                 ),
         );
@@ -992,14 +1232,18 @@ TIPS:
                         .help("Show the request that would be sent without executing it")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("attachment")
+                        .long("attachment")
+                        .help("File path(s) to attach (use multiple --attachment flags for multiple files)")
+                        .action(ArgAction::Append)
+                        .value_name("FILE"),
+                )
                 .after_help(
                     "\
 EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
-  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
-  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
-  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
-  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI' --attachment notes.pdf
 
 TIPS:
   Includes the original message with sender, date, subject, and recipients.",
@@ -1937,5 +2181,133 @@ mod tests {
             "<strong class=\"gmail_sendername\" dir=\"auto\">alice@example.com</strong> \
              <span dir=\"auto\">&lt;<a href=\"mailto:alice@example.com\">alice@example.com</a>&gt;</span>"
         );
+    }
+
+    #[test]
+    fn test_build_with_attachments_empty() {
+        let builder = MessageBuilder {
+            to: "bob@example.com",
+            subject: "Hello",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+            html: false,
+        };
+        let plain = builder.build("World");
+        let with_attachments = builder.build_with_attachments("World", &[]);
+        assert_eq!(plain, with_attachments);
+    }
+
+    #[test]
+    fn test_build_with_attachments_single() {
+        let builder = MessageBuilder {
+            to: "bob@example.com",
+            subject: "Report",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+            html: false,
+        };
+        let attachments = vec![Attachment {
+            filename: "test.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            data: b"fake pdf content".to_vec(),
+        }];
+        let raw = builder.build_with_attachments("See attached", &attachments);
+
+        assert!(raw.contains("Content-Type: multipart/mixed; boundary="));
+        assert!(raw.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(raw.contains("See attached"));
+        assert!(raw.contains("Content-Type: application/pdf"));
+        assert!(raw.contains("Content-Disposition: attachment; filename=\"test.pdf\""));
+        assert!(raw.contains("Content-Transfer-Encoding: base64"));
+    }
+
+    #[test]
+    fn test_build_with_attachments_content_type_detection() {
+        assert_eq!(guess_content_type("report.pdf"), "application/pdf");
+        assert_eq!(guess_content_type("archive.zip"), "application/zip");
+        assert_eq!(guess_content_type("notes.txt"), "text/plain");
+        assert_eq!(guess_content_type("image.png"), "image/png");
+        assert_eq!(guess_content_type("photo.jpg"), "image/jpeg");
+        assert_eq!(guess_content_type("data.csv"), "text/csv");
+        assert_eq!(guess_content_type("unknown.xyz"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_encode_mime_filename_ascii() {
+        let result = encode_mime_filename("filename", "report.pdf");
+        assert_eq!(result, "filename=\"report.pdf\"");
+    }
+
+    #[test]
+    fn test_encode_mime_filename_escapes_quotes() {
+        let result = encode_mime_filename("filename", "my \"file\".pdf");
+        assert!(result.contains("\\\""));
+    }
+
+    #[test]
+    fn test_encode_mime_filename_non_ascii() {
+        let result = encode_mime_filename("filename", "résumé.pdf");
+        assert!(result.starts_with("filename*=UTF-8''"));
+        assert!(result.contains("r%C3%A9sum%C3%A9.pdf"));
+    }
+
+    #[test]
+    fn test_read_attachments_rejects_nonexistent_file() {
+        let paths = vec!["/tmp/nonexistent_file_gws_test_12345.pdf".to_string()];
+        let result = read_attachments(&paths);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Failed to open"),
+            "Expected file-not-found error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_read_attachments_accepts_absolute_path() {
+        let tmp = std::env::temp_dir().join("gws_test_attachment.txt");
+        std::fs::write(&tmp, b"test content").unwrap();
+        let paths = vec![tmp.to_string_lossy().to_string()];
+        let result = read_attachments(&paths);
+        assert!(result.is_ok());
+        let attachments = result.unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "gws_test_attachment.txt");
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn test_read_attachments_rejects_empty_paths() {
+        let paths = vec!["  ".to_string(), "".to_string()];
+        let result = read_attachments(&paths);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_build_with_attachments_html() {
+        let builder = MessageBuilder {
+            to: "bob@example.com",
+            subject: "HTML",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+            html: true,
+        };
+        let attachments = vec![Attachment {
+            filename: "pic.png".to_string(),
+            content_type: "image/png".to_string(),
+            data: b"fake png".to_vec(),
+        }];
+        let raw = builder.build_with_attachments("<p>Hi</p>", &attachments);
+
+        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(raw.contains("<p>Hi</p>"));
+        assert!(raw.contains("Content-Type: image/png"));
     }
 }

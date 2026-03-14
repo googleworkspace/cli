@@ -6,6 +6,11 @@ pub(super) async fn handle_send(
 ) -> Result<(), GwsError> {
     let config = parse_send_args(matches);
 
+    let attachments = match matches.get_many::<String>("attachment") {
+        Some(paths) => read_attachments(&paths.cloned().collect::<Vec<_>>())?,
+        None => Vec::new(),
+    };
+
     let raw = MessageBuilder {
         to: &config.to,
         subject: &config.subject,
@@ -15,7 +20,7 @@ pub(super) async fn handle_send(
         threading: None,
         html: config.html,
     }
-    .build(&config.body);
+    .build_with_attachments(&config.body, &attachments);
 
     super::send_raw_email(doc, matches, &raw, None, None).await
 }

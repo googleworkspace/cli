@@ -97,7 +97,12 @@ pub(super) async fn handle_reply(
         html: config.html,
     };
 
-    let raw = create_reply_raw_message(&envelope, &original);
+    let attachments = match matches.get_many::<String>("attachment") {
+        Some(paths) => read_attachments(&paths.cloned().collect::<Vec<_>>())?,
+        None => Vec::new(),
+    };
+
+    let raw = create_reply_raw_message(&envelope, &original, &attachments);
 
     let auth_token = token.as_ref().map(|(t, _)| t.as_str());
     super::send_raw_email(doc, matches, &raw, Some(&original.thread_id), auth_token).await
@@ -341,7 +346,11 @@ fn build_reply_subject(original_subject: &str) -> String {
     }
 }
 
-fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage) -> String {
+fn create_reply_raw_message(
+    envelope: &ReplyEnvelope,
+    original: &OriginalMessage,
+    attachments: &[Attachment],
+) -> String {
     let builder = MessageBuilder {
         to: envelope.to,
         subject: envelope.subject,
@@ -358,7 +367,7 @@ fn create_reply_raw_message(envelope: &ReplyEnvelope, original: &OriginalMessage
         (format_quoted_original(original), "\r\n\r\n")
     };
     let body = format!("{}{}{}", envelope.body, separator, quoted);
-    builder.build(&body)
+    builder.build_with_attachments(&body, attachments)
 }
 
 fn format_quoted_original(original: &OriginalMessage) -> String {
@@ -470,7 +479,7 @@ mod tests {
             body: "My reply",
             html: false,
         };
-        let raw = create_reply_raw_message(&envelope, &original);
+        let raw = create_reply_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("To: alice@example.com"));
         assert!(raw.contains("Subject: Re: Hello"));
@@ -512,7 +521,7 @@ mod tests {
             body: "Reply with all headers",
             html: false,
         };
-        let raw = create_reply_raw_message(&envelope, &original);
+        let raw = create_reply_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Cc: carol@example.com"));
         assert!(raw.contains("Bcc: secret@example.com"));
@@ -1238,7 +1247,7 @@ mod tests {
             body: "Adding Dave",
             html: false,
         };
-        let raw = create_reply_raw_message(&envelope, &original);
+        let raw = create_reply_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("To: alice@example.com, dave@example.com"));
         assert!(!raw.contains("Cc:"));
@@ -1296,7 +1305,7 @@ mod tests {
             body: "Hi Bob, nice to meet you!",
             html: false,
         };
-        let raw = create_reply_raw_message(&envelope, &original);
+        let raw = create_reply_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("To: bob@example.com"));
         assert!(!raw.contains("Cc:"));
@@ -1485,7 +1494,7 @@ mod tests {
             body: "<p>My HTML reply</p>",
             html: true,
         };
-        let raw = create_reply_raw_message(&envelope, &original);
+        let raw = create_reply_raw_message(&envelope, &original, &[]);
 
         assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
         assert!(raw.contains("<p>My HTML reply</p>"));
