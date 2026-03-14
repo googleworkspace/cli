@@ -111,6 +111,7 @@ TIPS:
                     None,
                     None,
                     matches.get_flag("dry-run"),
+                    matches.get_flag("verbose"),
                     &pagination,
                     None,
                     &crate::helpers::modelarmor::SanitizeMode::Warn,

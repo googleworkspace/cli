@@ -364,6 +364,14 @@ async fn handle_binary_response(
 /// 5. Handling various response types (JSON, binary).
 /// 6. Auto-pagination for list endpoints.
 /// 7. Model Armor prompt injection scanning.
+///
+/// # Stdout / stderr contract
+///
+/// * **stdout** — all structured output: JSON responses, dry-run previews,
+///   download summaries. Must remain machine-readable so that pipes like
+///   `gws ... | jq` work correctly.
+/// * **stderr** — all human-readable diagnostics: hints, warnings, verbose
+///   request/response details. Never emitted to stdout.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_method(
     doc: &RestDescription,
@@ -376,6 +384,7 @@ pub async fn execute_method(
     upload_path: Option<&str>,
     upload_content_type: Option<&str>,
     dry_run: bool,
+    verbose: bool,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
@@ -408,6 +417,10 @@ pub async fn execute_method(
     let mut captured_values = Vec::new();
 
     loop {
+        if verbose && pages_fetched > 0 {
+            eprintln!("[page {}]", pages_fetched + 1);
+        }
+
         let client = crate::client::build_client()?;
         let request = build_http_request(
             &client,
@@ -423,11 +436,33 @@ pub async fn execute_method(
         .await?;
 
         let method_id = method.id.as_deref().unwrap_or("unknown");
+        if verbose {
+            let display_url = {
+                let mut params = input.query_params.clone();
+                if let Some(pt) = page_token.as_deref() {
+                    params.push(("pageToken".to_string(), pt.to_string()));
+                }
+                if params.is_empty() {
+                    input.full_url.clone()
+                } else {
+                    let qs = params
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect::<Vec<_>>()
+                        .join("&");
+                    format!("{}?{}", input.full_url, qs)
+                }
+            };
+            eprintln!("> {} {}", method.http_method, display_url);
+        }
         let start = std::time::Instant::now();
         let response = request.send().await.context("HTTP request failed")?;
         let latency_ms = start.elapsed().as_millis() as u64;
 
         let status = response.status();
+        if verbose {
+            eprintln!("< {} ({}ms)", status, latency_ms);
+        }
         let content_type = response
             .headers()
             .get("content-type")
@@ -2026,6 +2061,7 @@ async fn test_execute_method_dry_run() {
         None,
         None,
         true, // dry_run
+        false,
         &pagination,
         None,
         &sanitize_mode,
@@ -2070,6 +2106,7 @@ async fn test_execute_method_missing_path_param() {
         None,
         None,
         true,
+        false,
         &PaginationConfig::default(),
         None,
         &sanitize_mode,

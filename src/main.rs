@@ -179,7 +179,7 @@ async fn run() -> Result<(), GwsError> {
             Ok(fmt) => fmt,
             Err(unknown) => {
                 eprintln!(
-                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
+                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv, tsv)"
                 );
                 formatter::OutputFormat::Json
             }
@@ -228,6 +228,7 @@ async fn run() -> Result<(), GwsError> {
         .map(|s| s.as_str());
 
     let dry_run = matched_args.get_flag("dry-run");
+    let verbose = matched_args.get_flag("verbose");
 
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
@@ -266,6 +267,7 @@ async fn run() -> Result<(), GwsError> {
         upload_path,
         upload_content_type,
         dry_run,
+        verbose,
         &pagination,
         sanitize_config.template.as_deref(),
         &sanitize_config.mode,
@@ -434,7 +436,8 @@ fn print_usage() {
     println!("    --upload <PATH>       Local file to upload as media content (multipart)");
     println!("    --upload-content-type <MIME>  MIME type of the uploaded file (auto-detected from extension if omitted)");
     println!("    --output <PATH>       Output file path for binary responses");
-    println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
+    println!("    --format <FMT>        Output format: json (default), table, yaml, csv, tsv");
+    println!("    --verbose / -v        Print request/response details to stderr");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
     println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
