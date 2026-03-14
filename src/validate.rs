@@ -21,14 +21,24 @@
 use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
-/// Dangerous Unicode characters not caught by ASCII-range or `is_control()` checks:
-/// zero-width chars, bidi overrides, Unicode line/paragraph separators.
-const REJECTED_UNICODE_CHARS: &[char] = &[
-    '\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}', // zero-width
-    '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', // bidi
-    '\u{2028}', '\u{2029}', // line/para separators
-    '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', // directional isolates
-];
+/// Returns `true` for Unicode characters that are dangerous but not caught by
+/// ASCII-range byte checks or `char::is_control()`: zero-width chars, bidi
+/// overrides, Unicode line/paragraph separators, and directional isolates.
+///
+/// Using `matches!` with char ranges gives O(1) per character instead of the
+/// O(M) linear scan that a slice `.contains()` would require.
+fn is_rejected_unicode(c: char) -> bool {
+    matches!(c,
+        // zero-width: ZWSP, ZWNJ, ZWJ, BOM/ZWNBSP
+        '\u{200B}'..='\u{200D}' | '\u{FEFF}' |
+        // bidi: LRE, RLE, PDF, LRO, RLO
+        '\u{202A}'..='\u{202E}' |
+        // line / paragraph separators
+        '\u{2028}'..='\u{2029}' |
+        // directional isolates: LRI, RLI, FSI, PDI
+        '\u{2066}'..='\u{2069}'
+    )
+}
 
 /// Validates that `dir` is a safe output directory.
 ///
@@ -136,7 +146,7 @@ fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
             "{flag_name} contains invalid control characters"
         )));
     }
-    if value.chars().any(|c| REJECTED_UNICODE_CHARS.contains(&c)) {
+    if value.chars().any(is_rejected_unicode) {
         return Err(GwsError::Validation(format!(
             "{flag_name} contains invalid Unicode characters"
         )));
@@ -221,7 +231,7 @@ pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
             "Resource name contains invalid characters: {s}"
         )));
     }
-    if s.chars().any(|c| REJECTED_UNICODE_CHARS.contains(&c)) {
+    if s.chars().any(is_rejected_unicode) {
         return Err(GwsError::Validation(format!(
             "Resource name contains invalid Unicode characters: {s}"
         )));
