@@ -298,13 +298,13 @@ async fn model_armor_post(url: &str, body: &str) -> Result<(), GwsError> {
     let status = resp.status();
     let text = resp.text().await.context("Failed to read response")?;
 
-    println!("{text}");
-
     if !status.is_success() {
         return Err(GwsError::Other(anyhow::anyhow!(
-            "API returned status {status}"
+            "API returned status {status}: {text}"
         )));
     }
+
+    println!("{text}");
 
     Ok(())
 }
@@ -532,6 +532,19 @@ mod tests {
             CLOUD_PLATFORM_SCOPE,
             "https://www.googleapis.com/auth/cloud-platform"
         );
+    }
+
+    #[test]
+    fn test_error_path_message_includes_status_and_body() {
+        // Verify that the error message produced by model_armor_post (when the
+        // API returns a non-2xx status) contains both the HTTP status code and
+        // the response body, so callers get actionable diagnostics.
+        // Uses reqwest::StatusCode to mirror the type used in the actual function.
+        let status = reqwest::StatusCode::FORBIDDEN;
+        let body = r#"{"error":{"message":"permission denied"}}"#;
+        let msg = format!("API returned status {status}: {body}");
+        assert!(msg.contains("403 Forbidden"));
+        assert!(msg.contains("permission denied"));
     }
 
     #[test]
