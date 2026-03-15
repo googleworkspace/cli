@@ -31,6 +31,7 @@ pub(super) use crate::executor;
 pub(super) use anyhow::Context;
 pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};
+pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
@@ -41,16 +42,123 @@ pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modi
 pub(super) const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
 
+/// Strip ASCII control characters (0x00–0x1F, 0x7F) from a string.
+///
+/// Defense-in-depth: mail-builder uses structured types for headers which
+/// prevents most injection, but email addresses are written as raw bytes
+/// inside angle brackets. Stripping control characters at the parse boundary
+/// closes any residual CRLF/null-byte injection vectors before data reaches
+/// mail-builder.
+fn sanitize_control_chars(s: &str) -> String {
+    s.chars().filter(|c| !c.is_ascii_control()).collect()
+}
+
+/// A parsed RFC 5322 mailbox: optional display name + email address.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Mailbox {
+    pub name: Option<String>,
+    pub email: String,
+}
+
+impl Mailbox {
+    /// Parse a single address like `"Alice <alice@example.com>"` or `"alice@example.com"`.
+    ///
+    /// Intentionally total (never fails): this parses both user CLI input and
+    /// Gmail API header values. API headers are already server-validated, so
+    /// returning `Result` would force unnecessary error handling at every parse site.
+    /// User-input validation happens at the `Config` boundary (non-empty `--to`);
+    /// syntactic email validation is left to the Gmail API.
+    pub fn parse(raw: &str) -> Self {
+        let raw = raw.trim();
+        if let Some(start) = raw.rfind('<') {
+            if let Some(end) = raw[start..].find('>') {
+                let email = sanitize_control_chars(raw[start + 1..start + end].trim());
+                let name_part = raw[..start].trim();
+                let name = if name_part.is_empty() {
+                    None
+                } else {
+                    // Strip surrounding quotes: "Alice Smith" → Alice Smith
+                    let unquoted = name_part
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .unwrap_or(name_part);
+                    Some(sanitize_control_chars(unquoted))
+                };
+                return Self { name, email };
+            }
+        }
+        Self {
+            name: None,
+            email: sanitize_control_chars(raw),
+        }
+    }
+
+    /// Parse a comma-separated address list, respecting quoted strings.
+    /// Empty-email entries (e.g. from trailing commas) are filtered out.
+    pub fn parse_list(raw: &str) -> Vec<Self> {
+        split_raw_mailbox_list(raw)
+            .into_iter()
+            .map(Mailbox::parse)
+            .filter(|m| !m.email.is_empty())
+            .collect()
+    }
+
+    /// Lowercase email for case-insensitive comparison.
+    pub fn email_lowercase(&self) -> String {
+        self.email.to_lowercase()
+    }
+}
+
+/// Display format for logging and plain-text message bodies (not RFC 5322 headers).
+/// Does not quote display names containing specials; mail-builder handles header serialization.
+impl std::fmt::Display for Mailbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.name {
+            Some(name) => write!(f, "{} <{}>", name, self.email),
+            None => write!(f, "{}", self.email),
+        }
+    }
+}
+
+/// Convert a single `Mailbox` to a `mail_builder::Address`.
+pub(super) fn to_mb_address(mailbox: &Mailbox) -> MbAddress<'_> {
+    MbAddress::new_address(mailbox.name.as_deref(), &mailbox.email)
+}
+
+/// Convert a slice of `Mailbox` to a `mail_builder::Address` (list).
+pub(super) fn to_mb_address_list(mailboxes: &[Mailbox]) -> MbAddress<'_> {
+    MbAddress::new_list(mailboxes.iter().map(to_mb_address).collect())
+}
+
+/// Strip angle brackets from a message ID: `"<abc@example.com>"` → `"abc@example.com"`.
+pub(super) fn strip_angle_brackets(id: &str) -> &str {
+    id.trim()
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(id.trim())
+}
+
+/// A parsed Gmail message fetched via the API, used as context for reply/forward.
+///
+/// `from` is always populated — `parse_original_message` returns an error when
+/// `From` is missing. `body_text` always has a value — it falls back to the
+/// message snippet when no `text/plain` MIME part is found. Semantically optional
+/// fields (`cc`, `reply_to`, `date`, `body_html`) use `Option` so the compiler
+/// enforces absence checks.
+#[derive(Default)]
 pub(super) struct OriginalMessage {
     pub thread_id: String,
-    pub message_id_header: String,
-    pub references: String,
-    pub from: String,
-    pub reply_to: String,
-    pub to: String,
-    pub cc: String,
+    /// Bare message ID (no angle brackets), e.g. `"abc@example.com"`.
+    pub message_id: String,
+    /// Bare message IDs (no angle brackets) forming the references chain.
+    pub references: Vec<String>,
+    pub from: Mailbox,
+    /// Multiple Reply-To addresses are allowed per RFC 5322.
+    pub reply_to: Option<Vec<Mailbox>>,
+    pub to: Vec<Mailbox>,
+    pub cc: Option<Vec<Mailbox>>,
     pub subject: String,
-    pub date: String,
+    pub date: Option<String>,
     pub body_text: String,
     pub body_html: Option<String>,
 }
@@ -60,20 +168,20 @@ impl OriginalMessage {
     pub(super) fn dry_run_placeholder(message_id: &str) -> Self {
         Self {
             thread_id: format!("thread-{message_id}"),
-            message_id_header: format!("<{message_id}@example.com>"),
-            references: String::new(),
-            from: "sender@example.com".to_string(),
-            reply_to: String::new(),
-            to: "you@example.com".to_string(),
-            cc: String::new(),
+            message_id: format!("{message_id}@example.com"),
+            from: Mailbox::parse("sender@example.com"),
+            to: vec![Mailbox::parse("you@example.com")],
             subject: "Original subject".to_string(),
-            date: "Thu, 1 Jan 2026 00:00:00 +0000".to_string(),
+            date: Some("Thu, 1 Jan 2026 00:00:00 +0000".to_string()),
             body_text: "Original message body".to_string(),
             body_html: Some("<p>Original message body</p>".to_string()),
+            ..Default::default()
         }
     }
 }
 
+/// Raw header values extracted from the Gmail API payload, before parsing into
+/// structured types. Intermediate step: JSON headers → this → `OriginalMessage`.
 #[derive(Default)]
 struct ParsedMessageHeaders {
     from: String,
@@ -82,7 +190,7 @@ struct ParsedMessageHeaders {
     cc: String,
     subject: String,
     date: String,
-    message_id_header: String,
+    message_id: String,
     references: String,
 }
 
@@ -118,7 +226,7 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
             "Cc" => append_address_list_header_value(&mut parsed.cc, value),
             "Subject" => parsed.subject = value.to_string(),
             "Date" => parsed.date = value.to_string(),
-            "Message-ID" | "Message-Id" => parsed.message_id_header = value.to_string(),
+            "Message-ID" | "Message-Id" => parsed.message_id = value.to_string(),
             "References" => append_header_value(&mut parsed.references, value),
             _ => {}
         }
@@ -127,12 +235,31 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
     parsed
 }
 
-fn parse_original_message(msg: &Value) -> OriginalMessage {
-    let thread_id = msg
-        .get("threadId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+/// Convert an empty string to `None`, or apply `f` to the non-empty string.
+fn non_empty_then<T>(s: &str, f: impl FnOnce(&str) -> T) -> Option<T> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(f(s))
+    }
+}
+
+/// Convert an empty slice to `None`, non-empty to `Some(slice)`.
+pub(super) fn non_empty_slice<T>(s: &[T]) -> Option<&[T]> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
+    let thread_id = msg.get("threadId").and_then(|v| v.as_str()).unwrap_or("");
+    if thread_id.is_empty() {
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "Message is missing threadId"
+        )));
+    }
 
     let snippet = msg
         .get("snippet")
@@ -147,6 +274,19 @@ fn parse_original_message(msg: &Value) -> OriginalMessage {
         .map(|headers| parse_message_headers(headers))
         .unwrap_or_default();
 
+    if parsed_headers.from.is_empty() {
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "Message is missing From header"
+        )));
+    }
+
+    let message_id = strip_angle_brackets(&parsed_headers.message_id);
+    if message_id.is_empty() {
+        return Err(GwsError::Other(anyhow::anyhow!(
+            "Message is missing Message-ID header"
+        )));
+    }
+
     let body_text = msg
         .get("payload")
         .and_then(extract_plain_text_body)
@@ -154,19 +294,31 @@ fn parse_original_message(msg: &Value) -> OriginalMessage {
 
     let body_html = msg.get("payload").and_then(extract_html_body);
 
-    OriginalMessage {
-        thread_id,
-        message_id_header: parsed_headers.message_id_header,
-        references: parsed_headers.references,
-        from: parsed_headers.from,
-        reply_to: parsed_headers.reply_to,
-        to: parsed_headers.to,
-        cc: parsed_headers.cc,
+    // Parse references: split on whitespace and strip any angle brackets, producing bare IDs
+    let references = parsed_headers
+        .references
+        .split_whitespace()
+        .map(|id| strip_angle_brackets(id).to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    let reply_to = non_empty_then(&parsed_headers.reply_to, Mailbox::parse_list);
+    let cc = non_empty_then(&parsed_headers.cc, Mailbox::parse_list);
+    let date = Some(parsed_headers.date).filter(|s| !s.is_empty());
+
+    Ok(OriginalMessage {
+        thread_id: thread_id.to_string(),
+        message_id: message_id.to_string(),
+        references,
+        from: Mailbox::parse(&parsed_headers.from),
+        reply_to,
+        to: Mailbox::parse_list(&parsed_headers.to),
+        cc,
         subject: parsed_headers.subject,
-        date: parsed_headers.date,
+        date,
         body_text,
         body_html,
-    }
+    })
 }
 
 pub(super) async fn fetch_message_metadata(
@@ -190,7 +342,10 @@ pub(super) async fn fetch_message_metadata(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let err = resp.text().await.unwrap_or_default();
+        let err = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "(error body unreadable)".to_string());
         return Err(GwsError::Api {
             code: status,
             message: format!("Failed to fetch message {message_id}: {err}"),
@@ -204,7 +359,7 @@ pub(super) async fn fetch_message_metadata(
         .await
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
 
-    Ok(parse_original_message(&msg))
+    parse_original_message(&msg)
 }
 
 fn extract_body_by_mime(payload: &Value, target_mime: &str) -> Option<String> {
@@ -259,13 +414,10 @@ fn extract_html_body(payload: &Value) -> Option<String> {
 pub(super) fn resolve_html_body(original: &OriginalMessage) -> String {
     match &original.body_html {
         Some(html) => html.clone(),
-        None => {
-            eprintln!("Note: original message has no HTML body; plain text was converted to HTML.");
-            html_escape(&original.body_text)
-                .lines()
-                .collect::<Vec<_>>()
-                .join("<br>\r\n")
-        }
+        None => html_escape(&original.body_text)
+            .lines()
+            .collect::<Vec<_>>()
+            .join("<br>\r\n"),
     }
 }
 
@@ -279,39 +431,9 @@ pub(super) fn html_escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// Extract the bare email address from a header value like
-/// `"Alice <alice@example.com>"` → `"alice@example.com"` or
-/// `"alice@example.com"` → `"alice@example.com"`.
-pub(super) fn extract_email(addr: &str) -> &str {
-    if let Some(start) = addr.rfind('<') {
-        if let Some(end) = addr[start..].find('>') {
-            return &addr[start + 1..start + end];
-        }
-    }
-    addr.trim()
-}
-
-/// Extract the display name from a header value like
-/// `"Alice Smith <alice@example.com>"` → `"Alice Smith"`.
-/// Returns the trimmed address itself when no angle-bracket name is present.
-pub(super) fn extract_display_name(addr: &str) -> &str {
-    if let Some(start) = addr.rfind('<') {
-        let name = addr[..start].trim();
-        if !name.is_empty() {
-            // Strip surrounding quotes if present: "Alice Smith" → Alice Smith
-            return name
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(name);
-        }
-    }
-    addr.trim()
-}
-
 /// Split an RFC 5322 mailbox list on commas, respecting quoted strings.
-/// `"Doe, John" <john@example.com>, alice@example.com` →
-/// `["\"Doe, John\" <john@example.com>", "alice@example.com"]`
-pub(super) fn split_mailbox_list(header: &str) -> Vec<&str> {
+/// Returns raw string slices — use `Mailbox::parse_list` for structured parsing.
+fn split_raw_mailbox_list(header: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut in_quotes = false;
     let mut start = 0;
@@ -345,49 +467,47 @@ pub(super) fn split_mailbox_list(header: &str) -> Vec<&str> {
 }
 
 /// Wrap an email address in an HTML mailto link: `<a href="mailto:e">e</a>`.
+///
+/// The email is percent-encoded in the href to prevent mailto parameter
+/// injection (e.g., `?cc=evil@example.com`) and HTML-escaped in the display text.
 pub(super) fn format_email_link(email: &str) -> String {
-    let escaped = html_escape(email);
-    format!("<a href=\"mailto:{escaped}\">{escaped}</a>")
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let url_encoded = utf8_percent_encode(email, NON_ALPHANUMERIC);
+    let display_escaped = html_escape(email);
+    format!("<a href=\"mailto:{url_encoded}\">{display_escaped}</a>")
 }
 
-/// Format an address for the reply attribution line with a mailto link.
-/// `"Alice <alice@example.com>"` →
-/// `Alice &lt;<a href="mailto:alice@example.com">alice@example.com</a>&gt;`
-pub(super) fn format_sender_for_attribution(addr: &str) -> String {
-    let email = extract_email(addr);
-    let display = extract_display_name(addr);
-    if email == display {
-        // Bare email address — just wrap in mailto
-        format_email_link(email)
-    } else {
-        // "Name <email>" — show name then linked email in angle brackets
-        format!(
+/// Format a `Mailbox` for the reply attribution line with a mailto link.
+/// `Mailbox { name: Some("Alice"), email: "alice@example.com" }` →
+/// `Alice &lt;<a href="mailto:alice%40example%2Ecom">alice@example.com</a>&gt;`
+pub(super) fn format_sender_for_attribution(mailbox: &Mailbox) -> String {
+    match &mailbox.name {
+        Some(name) => format!(
             "{} &lt;{}&gt;",
-            html_escape(display),
-            format_email_link(email),
-        )
+            html_escape(name),
+            format_email_link(&mailbox.email),
+        ),
+        None => format_email_link(&mailbox.email),
     }
 }
 
-/// Format a comma-separated address list with mailto links on each address.
-/// Used for forward To/CC fields and reply attribution.
-pub(super) fn format_address_list_with_links(addrs: &str) -> String {
-    if addrs.is_empty() {
-        return String::new();
-    }
-    split_mailbox_list(addrs)
-        .into_iter()
+/// Format a slice of mailboxes with mailto links on each address.
+/// Used for forward To/CC fields in HTML mode.
+pub(super) fn format_address_list_with_links(mailboxes: &[Mailbox]) -> String {
+    mailboxes
+        .iter()
         .map(format_sender_for_attribution)
         .collect::<Vec<_>>()
         .join(", ")
 }
 
 /// Reformat an RFC 2822 date to Gmail's human-friendly attribution style:
-/// `"Wed, Mar 4, 2026 at 3:01\u{202f}PM"`. Falls back to the raw date
-/// (HTML-escaped) if chrono cannot parse it.
+/// `"Wed, Mar 4, 2026 at 3:01\u{202f}PM"` (`\u{202f}` = narrow no-break space
+/// before AM/PM). Falls back to the raw date (HTML-escaped) if chrono cannot
+/// parse it.
 pub(super) fn format_date_for_attribution(raw_date: &str) -> String {
     chrono::DateTime::parse_from_rfc2822(raw_date)
-        .map(|dt| dt.format("%a, %b %-d, %Y at %-I:%M\u{202f}%p").to_string())
+        .map(|dt| html_escape(&dt.format("%a, %b %-d, %Y at %-I:%M\u{202f}%p").to_string()))
         .unwrap_or_else(|e| {
             eprintln!("Note: could not parse date as RFC 2822 ({e}); using raw value.");
             html_escape(raw_date)
@@ -397,199 +517,101 @@ pub(super) fn format_date_for_attribution(raw_date: &str) -> String {
 /// Format the From line for a forwarded message using Gmail's `gmail_sendername` structure.
 /// When the address has a display name, it is shown in `<strong>` with the email in a mailto
 /// link. Bare emails appear in both positions (matching Gmail's behavior).
-pub(super) fn format_forward_from(addr: &str) -> String {
-    let email = extract_email(addr);
-    let display = extract_display_name(addr);
+pub(super) fn format_forward_from(mailbox: &Mailbox) -> String {
+    let display = match &mailbox.name {
+        Some(name) => name.as_str(),
+        None => &mailbox.email,
+    };
     format!(
         "<strong class=\"gmail_sendername\" dir=\"auto\">{}</strong> \
          <span dir=\"auto\">&lt;{}&gt;</span>",
         html_escape(display),
-        format_email_link(email),
+        format_email_link(&mailbox.email),
     )
 }
 
-/// Strip CR and LF characters to prevent header injection attacks.
-pub(super) fn sanitize_header_value(value: &str) -> String {
-    value.replace(['\r', '\n'], "")
-}
-
-/// RFC 2047 encode a header value if it contains non-ASCII characters.
-/// Uses standard Base64 (RFC 2045) and folds at 75-char encoded-word limit.
-pub(super) fn encode_header_value(value: &str) -> String {
-    if value.is_ascii() {
-        return value.to_string();
-    }
-
-    use base64::engine::general_purpose::STANDARD;
-
-    // RFC 2047 specifies a 75-character limit for encoded-words.
-    // Max raw length of 45 bytes -> 60 encoded chars. 60 + len("=?UTF-8?B??=") = 72, < 75.
-    const MAX_RAW_LEN: usize = 45;
-
-    // Chunk at character boundaries to avoid splitting multi-byte UTF-8 sequences.
-    let mut chunks: Vec<&str> = Vec::new();
-    let mut start = 0;
-    for (i, ch) in value.char_indices() {
-        if i + ch.len_utf8() - start > MAX_RAW_LEN && i > start {
-            chunks.push(&value[start..i]);
-            start = i;
-        }
-    }
-    if start < value.len() {
-        chunks.push(&value[start..]);
-    }
-
-    let encoded_words: Vec<String> = chunks
-        .iter()
-        .map(|chunk| format!("=?UTF-8?B?{}?=", STANDARD.encode(chunk.as_bytes())))
-        .collect();
-
-    // Join with CRLF and a space for folding.
-    encoded_words.join("\r\n ")
-}
-
-/// RFC 2047 encode non-ASCII display names in an address header value.
+/// Threading headers for reply/forward.
 ///
-/// Parses a comma-separated mailbox list (e.g. `"José <j@ex.com>, alice@ex.com"`),
-/// encodes only the display-name portion of each mailbox if it contains
-/// non-ASCII characters, and leaves email addresses untouched.
-///
-/// Examples:
-/// - `"alice@example.com"` → `"alice@example.com"` (bare email, unchanged)
-/// - `"José García <jose@example.com>"` → `"=?UTF-8?B?...?= <jose@example.com>"`
-/// - `"Alice <a@ex.com>, José <j@ex.com>"` → `"Alice <a@ex.com>, =?UTF-8?B?...?= <j@ex.com>"`
-pub(super) fn encode_address_header(value: &str) -> String {
-    /// Strip all ASCII control characters (C0 range 0x00–0x1F plus DEL 0x7F)
-    /// from a parsed component. This is defense-in-depth beyond the caller's
-    /// `sanitize_header_value` which only strips CR/LF.
-    fn sanitize_component(s: &str) -> String {
-        s.chars().filter(|c| !c.is_ascii_control()).collect()
-    }
-
-    let mailboxes = split_mailbox_list(value);
-    let encoded: Vec<String> = mailboxes
-        .into_iter()
-        .map(|mailbox| {
-            let email = sanitize_component(extract_email(mailbox));
-            let display = sanitize_component(extract_display_name(mailbox));
-
-            // Bare email address — no display name to encode.
-            // Only keep characters valid in email addresses to strip any
-            // residual injection data glued by CRLF stripping.
-            if email == display {
-                return email
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || "@._-+%".contains(*c))
-                    .collect();
-            }
-
-            // Non-ASCII display name — RFC 2047 encode it
-            if !display.is_ascii() {
-                let encoded_name = encode_header_value(&display);
-                return format!("{} <{}>", encoded_name, email);
-            }
-
-            // ASCII display name — reconstruct from parsed components
-            // to strip any potential residual injection data.
-            format!("{} <{}>", display, email)
-        })
-        .collect();
-
-    encoded.join(", ")
-}
-
-/// In-Reply-To and References values for threading a reply or forward.
-#[derive(Clone, Copy)]
+/// IDs must be bare (no angle brackets) — `set_threading_headers` passes them to
+/// mail-builder which adds angle brackets per RFC 5322. `in_reply_to` is a single
+/// message ID (the direct parent); `references` is the full ordered chain.
+/// The references chain should be fully assembled via `build_references_chain`
+/// before constructing this.
 pub(super) struct ThreadingHeaders<'a> {
     pub in_reply_to: &'a str,
-    pub references: &'a str,
+    pub references: &'a [String],
 }
 
-/// Shared builder for RFC 2822 email messages.
-///
-/// Handles header construction with CRLF sanitization, RFC 2047
-/// encoding of non-ASCII subjects, and Content-Type selection
-/// (`text/plain` or `text/html` based on the `html` field). Each helper
-/// owns its body assembly (quoted reply, forwarded block, or standalone
-/// body) and passes it to `build()`.
-pub(super) struct MessageBuilder<'a> {
-    pub to: &'a str,
-    pub subject: &'a str,
-    pub from: Option<&'a str>,
-    pub cc: Option<&'a str>,
-    pub bcc: Option<&'a str>,
-    pub threading: Option<ThreadingHeaders<'a>>,
-    pub html: bool,
-}
-
-impl MessageBuilder<'_> {
-    /// Build the complete RFC 2822 message (headers + blank line + body).
-    pub fn build(&self, body: &str) -> String {
-        debug_assert!(
-            !self.to.is_empty(),
-            "MessageBuilder: `to` must not be empty"
-        );
-
-        let mut headers = format!(
-            "To: {}\r\nSubject: {}",
-            encode_address_header(&sanitize_header_value(self.to)),
-            // Sanitize first: stripping CRLF before encoding prevents injection
-            // in encoded-words.
-            encode_header_value(&sanitize_header_value(self.subject)),
-        );
-
-        if let Some(ref threading) = self.threading {
-            headers.push_str(&format!(
-                "\r\nIn-Reply-To: {}\r\nReferences: {}",
-                sanitize_header_value(threading.in_reply_to),
-                sanitize_header_value(threading.references),
-            ));
-        }
-
-        let content_type = if self.html {
-            "text/html; charset=utf-8"
-        } else {
-            "text/plain; charset=utf-8"
-        };
-        headers.push_str(&format!(
-            "\r\nMIME-Version: 1.0\r\nContent-Type: {content_type}"
-        ));
-
-        if let Some(from) = self.from {
-            headers.push_str(&format!(
-                "\r\nFrom: {}",
-                encode_address_header(&sanitize_header_value(from))
-            ));
-        }
-
-        if let Some(cc) = self.cc {
-            headers.push_str(&format!(
-                "\r\nCc: {}",
-                encode_address_header(&sanitize_header_value(cc))
-            ));
-        }
-
-        // The Gmail API reads the Bcc header to route to those recipients,
-        // then strips it before delivery.
-        if let Some(bcc) = self.bcc {
-            headers.push_str(&format!(
-                "\r\nBcc: {}",
-                encode_address_header(&sanitize_header_value(bcc))
-            ));
-        }
-
-        format!("{}\r\n\r\n{}", headers, body)
+/// Build the full references chain for threading: existing references + current message ID.
+pub(super) fn build_references_chain(original: &OriginalMessage) -> Vec<String> {
+    let mut refs = original.references.clone();
+    if !original.message_id.is_empty() {
+        refs.push(original.message_id.clone());
     }
+    refs
 }
 
-/// Build the References header value. Returns just the message ID when there
-/// are no prior references, or appends it to the existing chain.
-pub(super) fn build_references(original_references: &str, original_message_id: &str) -> String {
-    if original_references.is_empty() {
-        original_message_id.to_string()
+/// Set threading headers on a `mail_builder::MessageBuilder`.
+/// See `ThreadingHeaders` for the bare-ID convention.
+pub(super) fn set_threading_headers<'x>(
+    mb: mail_builder::MessageBuilder<'x>,
+    threading: &ThreadingHeaders<'x>,
+) -> mail_builder::MessageBuilder<'x> {
+    debug_assert!(
+        !threading.in_reply_to.contains('<'),
+        "threading IDs must be bare (no angle brackets)"
+    );
+    debug_assert!(
+        threading.references.iter().all(|id| !id.contains('<')),
+        "threading IDs must be bare (no angle brackets)"
+    );
+
+    use mail_builder::headers::message_id::MessageId;
+
+    let in_reply_to = MessageId::new(threading.in_reply_to);
+    let refs = MessageId {
+        id: threading
+            .references
+            .iter()
+            .map(|id| id.as_str().into())
+            .collect(),
+    };
+
+    mb.in_reply_to(in_reply_to).references(refs)
+}
+
+/// Apply optional From, CC, and BCC headers to a `MessageBuilder`.
+pub(super) fn apply_optional_headers<'x>(
+    mut mb: mail_builder::MessageBuilder<'x>,
+    from: Option<&'x [Mailbox]>,
+    cc: Option<&'x [Mailbox]>,
+    bcc: Option<&'x [Mailbox]>,
+) -> mail_builder::MessageBuilder<'x> {
+    if let Some(from) = from {
+        mb = mb.from(to_mb_address_list(from));
+    }
+    if let Some(cc) = cc {
+        mb = mb.cc(to_mb_address_list(cc));
+    }
+    if let Some(bcc) = bcc {
+        mb = mb.bcc(to_mb_address_list(bcc));
+    }
+    mb
+}
+
+/// Set the body (plain or HTML) and write the finished message to a string.
+pub(super) fn finalize_message(
+    mb: mail_builder::MessageBuilder<'_>,
+    body: impl Into<String>,
+    html: bool,
+) -> Result<String, GwsError> {
+    let mb = if html {
+        mb.html_body(body.into())
     } else {
-        format!("{} {}", original_references, original_message_id)
-    }
+        mb.text_body(body.into())
+    };
+    mb.write_to_string()
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to serialize email: {e}")))
 }
 
 /// Parse an optional clap argument, trimming whitespace and treating
@@ -599,6 +621,14 @@ pub(super) fn parse_optional_trimmed(matches: &ArgMatches, name: &str) -> Option
         .get_one::<String>(name)
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Parse an optional clap argument as a comma-separated mailbox list.
+/// Returns `None` when the argument is absent, empty, or yields no valid addresses.
+pub(super) fn parse_optional_mailboxes(matches: &ArgMatches, name: &str) -> Option<Vec<Mailbox>> {
+    parse_optional_trimmed(matches, name)
+        .map(|s| Mailbox::parse_list(&s))
+        .filter(|v| !v.is_empty())
 }
 
 pub(super) fn resolve_send_method(
@@ -618,8 +648,8 @@ pub(super) fn resolve_send_method(
         .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
 }
 
-/// Build the JSON request body for `users.messages.send`, base64-encoding
-/// the raw RFC 2822 message and optionally including a threadId.
+/// Build the JSON request body for `users.messages.send`, base64url-encoding
+/// (URL-safe, with padding) the raw RFC 5322 message and optionally including a threadId.
 pub(super) fn build_raw_send_body(raw_message: &str, thread_id: Option<&str>) -> Value {
     let mut body =
         serde_json::Map::from_iter([("raw".to_string(), json!(URL_SAFE.encode(raw_message)))]);
@@ -651,7 +681,10 @@ pub(super) async fn send_raw_email(
             let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
             match auth::get_token(&scopes).await {
                 Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
+                Err(e) if matches.get_flag("dry-run") => {
+                    eprintln!("Note: auth skipped for dry-run ({e})");
+                    (None, executor::AuthMethod::None)
+                }
                 Err(e) => return Err(GwsError::Auth(format!("Gmail auth failed: {e}"))),
             }
         }
@@ -685,73 +718,121 @@ pub(super) async fn send_raw_email(
     Ok(())
 }
 
+/// Add --cc, --bcc, --html, and --dry-run arguments shared by all mail subcommands.
+fn common_mail_args(cmd: Command) -> Command {
+    cmd.arg(
+        Arg::new("cc")
+            .long("cc")
+            .help("CC email address(es), comma-separated")
+            .value_name("EMAILS"),
+    )
+    .arg(
+        Arg::new("bcc")
+            .long("bcc")
+            .help("BCC email address(es), comma-separated")
+            .value_name("EMAILS"),
+    )
+    .arg(
+        Arg::new("html")
+            .long("html")
+            .help("Treat --body as HTML content (default is plain text)")
+            .action(ArgAction::SetTrue),
+    )
+    .arg(
+        Arg::new("dry-run")
+            .long("dry-run")
+            .help("Show the request that would be sent without executing it")
+            .action(ArgAction::SetTrue),
+    )
+}
+
+/// Add arguments shared by +reply and +reply-all (everything except --remove).
+fn common_reply_args(cmd: Command) -> Command {
+    common_mail_args(
+        cmd.arg(
+            Arg::new("message-id")
+                .long("message-id")
+                .help("Gmail message ID to reply to")
+                .required(true)
+                .value_name("ID"),
+        )
+        .arg(
+            Arg::new("body")
+                .long("body")
+                .help("Reply body (plain text, or HTML with --html)")
+                .required(true)
+                .value_name("TEXT"),
+        )
+        .arg(
+            Arg::new("from")
+                .long("from")
+                .help("Sender address (for send-as/alias; omit to use account default)")
+                .value_name("EMAIL"),
+        )
+        .arg(
+            Arg::new("to")
+                .long("to")
+                .help("Additional To email address(es), comma-separated")
+                .value_name("EMAILS"),
+        ),
+    )
+}
+
 impl Helper for GmailHelper {
-    /// Injects helper subcommands into the main CLI command.
+    /// Register all Gmail helper subcommands (`+send`, `+reply`, `+reply-all`,
+    /// `+forward`, `+triage`, `+watch`) with their arguments and help text.
     fn inject_commands(
         &self,
         mut cmd: Command,
         _doc: &crate::discovery::RestDescription,
     ) -> Command {
         cmd = cmd.subcommand(
-            Command::new("+send")
-                .about("[Helper] Send an email")
-                .arg(
-                    Arg::new("to")
-                        .long("to")
-                        .help("Recipient email address(es), comma-separated")
-                        .required(true)
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("subject")
-                        .long("subject")
-                        .help("Email subject")
-                        .required(true)
-                        .value_name("SUBJECT"),
-                )
-                .arg(
-                    Arg::new("body")
-                        .long("body")
-                        .help("Email body (plain text, or HTML with --html)")
-                        .required(true)
-                        .value_name("TEXT"),
-                )
-                .arg(
-                    Arg::new("cc")
-                        .long("cc")
-                        .help("CC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("bcc")
-                        .long("bcc")
-                        .help("BCC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("html")
-                        .long("html")
-                        .help("Treat --body as HTML content (default is plain text)")
-                        .action(ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Show the request that would be sent without executing it")
-                        .action(ArgAction::SetTrue),
-                )
-                .after_help(
-                    "\
+            common_mail_args(
+                Command::new("+send")
+                    .about("[Helper] Send an email")
+                    .arg(
+                        Arg::new("to")
+                            .long("to")
+                            .help("Recipient email address(es), comma-separated")
+                            .required(true)
+                            .value_name("EMAILS"),
+                    )
+                    .arg(
+                        Arg::new("subject")
+                            .long("subject")
+                            .help("Email subject")
+                            .required(true)
+                            .value_name("SUBJECT"),
+                    )
+                    .arg(
+                        Arg::new("body")
+                            .long("body")
+                            .help("Email body (plain text, or HTML with --html)")
+                            .required(true)
+                            .value_name("TEXT"),
+                    )
+                    .arg(
+                        Arg::new("from")
+                            .long("from")
+                            .help("Sender address (for send-as/alias; omit to use account default)")
+                            .value_name("EMAIL"),
+                    ),
+            )
+            .after_help(
+                "\
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
   gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
 
 TIPS:
-  Handles RFC 2822 formatting and base64 encoding automatically.
+  Handles RFC 5322 formatting and base64 encoding automatically.
+  Use --from to send from a configured send-as alias instead of your primary address.
+  With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.
   For attachments, use the raw API instead: gws gmail users messages send --json '...'",
-                ),
+            ),
         );
 
         cmd = cmd.subcommand(
@@ -791,60 +872,12 @@ TIPS:
         );
 
         cmd = cmd.subcommand(
-            Command::new("+reply")
-                .about("[Helper] Reply to a message (handles threading automatically)")
-                .arg(
-                    Arg::new("message-id")
-                        .long("message-id")
-                        .help("Gmail message ID to reply to")
-                        .required(true)
-                        .value_name("ID"),
-                )
-                .arg(
-                    Arg::new("body")
-                        .long("body")
-                        .help("Reply body (plain text, or HTML with --html)")
-                        .required(true)
-                        .value_name("TEXT"),
-                )
-                .arg(
-                    Arg::new("from")
-                        .long("from")
-                        .help("Sender address (for send-as/alias; omit to use account default)")
-                        .value_name("EMAIL"),
-                )
-                .arg(
-                    Arg::new("to")
-                        .long("to")
-                        .help("Additional To email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("cc")
-                        .long("cc")
-                        .help("Additional CC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("bcc")
-                        .long("bcc")
-                        .help("BCC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("html")
-                        .long("html")
-                        .help("Send as HTML (quotes original with Gmail styling; treat --body as HTML)")
-                        .action(ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Show the request that would be sent without executing it")
-                        .action(ArgAction::SetTrue),
-                )
-                .after_help(
-                    "\
+            common_reply_args(
+                Command::new("+reply")
+                    .about("[Helper] Reply to a message (handles threading automatically)"),
+            )
+            .after_help(
+                "\
 EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
@@ -855,71 +888,27 @@ EXAMPLES:
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
   Quotes the original message in the reply body.
+  With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
+Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+  With --html, inline images in the quoted message (cid: references) will appear broken. \
+Externally hosted images are unaffected.
   --to adds extra recipients to the To field.
   For reply-all, use +reply-all instead.",
-                ),
+            ),
         );
 
         cmd = cmd.subcommand(
-            Command::new("+reply-all")
-                .about("[Helper] Reply-all to a message (handles threading automatically)")
-                .arg(
-                    Arg::new("message-id")
-                        .long("message-id")
-                        .help("Gmail message ID to reply to")
-                        .required(true)
-                        .value_name("ID"),
-                )
-                .arg(
-                    Arg::new("body")
-                        .long("body")
-                        .help("Reply body (plain text, or HTML with --html)")
-                        .required(true)
-                        .value_name("TEXT"),
-                )
-                .arg(
-                    Arg::new("from")
-                        .long("from")
-                        .help("Sender address (for send-as/alias; omit to use account default)")
-                        .value_name("EMAIL"),
-                )
-                .arg(
-                    Arg::new("to")
-                        .long("to")
-                        .help("Additional To email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("cc")
-                        .long("cc")
-                        .help("Additional CC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("bcc")
-                        .long("bcc")
-                        .help("BCC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("remove")
-                        .long("remove")
-                        .help("Exclude recipients from the outgoing reply (comma-separated emails)")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("html")
-                        .long("html")
-                        .help("Send as HTML (quotes original with Gmail styling; treat --body as HTML)")
-                        .action(ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Show the request that would be sent without executing it")
-                        .action(ArgAction::SetTrue),
-                )
-                .after_help(
+            common_reply_args(
+                Command::new("+reply-all")
+                    .about("[Helper] Reply-all to a message (handles threading automatically)"),
+            )
+            .arg(
+                Arg::new("remove")
+                    .long("remove")
+                    .help("Exclude recipients from the outgoing reply (comma-separated emails)")
+                    .value_name("EMAILS"),
+            )
+            .after_help(
                     "\
 EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
@@ -935,64 +924,46 @@ TIPS:
   Use --cc to add new CC recipients.
   Use --bcc for recipients who should not be visible to others.
   Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
-  The command fails if no To recipient remains after exclusions and --to additions.",
+  The command fails if no To recipient remains after exclusions and --to additions.
+  With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
+Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+  With --html, inline images in the quoted message (cid: references) will appear broken. \
+Externally hosted images are unaffected.",
                 ),
         );
 
         cmd = cmd.subcommand(
-            Command::new("+forward")
-                .about("[Helper] Forward a message to new recipients")
-                .arg(
-                    Arg::new("message-id")
-                        .long("message-id")
-                        .help("Gmail message ID to forward")
-                        .required(true)
-                        .value_name("ID"),
-                )
-                .arg(
-                    Arg::new("to")
-                        .long("to")
-                        .help("Recipient email address(es), comma-separated")
-                        .required(true)
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("from")
-                        .long("from")
-                        .help("Sender address (for send-as/alias; omit to use account default)")
-                        .value_name("EMAIL"),
-                )
-                .arg(
-                    Arg::new("cc")
-                        .long("cc")
-                        .help("CC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("bcc")
-                        .long("bcc")
-                        .help("BCC email address(es), comma-separated")
-                        .value_name("EMAILS"),
-                )
-                .arg(
-                    Arg::new("body")
-                        .long("body")
-                        .help("Optional note to include above the forwarded message (plain text, or HTML with --html)")
-                        .value_name("TEXT"),
-                )
-                .arg(
-                    Arg::new("html")
-                        .long("html")
-                        .help("Send as HTML (formats forwarded block with Gmail styling; treat --body as HTML)")
-                        .action(ArgAction::SetTrue),
-                )
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Show the request that would be sent without executing it")
-                        .action(ArgAction::SetTrue),
-                )
-                .after_help(
+            common_mail_args(
+                Command::new("+forward")
+                    .about("[Helper] Forward a message to new recipients")
+                    .arg(
+                        Arg::new("message-id")
+                            .long("message-id")
+                            .help("Gmail message ID to forward")
+                            .required(true)
+                            .value_name("ID"),
+                    )
+                    .arg(
+                        Arg::new("to")
+                            .long("to")
+                            .help("Recipient email address(es), comma-separated")
+                            .required(true)
+                            .value_name("EMAILS"),
+                    )
+                    .arg(
+                        Arg::new("from")
+                            .long("from")
+                            .help("Sender address (for send-as/alias; omit to use account default)")
+                            .value_name("EMAIL"),
+                    )
+                    .arg(
+                        Arg::new("body")
+                            .long("body")
+                            .help("Optional note to include above the forwarded message (plain text, or HTML with --html)")
+                            .value_name("TEXT"),
+                    ),
+            )
+            .after_help(
                     "\
 EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
@@ -1002,7 +973,11 @@ EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
 
 TIPS:
-  Includes the original message with sender, date, subject, and recipients.",
+  Includes the original message with sender, date, subject, and recipients.
+  With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
+Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+  With --html, inline images in the forwarded message (cid: references) will appear broken. \
+Externally hosted images are unaffected.",
                 ),
         );
 
@@ -1138,13 +1113,343 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    // --- Shared test helpers ---
+
+    /// Extract a header value from raw RFC 5322 output, handling folded lines.
+    /// Only searches the header block (before the first blank line).
+    pub(super) fn extract_header(raw: &str, name: &str) -> Option<String> {
+        let prefix = format!("{}:", name);
+        let mut result: Option<String> = None;
+        let mut collecting = false;
+        for line in raw.lines() {
+            // Blank line = end of headers per RFC 5322
+            if line.is_empty() || line == "\r" {
+                break;
+            }
+            if line.len() >= prefix.len() && line[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+                result = Some(line[prefix.len()..].trim().to_string());
+                collecting = true;
+            } else if collecting && (line.starts_with(' ') || line.starts_with('\t')) {
+                if let Some(ref mut r) = result {
+                    r.push(' ');
+                    r.push_str(line.trim());
+                }
+            } else {
+                collecting = false;
+            }
+        }
+        result
+    }
+
+    /// Strip quoted-printable soft line breaks from raw output.
+    pub(super) fn strip_qp_soft_breaks(raw: &str) -> String {
+        raw.replace("=\r\n", "").replace("=\n", "")
+    }
+
+    // --- mail-builder integration tests ---
+
+    #[test]
+    fn test_to_mb_address_bare_email() {
+        let mailbox = Mailbox::parse("alice@example.com");
+        let mut mb = mail_builder::MessageBuilder::new();
+        mb = mb
+            .to(to_mb_address(&mailbox))
+            .subject("test")
+            .text_body("body");
+        let raw = mb.write_to_string().unwrap();
+        let to = extract_header(&raw, "To").unwrap();
+        assert!(to.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn test_to_mb_address_with_display_name() {
+        let mailbox = Mailbox::parse("Alice Smith <alice@example.com>");
+        let mut mb = mail_builder::MessageBuilder::new();
+        mb = mb
+            .to(to_mb_address(&mailbox))
+            .subject("test")
+            .text_body("body");
+        let raw = mb.write_to_string().unwrap();
+        let to = extract_header(&raw, "To").unwrap();
+        assert!(to.contains("alice@example.com"));
+        assert!(to.contains("Alice Smith"));
+    }
+
+    #[test]
+    fn test_to_mb_address_list_multiple() {
+        let mailboxes = Mailbox::parse_list("alice@example.com, Bob <bob@example.com>");
+        let mut mb = mail_builder::MessageBuilder::new();
+        mb = mb
+            .to(to_mb_address_list(&mailboxes))
+            .subject("test")
+            .text_body("body");
+        let raw = mb.write_to_string().unwrap();
+        let to = extract_header(&raw, "To").unwrap();
+        assert!(to.contains("alice@example.com"));
+        assert!(to.contains("bob@example.com"));
+        assert!(to.contains("Bob"));
+    }
+
+    #[test]
+    fn test_set_threading_headers_output() {
+        let refs = vec![
+            "ref-1@example.com".to_string(),
+            "ref-2@example.com".to_string(),
+        ];
+        let threading = ThreadingHeaders {
+            in_reply_to: "reply-to@example.com",
+            references: &refs,
+        };
+        let mb = mail_builder::MessageBuilder::new();
+        let mb = mb
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test")
+            .text_body("body");
+        let mb = set_threading_headers(mb, &threading);
+        let raw = mb.write_to_string().unwrap();
+
+        let in_reply_to = extract_header(&raw, "In-Reply-To").unwrap();
+        assert!(in_reply_to.contains("reply-to@example.com"));
+
+        let references = extract_header(&raw, "References").unwrap();
+        assert!(references.contains("ref-1@example.com"));
+        assert!(references.contains("ref-2@example.com"));
+    }
+
+    // --- OriginalMessage tests ---
+
+    #[test]
+    fn test_original_message_default() {
+        let d = OriginalMessage::default();
+        assert!(d.thread_id.is_empty());
+        assert!(d.message_id.is_empty());
+        assert!(d.references.is_empty());
+        assert!(d.from.email.is_empty());
+        assert!(d.from.name.is_none());
+        assert!(d.reply_to.is_none());
+        assert!(d.to.is_empty());
+        assert!(d.cc.is_none());
+        assert!(d.subject.is_empty());
+        assert!(d.date.is_none());
+        assert!(d.body_text.is_empty());
+        assert!(d.body_html.is_none());
+    }
+
+    #[test]
+    fn test_parse_original_message_minimal() {
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "fallback text",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Subject", "value": "Hi" },
+                    { "name": "Message-ID", "value": "<min@example.com>" }
+                ],
+                "body": {
+                    "data": URL_SAFE.encode("Hello")
+                }
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        assert_eq!(original.thread_id, "t1");
+        assert_eq!(original.from.email, "alice@example.com");
+        assert_eq!(original.subject, "Hi");
+        assert_eq!(original.body_text, "Hello");
+        assert_eq!(original.message_id, "min@example.com");
+        // Missing optional fields default to None/empty
+        assert!(original.reply_to.is_none());
+        assert!(original.cc.is_none());
+        assert!(original.date.is_none());
+        assert!(original.references.is_empty());
+        assert!(original.body_html.is_none());
+    }
+
+    #[test]
+    fn test_parse_original_message_bare_message_id() {
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Subject", "value": "Hi" },
+                    { "name": "Message-ID", "value": "bare-id@example.com" }
+                ],
+                "body": { "data": URL_SAFE.encode("text") }
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        // Bare ID (no angle brackets) should be preserved as-is
+        assert_eq!(original.message_id, "bare-id@example.com");
+    }
+
+    #[test]
+    fn test_parse_original_message_missing_payload() {
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "fallback"
+        });
+        // Missing payload means no From or Message-ID → error
+        let result = parse_original_message(&msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_original_message_missing_thread_id() {
+        let msg = json!({
+            "snippet": "text",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Message-ID", "value": "<msg@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("Hello") }
+            }
+        });
+        let result = parse_original_message(&msg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("threadId"));
+    }
+
+    #[test]
+    fn test_parse_original_message_missing_from() {
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "text",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "Message-ID", "value": "<msg@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("Hello") }
+            }
+        });
+        let result = parse_original_message(&msg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("From"));
+    }
+
+    #[test]
+    fn test_parse_original_message_missing_message_id() {
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "text",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" }
+                ],
+                "body": { "data": URL_SAFE.encode("Hello") }
+            }
+        });
+        let result = parse_original_message(&msg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("Message-ID"));
+    }
+
+    #[test]
+    fn test_parse_original_message_snippet_fallback() {
+        // When only text/html is present (no text/plain), body_text falls back to snippet
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "Snippet fallback text",
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Message-ID", "value": "<msg@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("<p>HTML only</p>") }
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        assert_eq!(original.body_text, "Snippet fallback text");
+        assert_eq!(original.body_html.unwrap(), "<p>HTML only</p>");
+    }
+
+    // --- extract_plain_text_body tests ---
+
+    #[test]
+    fn test_extract_plain_text_body_simple() {
+        let payload = json!({
+            "mimeType": "text/plain",
+            "body": {
+                "data": URL_SAFE.encode("Hello, world!")
+            }
+        });
+        assert_eq!(extract_plain_text_body(&payload).unwrap(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_multipart() {
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": { "data": URL_SAFE.encode("Plain text body") }
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": { "data": URL_SAFE.encode("<p>HTML body</p>") }
+                }
+            ]
+        });
+        assert_eq!(
+            extract_plain_text_body(&payload).unwrap(),
+            "Plain text body"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_nested_multipart() {
+        let payload = json!({
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/plain",
+                            "body": { "data": URL_SAFE.encode("Nested plain text") }
+                        },
+                        {
+                            "mimeType": "text/html",
+                            "body": { "data": URL_SAFE.encode("<p>HTML</p>") }
+                        }
+                    ]
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "body": { "attachmentId": "att123" }
+                }
+            ]
+        });
+        assert_eq!(
+            extract_plain_text_body(&payload).unwrap(),
+            "Nested plain text"
+        );
+    }
+
+    #[test]
+    fn test_extract_plain_text_body_no_text_part() {
+        let payload = json!({
+            "mimeType": "text/html",
+            "body": { "data": URL_SAFE.encode("<p>Only HTML</p>") }
+        });
+        assert!(extract_plain_text_body(&payload).is_none());
+    }
+
     #[test]
     fn test_inject_commands() {
         let helper = GmailHelper;
         let cmd = Command::new("test");
         let doc = crate::discovery::RestDescription::default();
 
-        // No scopes granted -> defaults to showing all
         let cmd = helper.inject_commands(cmd, &doc);
         let subcommands: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         assert!(subcommands.contains(&"+watch"));
@@ -1208,19 +1513,30 @@ mod tests {
             }
         });
 
-        let original = parse_original_message(&msg);
+        let original = parse_original_message(&msg).unwrap();
 
         assert_eq!(original.thread_id, "thread-123");
-        assert_eq!(original.from, "alice@example.com");
-        assert_eq!(original.reply_to, "team@example.com, owner@example.com");
-        assert_eq!(original.to, "bob@example.com, carol@example.com");
-        assert_eq!(original.cc, "dave@example.com, erin@example.com");
+        assert_eq!(original.from.email, "alice@example.com");
+        let reply_to = original.reply_to.unwrap();
+        assert_eq!(reply_to.len(), 2);
+        assert_eq!(reply_to[0].email, "team@example.com");
+        assert_eq!(reply_to[1].email, "owner@example.com");
+        assert_eq!(original.to.len(), 2);
+        assert_eq!(original.to[0].email, "bob@example.com");
+        assert_eq!(original.to[1].email, "carol@example.com");
+        let cc = original.cc.unwrap();
+        assert_eq!(cc.len(), 2);
+        assert_eq!(cc[0].email, "dave@example.com");
+        assert_eq!(cc[1].email, "erin@example.com");
         assert_eq!(original.subject, "Hello");
-        assert_eq!(original.date, "Fri, 6 Mar 2026 12:00:00 +0000");
-        assert_eq!(original.message_id_header, "<msg@example.com>");
+        assert_eq!(
+            original.date.as_deref(),
+            Some("Fri, 6 Mar 2026 12:00:00 +0000")
+        );
+        assert_eq!(original.message_id, "msg@example.com");
         assert_eq!(
             original.references,
-            "<ref-1@example.com> <ref-2@example.com>"
+            vec!["ref-1@example.com", "ref-2@example.com"]
         );
         assert_eq!(original.body_text, "Snippet fallback");
         assert_eq!(original.body_html.as_deref(), Some("<p>HTML only</p>"));
@@ -1253,376 +1569,10 @@ mod tests {
             }
         });
 
-        let original = parse_original_message(&msg);
+        let original = parse_original_message(&msg).unwrap();
 
         assert_eq!(original.body_text, "Plain text body");
         assert_eq!(original.body_html.as_deref(), Some("<p>Rich HTML body</p>"));
-    }
-
-    #[test]
-    fn test_sanitize_header_value_strips_crlf() {
-        assert_eq!(
-            sanitize_header_value("alice@example.com\r\nBcc: evil@attacker.com"),
-            "alice@example.comBcc: evil@attacker.com"
-        );
-        assert_eq!(sanitize_header_value("normal value"), "normal value");
-        assert_eq!(sanitize_header_value("bare\nnewline"), "barenewline");
-        assert_eq!(sanitize_header_value("bare\rreturn"), "barereturn");
-    }
-
-    #[test]
-    fn test_encode_header_value_ascii() {
-        assert_eq!(encode_header_value("Hello World"), "Hello World");
-    }
-
-    #[test]
-    fn test_encode_header_value_non_ascii_short() {
-        let encoded = encode_header_value("Solar — Quote");
-        assert_eq!(encoded, "=?UTF-8?B?U29sYXIg4oCUIFF1b3Rl?=");
-    }
-
-    #[test]
-    fn test_encode_header_value_non_ascii_long_folds() {
-        let long_subject = "This is a very long subject line that contains non-ASCII characters like — and it must be folded to respect the 75-character line limit of RFC 2047.";
-        let encoded = encode_header_value(long_subject);
-
-        assert!(encoded.contains("\r\n "), "Encoded string should be folded");
-        let parts: Vec<&str> = encoded.split("\r\n ").collect();
-        assert!(parts.len() > 1, "Should be multiple parts");
-        for part in &parts {
-            assert!(part.starts_with("=?UTF-8?B?"));
-            assert!(part.ends_with("?="));
-            assert!(part.len() <= 75, "Part too long: {} chars", part.len());
-        }
-    }
-
-    #[test]
-    fn test_encode_header_value_multibyte_boundary() {
-        use base64::engine::general_purpose::STANDARD;
-        let subject = format!("{}€€€", "A".repeat(43));
-        let encoded = encode_header_value(&subject);
-        for part in encoded.split("\r\n ") {
-            let b64 = part.trim_start_matches("=?UTF-8?B?").trim_end_matches("?=");
-            let decoded = STANDARD.decode(b64).expect("valid base64");
-            String::from_utf8(decoded).expect("each chunk must be valid UTF-8");
-        }
-    }
-
-    #[test]
-    fn test_encode_address_header_bare_email() {
-        assert_eq!(
-            encode_address_header("alice@example.com"),
-            "alice@example.com"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_ascii_display_name() {
-        let input = "Alice Smith <alice@example.com>";
-        assert_eq!(encode_address_header(input), input);
-    }
-
-    #[test]
-    fn test_encode_address_header_non_ascii_display_name() {
-        let encoded = encode_address_header("José García <jose@example.com>");
-        assert!(
-            encoded.contains("=?UTF-8?B?"),
-            "Should contain encoded-word: {encoded}"
-        );
-        assert!(
-            encoded.contains("<jose@example.com>"),
-            "Email should be preserved: {encoded}"
-        );
-        assert!(
-            !encoded.contains("José"),
-            "Raw non-ASCII should not appear: {encoded}"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_multiple_mixed() {
-        let input = "Alice <alice@example.com>, José <jose@example.com>";
-        let encoded = encode_address_header(input);
-        assert!(
-            encoded.starts_with("Alice <alice@example.com>, "),
-            "ASCII address should be unchanged: {encoded}"
-        );
-        assert!(
-            encoded.contains("=?UTF-8?B?"),
-            "Non-ASCII name should be encoded: {encoded}"
-        );
-        assert!(
-            encoded.contains("<jose@example.com>"),
-            "Email should be preserved: {encoded}"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_quoted_non_ascii() {
-        let encoded = encode_address_header("\"下野祐太\" <shimono@example.com>");
-        assert!(
-            encoded.contains("=?UTF-8?B?"),
-            "Should contain encoded-word: {encoded}"
-        );
-        assert!(
-            encoded.contains("<shimono@example.com>"),
-            "Email should be preserved: {encoded}"
-        );
-    }
-
-    #[test]
-    fn test_message_builder_non_ascii_address_headers() {
-        let raw = MessageBuilder {
-            to: "José <jose@example.com>",
-            subject: "Test",
-            from: Some("田中太郎 <tanaka@example.com>"),
-            cc: Some("Ñoño <nono@example.com>"),
-            bcc: Some("Ünsal <unsal@example.com>"),
-            threading: None,
-            html: false,
-        }
-        .build("body");
-
-        // To header should have encoded display name
-        assert!(
-            raw.contains("To: =?UTF-8?B?"),
-            "To should be RFC 2047 encoded: {raw}"
-        );
-        // From header should have encoded display name
-        assert!(
-            raw.contains("From: =?UTF-8?B?"),
-            "From should be RFC 2047 encoded: {raw}"
-        );
-        // Cc header should have encoded display name
-        assert!(
-            raw.contains("Cc: =?UTF-8?B?"),
-            "Cc should be RFC 2047 encoded: {raw}"
-        );
-        // Bcc header should have encoded display name
-        assert!(
-            raw.contains("Bcc: =?UTF-8?B?"),
-            "Bcc should be RFC 2047 encoded: {raw}"
-        );
-        // Email addresses should be untouched
-        assert!(raw.contains("<jose@example.com>"));
-        assert!(raw.contains("<tanaka@example.com>"));
-        assert!(raw.contains("<nono@example.com>"));
-        assert!(raw.contains("<unsal@example.com>"));
-    }
-
-    #[test]
-    fn test_encode_address_header_strips_trailing_garbage() {
-        // After sanitize_header_value strips \r\n, residual Bcc: header text
-        // would remain appended. Reconstruction must drop it.
-        let sanitized = sanitize_header_value("Alice <a@ex.com>\r\nBcc: evil@ex.com");
-        let encoded = encode_address_header(&sanitized);
-        assert!(
-            !encoded.contains("evil"),
-            "Trailing injection data should be stripped: {encoded}"
-        );
-        assert!(
-            encoded.contains("<a@ex.com>"),
-            "Original email should be preserved: {encoded}"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_strips_null_bytes() {
-        let encoded = encode_address_header("Alice\0Bob <alice@ex.com>");
-        assert!(
-            !encoded.contains('\0'),
-            "Null bytes should be stripped: {encoded:?}"
-        );
-        assert!(encoded.contains("AliceBob"));
-        assert!(encoded.contains("<alice@ex.com>"));
-    }
-
-    #[test]
-    fn test_encode_address_header_strips_tab_in_email() {
-        let encoded = encode_address_header("alice\t@ex.com");
-        assert!(
-            !encoded.contains('\t'),
-            "Tab should be stripped: {encoded:?}"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_injection_bare_email() {
-        // Bare email with injection attempt after sanitize strips CRLF.
-        // "Bcc" letters are valid email chars, but the colon is not.
-        let sanitized = sanitize_header_value("foo@bar.com\r\nBcc: evil@ex.com");
-        let encoded = encode_address_header(&sanitized);
-        assert!(
-            !encoded.contains("evil"),
-            "Injection in bare email should be stripped: {encoded}"
-        );
-    }
-
-    #[test]
-    fn test_encode_address_header_injection_bare_email_no_space() {
-        // No space between address and injected header (Bcc:evil)
-        let sanitized = sanitize_header_value("foo@bar.com\r\nBcc:evil@ex.com");
-        let encoded = encode_address_header(&sanitized);
-        assert!(
-            !encoded.contains("evil"),
-            "No-space injection should be stripped: {encoded}"
-        );
-        assert_eq!(encoded, "foo@bar.comBcc");
-    }
-
-    #[test]
-    fn test_encode_address_header_injection_angle_brackets_in_bare_email() {
-        // When angle brackets are injected into a bare email, extract_email
-        // parses the angle brackets and takes the non-bare reconstruction
-        // path. This is safe from header injection (no CRLF = one header
-        // line). The email changes but the original was already corrupted.
-        let sanitized = sanitize_header_value("foo@bar.com\r\n<evil@ex.com>");
-        let encoded = encode_address_header(&sanitized);
-        // Takes the Name <email> reconstruction path — not a header injection
-        assert!(encoded.contains("<evil@ex.com>"));
-        assert!(!encoded.contains('\r'));
-        assert!(!encoded.contains('\n'));
-    }
-
-    #[test]
-    fn test_encode_address_header_empty_input() {
-        assert_eq!(encode_address_header(""), "");
-    }
-
-    #[test]
-    fn test_message_builder_basic() {
-        let raw = MessageBuilder {
-            to: "test@example.com",
-            subject: "Hello",
-            from: None,
-            cc: None,
-            bcc: None,
-            threading: None,
-            html: false,
-        }
-        .build("World");
-
-        assert!(raw.contains("To: test@example.com"));
-        assert!(raw.contains("Subject: Hello"));
-        assert!(raw.contains("MIME-Version: 1.0"));
-        assert!(raw.contains("Content-Type: text/plain; charset=utf-8"));
-        assert!(raw.contains("\r\n\r\nWorld"));
-        assert!(!raw.contains("From:"));
-        assert!(!raw.contains("Cc:"));
-        assert!(!raw.contains("Bcc:"));
-        assert!(!raw.contains("In-Reply-To:"));
-        assert!(!raw.contains("References:"));
-    }
-
-    #[test]
-    fn test_message_builder_all_optional_headers() {
-        let raw = MessageBuilder {
-            to: "alice@example.com",
-            subject: "Re: Hello",
-            from: Some("alias@example.com"),
-            cc: Some("carol@example.com"),
-            bcc: Some("secret@example.com"),
-            threading: Some(ThreadingHeaders {
-                in_reply_to: "<abc@example.com>",
-                references: "<abc@example.com>",
-            }),
-            html: false,
-        }
-        .build("Reply body");
-
-        assert!(raw.contains("To: alice@example.com"));
-        assert!(raw.contains("Subject: Re: Hello"));
-        assert!(raw.contains("From: alias@example.com"));
-        assert!(raw.contains("Cc: carol@example.com"));
-        assert!(raw.contains("Bcc: secret@example.com"));
-        assert!(raw.contains("In-Reply-To: <abc@example.com>"));
-        assert!(raw.contains("References: <abc@example.com>"));
-        assert!(raw.contains("Reply body"));
-    }
-
-    #[test]
-    fn test_message_builder_non_ascii_subject() {
-        let raw = MessageBuilder {
-            to: "test@example.com",
-            subject: "Solar — Quote Request",
-            from: None,
-            cc: None,
-            bcc: None,
-            threading: None,
-            html: false,
-        }
-        .build("Body");
-
-        assert!(raw.contains("=?UTF-8?B?"));
-        assert!(!raw.contains("Solar — Quote Request"));
-    }
-
-    #[test]
-    fn test_message_builder_sanitizes_crlf_injection() {
-        let raw = MessageBuilder {
-            to: "alice@example.com\r\nBcc: evil@attacker.com",
-            subject: "Hello",
-            from: None,
-            cc: None,
-            bcc: None,
-            threading: None,
-            html: false,
-        }
-        .build("Body");
-
-        // The CRLF is stripped, preventing header injection. The "Bcc: evil..."
-        // text becomes part of the To value, not a separate header.
-        let header_section = raw.split("\r\n\r\n").next().unwrap();
-        let header_lines: Vec<&str> = header_section.split("\r\n").collect();
-        assert!(
-            !header_lines.iter().any(|l| l.starts_with("Bcc:")),
-            "No Bcc header should exist"
-        );
-    }
-
-    #[test]
-    fn test_message_builder_sanitizes_optional_headers() {
-        let raw = MessageBuilder {
-            to: "alice@example.com",
-            subject: "Hello",
-            from: Some("sender@example.com\r\nBcc: evil@attacker.com"),
-            cc: Some("carol@example.com\r\nX-Injected: yes"),
-            bcc: None,
-            threading: None,
-            html: false,
-        }
-        .build("Body");
-
-        let header_section = raw.split("\r\n\r\n").next().unwrap();
-        let header_lines: Vec<&str> = header_section.split("\r\n").collect();
-        assert!(
-            !header_lines.iter().any(|l| l.starts_with("X-Injected:")),
-            "Injected header via Cc should not exist"
-        );
-        assert!(
-            header_lines
-                .iter()
-                .filter(|l| l.starts_with("Bcc:"))
-                .count()
-                == 0,
-            "Injected Bcc via From should not exist"
-        );
-    }
-
-    #[test]
-    fn test_build_references_empty() {
-        assert_eq!(
-            build_references("", "<msg-1@example.com>"),
-            "<msg-1@example.com>"
-        );
-    }
-
-    #[test]
-    fn test_build_references_with_existing() {
-        assert_eq!(
-            build_references("<msg-0@example.com>", "<msg-1@example.com>"),
-            "<msg-0@example.com> <msg-1@example.com>"
-        );
     }
 
     #[test]
@@ -1661,8 +1611,6 @@ mod tests {
         );
         assert_eq!(html_escape("it's"), "it&#39;s");
         assert_eq!(html_escape(""), "");
-        // All five characters in one string — verifies replacement ordering
-        // (& must be replaced first to avoid double-escaping).
         assert_eq!(
             html_escape("a & b < c > d \"e\" f'g"),
             "a &amp; b &lt; c &gt; d &quot;e&quot; f&#39;g"
@@ -1764,160 +1712,274 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_message_builder_html_content_type() {
-        let raw = MessageBuilder {
-            to: "test@example.com",
-            subject: "Hello",
-            from: None,
-            cc: None,
-            bcc: None,
-            threading: None,
-            html: true,
-        }
-        .build("<p>Body</p>");
+    // --- Mailbox type tests ---
 
-        assert!(raw.contains("Content-Type: text/html; charset=utf-8"));
-        assert!(!raw.contains("text/plain"));
-        assert!(raw.contains("\r\n\r\n<p>Body</p>"));
+    #[test]
+    fn test_mailbox_parse_bare_email() {
+        let m = Mailbox::parse("alice@example.com");
+        assert_eq!(m.email, "alice@example.com");
+        assert!(m.name.is_none());
     }
 
     #[test]
-    fn test_message_builder_html_false_uses_plain_text() {
-        // The html flag controls Content-Type, not the presence of body_html.
-        let raw = MessageBuilder {
-            to: "test@example.com",
-            subject: "Hello",
-            from: None,
-            cc: None,
-            bcc: None,
-            threading: None,
-            html: false,
-        }
-        .build("<p>This is HTML but flag says plain</p>");
+    fn test_mailbox_parse_with_display_name() {
+        let m = Mailbox::parse("Alice Smith <alice@example.com>");
+        assert_eq!(m.email, "alice@example.com");
+        assert_eq!(m.name.as_deref(), Some("Alice Smith"));
+    }
 
-        assert!(raw.contains("Content-Type: text/plain; charset=utf-8"));
-        assert!(!raw.contains("text/html"));
+    #[test]
+    fn test_mailbox_parse_quoted_display_name() {
+        let m = Mailbox::parse("\"Bob, Jr.\" <bob@example.com>");
+        assert_eq!(m.email, "bob@example.com");
+        assert_eq!(m.name.as_deref(), Some("Bob, Jr."));
+    }
+
+    #[test]
+    fn test_mailbox_parse_malformed_no_closing_bracket() {
+        let m = Mailbox::parse("Alice <alice@example.com");
+        assert_eq!(m.email, "Alice <alice@example.com");
+        assert!(m.name.is_none());
+    }
+
+    #[test]
+    fn test_mailbox_parse_empty() {
+        let m = Mailbox::parse("");
+        assert_eq!(m.email, "");
+        assert!(m.name.is_none());
+    }
+
+    #[test]
+    fn test_mailbox_parse_empty_angle_brackets() {
+        let m = Mailbox::parse("Alice <>");
+        // Empty email inside angle brackets
+        assert_eq!(m.email, "");
+        assert_eq!(m.name.as_deref(), Some("Alice"));
+    }
+
+    #[test]
+    fn test_mailbox_parse_strips_crlf_injection_in_email() {
+        let m = Mailbox::parse("foo@bar.com\r\nBcc: evil@attacker.com");
+        assert_eq!(m.email, "foo@bar.comBcc: evil@attacker.com");
+        assert!(!m.email.contains('\r'));
+        assert!(!m.email.contains('\n'));
+    }
+
+    #[test]
+    fn test_mailbox_parse_strips_crlf_injection_in_angle_bracket_email() {
+        let m = Mailbox::parse("Alice <foo@bar.com\r\nBcc: evil@attacker.com>");
+        assert!(!m.email.contains('\r'));
+        assert!(!m.email.contains('\n'));
+        assert!(m.email.contains("foo@bar.com"));
+    }
+
+    #[test]
+    fn test_mailbox_parse_strips_control_chars_from_name() {
+        let m = Mailbox::parse("Alice\0Bob <alice@example.com>");
+        assert_eq!(m.name.as_deref(), Some("AliceBob"));
+        assert!(!m.name.unwrap().contains('\0'));
+    }
+
+    #[test]
+    fn test_mailbox_parse_strips_null_bytes_from_email() {
+        let m = Mailbox::parse("alice\0@example.com");
+        assert_eq!(m.email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_mailbox_parse_strips_tab_from_email() {
+        let m = Mailbox::parse("alice\t@example.com");
+        assert_eq!(m.email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_mailbox_parse_non_ascii_display_name() {
+        let m = Mailbox::parse("田中太郎 <tanaka@example.com>");
+        assert_eq!(m.email, "tanaka@example.com");
+        assert_eq!(m.name.as_deref(), Some("田中太郎"));
+
+        // Verify non-ASCII name flows through to mail-builder without panic
+        // and gets RFC 2047 encoded (replacing hand-rolled encode_address_header from #482)
+        let mb = mail_builder::MessageBuilder::new()
+            .to(to_mb_address(&m))
+            .subject("test")
+            .text_body("body");
+        let raw = mb.write_to_string().unwrap();
+        assert!(raw.contains("tanaka@example.com"));
+        assert!(!raw.contains("田中太郎")); // raw CJK should be RFC 2047 encoded
+        assert!(raw.contains("=?utf-8?")); // encoded-word present
+    }
+
+    #[test]
+    fn test_mailbox_parse_list() {
+        let list = Mailbox::parse_list("alice@example.com, Bob <bob@example.com>");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].email, "alice@example.com");
+        assert_eq!(list[1].email, "bob@example.com");
+        assert_eq!(list[1].name.as_deref(), Some("Bob"));
+    }
+
+    #[test]
+    fn test_mailbox_parse_list_with_quoted_comma() {
+        let list = Mailbox::parse_list(r#""Doe, John" <john@example.com>, alice@example.com"#);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].email, "john@example.com");
+        assert_eq!(list[0].name.as_deref(), Some("Doe, John"));
+        assert_eq!(list[1].email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_mailbox_parse_list_filters_empty_emails() {
+        // Empty string → empty vec
+        assert!(Mailbox::parse_list("").is_empty());
+
+        // Whitespace-only commas → empty vec
+        assert!(Mailbox::parse_list("  ,  ,  ").is_empty());
+
+        // Trailing comma → no phantom entry
+        let list = Mailbox::parse_list("alice@example.com,");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].email, "alice@example.com");
+
+        // Leading comma
+        let list = Mailbox::parse_list(",alice@example.com");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].email, "alice@example.com");
+
+        // Empty angle brackets filtered
+        let list = Mailbox::parse_list("Alice <>, bob@example.com");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].email, "bob@example.com");
+    }
+
+    #[test]
+    fn test_mailbox_display() {
+        let bare = Mailbox {
+            name: None,
+            email: "alice@example.com".to_string(),
+        };
+        assert_eq!(bare.to_string(), "alice@example.com");
+
+        let named = Mailbox {
+            name: Some("Alice".to_string()),
+            email: "alice@example.com".to_string(),
+        };
+        assert_eq!(named.to_string(), "Alice <alice@example.com>");
+    }
+
+    #[test]
+    fn test_strip_angle_brackets() {
+        assert_eq!(strip_angle_brackets("<abc@example.com>"), "abc@example.com");
+        assert_eq!(strip_angle_brackets("abc@example.com"), "abc@example.com");
+        assert_eq!(
+            strip_angle_brackets("  <abc@example.com>  "),
+            "abc@example.com"
+        );
+    }
+
+    #[test]
+    fn test_build_references_chain() {
+        // Empty references + message ID
+        let original = OriginalMessage {
+            message_id: "msg-1@example.com".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(build_references_chain(&original), vec!["msg-1@example.com"]);
+
+        // Existing references + message ID
+        let original = OriginalMessage {
+            message_id: "msg-2@example.com".to_string(),
+            references: vec![
+                "msg-0@example.com".to_string(),
+                "msg-1@example.com".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            build_references_chain(&original),
+            vec![
+                "msg-0@example.com",
+                "msg-1@example.com",
+                "msg-2@example.com"
+            ]
+        );
+
+        // Empty message ID doesn't add to chain
+        let original = OriginalMessage {
+            message_id: String::new(),
+            references: vec!["msg-0@example.com".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(build_references_chain(&original), vec!["msg-0@example.com"]);
     }
 
     // --- HTML fidelity helper tests ---
 
     #[test]
-    fn test_extract_email() {
-        assert_eq!(extract_email("alice@example.com"), "alice@example.com");
-        assert_eq!(
-            extract_email("Alice Smith <alice@example.com>"),
-            "alice@example.com"
-        );
-        assert_eq!(
-            extract_email("\"Bob, Jr.\" <bob@example.com>"),
-            "bob@example.com"
-        );
-        // Malformed: opening `<` without closing `>` falls back to full string
-        assert_eq!(
-            extract_email("Alice <alice@example.com"),
-            "Alice <alice@example.com"
-        );
-        assert_eq!(extract_email(""), "");
-        assert_eq!(extract_email("  "), "");
-    }
-
-    #[test]
-    fn test_extract_display_name() {
-        assert_eq!(
-            extract_display_name("Alice Smith <alice@example.com>"),
-            "Alice Smith"
-        );
-        assert_eq!(
-            extract_display_name("\"Bob, Jr.\" <bob@example.com>"),
-            "Bob, Jr."
-        );
-        // Bare email — returns the email itself
-        assert_eq!(
-            extract_display_name("alice@example.com"),
-            "alice@example.com"
-        );
-    }
-
-    #[test]
-    fn test_split_mailbox_list() {
-        assert_eq!(
-            split_mailbox_list("alice@example.com, bob@example.com"),
-            vec!["alice@example.com", "bob@example.com"]
-        );
-        assert_eq!(
-            split_mailbox_list("alice@example.com"),
-            vec!["alice@example.com"]
-        );
-        assert!(split_mailbox_list("").is_empty());
-        // Quoted comma in display name must not split the address
-        assert_eq!(
-            split_mailbox_list(r#""Doe, John" <john@example.com>, alice@example.com"#),
-            vec![r#""Doe, John" <john@example.com>"#, "alice@example.com"]
-        );
-        // Escaped quotes inside quoted string
-        assert_eq!(
-            split_mailbox_list(r#""Doe \"JD, Sr\"" <john@example.com>, alice@example.com"#),
-            vec![
-                r#""Doe \"JD, Sr\"" <john@example.com>"#,
-                "alice@example.com"
-            ]
-        );
-        // Double backslash: \\\\ inside quotes means an escaped backslash followed
-        // by a closing quote, so the comma after is a real separator.
-        assert_eq!(
-            split_mailbox_list(r#""Trail\\" <t@example.com>, b@example.com"#),
-            vec![r#""Trail\\" <t@example.com>"#, "b@example.com"]
-        );
-    }
-
-    #[test]
     fn test_format_sender_for_attribution() {
         // Bare email
+        let bare = Mailbox::parse("alice@example.com");
         assert_eq!(
-            format_sender_for_attribution("alice@example.com"),
-            "<a href=\"mailto:alice@example.com\">alice@example.com</a>"
+            format_sender_for_attribution(&bare),
+            "<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>"
         );
         // Name <email>
+        let named = Mailbox::parse("Alice Smith <alice@example.com>");
         assert_eq!(
-            format_sender_for_attribution("Alice Smith <alice@example.com>"),
-            "Alice Smith &lt;<a href=\"mailto:alice@example.com\">alice@example.com</a>&gt;"
+            format_sender_for_attribution(&named),
+            "Alice Smith &lt;<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>&gt;"
         );
         // Special chars in name
+        let special = Mailbox::parse("O'Brien & Co <ob@example.com>");
         assert_eq!(
-            format_sender_for_attribution("O'Brien & Co <ob@example.com>"),
-            "O&#39;Brien &amp; Co &lt;<a href=\"mailto:ob@example.com\">ob@example.com</a>&gt;"
+            format_sender_for_attribution(&special),
+            "O&#39;Brien &amp; Co &lt;<a href=\"mailto:ob%40example%2Ecom\">ob@example.com</a>&gt;"
         );
+    }
+
+    #[test]
+    fn test_format_email_link_prevents_mailto_injection() {
+        // A crafted email with ?cc= must be percent-encoded in the href so the
+        // browser does not interpret it as a mailto parameter.
+        let link = format_email_link("user@example.com?cc=evil@attacker.com");
+        assert!(link.contains("mailto:"));
+        // The href must not contain raw ?cc= (it should be percent-encoded)
+        assert!(!link.contains("mailto:user@example.com?cc="));
+        assert!(link.contains("%3F")); // ? encoded
+        assert!(link.contains("%3D")); // = encoded
     }
 
     #[test]
     fn test_format_address_list_with_links() {
+        let single = vec![Mailbox::parse("alice@example.com")];
         assert_eq!(
-            format_address_list_with_links("alice@example.com"),
-            "<a href=\"mailto:alice@example.com\">alice@example.com</a>"
+            format_address_list_with_links(&single),
+            "<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>"
         );
+        let multi = vec![
+            Mailbox::parse("alice@example.com"),
+            Mailbox::parse("bob@example.com"),
+        ];
         assert_eq!(
-            format_address_list_with_links("alice@example.com, bob@example.com"),
-            "<a href=\"mailto:alice@example.com\">alice@example.com</a>, \
-             <a href=\"mailto:bob@example.com\">bob@example.com</a>"
+            format_address_list_with_links(&multi),
+            "<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>, \
+             <a href=\"mailto:bob%40example%2Ecom\">bob@example.com</a>"
         );
-        // Quoted comma in display name must not split the address
+        let with_name = Mailbox::parse_list(r#""Doe, John" <john@example.com>, alice@example.com"#);
         assert_eq!(
-            format_address_list_with_links(r#""Doe, John" <john@example.com>, alice@example.com"#),
-            "Doe, John &lt;<a href=\"mailto:john@example.com\">john@example.com</a>&gt;, \
-             <a href=\"mailto:alice@example.com\">alice@example.com</a>"
+            format_address_list_with_links(&with_name),
+            "Doe, John &lt;<a href=\"mailto:john%40example%2Ecom\">john@example.com</a>&gt;, \
+             <a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>"
         );
-        assert_eq!(format_address_list_with_links(""), "");
+        assert_eq!(format_address_list_with_links(&[]), "");
     }
 
     #[test]
     fn test_format_date_for_attribution() {
-        // Valid RFC 2822 date → Gmail's human-friendly format
         assert_eq!(
             format_date_for_attribution("Wed, 04 Mar 2026 15:01:00 +0000"),
             "Wed, Mar 4, 2026 at 3:01\u{202f}PM"
         );
-        // Non-parseable date falls back to html-escaped raw string
         assert_eq!(
             format_date_for_attribution("Jan 1 <2026>"),
             "Jan 1 &lt;2026&gt;"
@@ -1926,16 +1988,78 @@ mod tests {
 
     #[test]
     fn test_format_forward_from() {
+        let named = Mailbox::parse("Alice Smith <alice@example.com>");
         assert_eq!(
-            format_forward_from("Alice Smith <alice@example.com>"),
+            format_forward_from(&named),
             "<strong class=\"gmail_sendername\" dir=\"auto\">Alice Smith</strong> \
-             <span dir=\"auto\">&lt;<a href=\"mailto:alice@example.com\">alice@example.com</a>&gt;</span>"
+             <span dir=\"auto\">&lt;<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>&gt;</span>"
         );
-        // Bare email — display name is the email itself
+        let bare = Mailbox::parse("alice@example.com");
         assert_eq!(
-            format_forward_from("alice@example.com"),
+            format_forward_from(&bare),
             "<strong class=\"gmail_sendername\" dir=\"auto\">alice@example.com</strong> \
-             <span dir=\"auto\">&lt;<a href=\"mailto:alice@example.com\">alice@example.com</a>&gt;</span>"
+             <span dir=\"auto\">&lt;<a href=\"mailto:alice%40example%2Ecom\">alice@example.com</a>&gt;</span>"
         );
+    }
+
+    #[test]
+    fn test_split_raw_mailbox_list() {
+        assert_eq!(
+            split_raw_mailbox_list("alice@example.com, bob@example.com"),
+            vec!["alice@example.com", "bob@example.com"]
+        );
+        assert_eq!(
+            split_raw_mailbox_list("alice@example.com"),
+            vec!["alice@example.com"]
+        );
+        assert!(split_raw_mailbox_list("").is_empty());
+        assert_eq!(
+            split_raw_mailbox_list(r#""Doe, John" <john@example.com>, alice@example.com"#),
+            vec![r#""Doe, John" <john@example.com>"#, "alice@example.com"]
+        );
+        assert_eq!(
+            split_raw_mailbox_list(r#""Doe \"JD, Sr\"" <john@example.com>, alice@example.com"#),
+            vec![
+                r#""Doe \"JD, Sr\"" <john@example.com>"#,
+                "alice@example.com"
+            ]
+        );
+        assert_eq!(
+            split_raw_mailbox_list(r#""Trail\\" <t@example.com>, b@example.com"#),
+            vec![r#""Trail\\" <t@example.com>"#, "b@example.com"]
+        );
+    }
+
+    #[test]
+    fn test_parse_optional_trimmed() {
+        let cmd = Command::new("test")
+            .arg(Arg::new("flag").long("flag"))
+            .arg(Arg::new("empty").long("empty"))
+            .arg(Arg::new("ws").long("ws"));
+
+        // Present, non-empty value
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(["test", "--flag", "value"])
+            .unwrap();
+        assert_eq!(
+            parse_optional_trimmed(&matches, "flag"),
+            Some("value".to_string())
+        );
+
+        // Absent argument
+        let matches = cmd.clone().try_get_matches_from(["test"]).unwrap();
+        assert!(parse_optional_trimmed(&matches, "flag").is_none());
+
+        // Whitespace-only becomes None
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(["test", "--ws", "  "])
+            .unwrap();
+        assert!(parse_optional_trimmed(&matches, "ws").is_none());
+
+        // Empty string becomes None
+        let matches = cmd.try_get_matches_from(["test", "--empty", ""]).unwrap();
+        assert!(parse_optional_trimmed(&matches, "empty").is_none());
     }
 }
