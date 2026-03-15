@@ -100,7 +100,6 @@ TIPS:
                     auth_method,
                     None,
                     None,
-                    None,
                     matches.get_flag("dry-run"),
                     &pagination,
                     None,

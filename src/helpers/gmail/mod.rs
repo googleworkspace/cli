@@ -38,6 +38,7 @@ pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
 pub(super) use serde_json::{json, Value};
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 
 pub struct GmailHelper;
@@ -611,17 +612,21 @@ pub(super) fn apply_optional_headers<'x>(
     mb
 }
 
-/// Set the body (plain or HTML) and write the finished message to a string.
+/// Set the body (plain or HTML), add any attachments, and write the finished message to a string.
 pub(super) fn finalize_message(
     mb: mail_builder::MessageBuilder<'_>,
     body: impl Into<String>,
     html: bool,
+    attachments: &[Attachment],
 ) -> Result<String, GwsError> {
     let mb = if html {
         mb.html_body(body.into())
     } else {
         mb.text_body(body.into())
     };
+    let mb = attachments.iter().fold(mb, |mb, att| {
+        mb.attachment(&att.content_type, &att.filename, att.data.as_slice())
+    });
     mb.write_to_string()
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to serialize email: {e}")))
 }
@@ -643,6 +648,93 @@ pub(super) fn parse_optional_mailboxes(matches: &ArgMatches, name: &str) -> Opti
         .filter(|v| !v.is_empty())
 }
 
+/// Gmail API upload endpoint limit is 35MB (per discovery document). Messages are
+/// sent as multipart/related with the raw RFC 5322 message as the media part, so
+/// the limit applies to the entire MIME message including headers, body, and
+/// base64-encoded attachments. 25MB raw attachments ≈ 33MB with base64 + overhead.
+const MAX_TOTAL_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+
+/// A file attachment read from disk, ready to add to a message.
+///
+/// `content_type` is inferred from the file extension via `mime_guess2`,
+/// falling back to `application/octet-stream` for unknown extensions.
+/// `filename` is the basename extracted from the path; mail-builder handles
+/// RFC 2231 encoding for non-ASCII filenames in the Content-Disposition header.
+#[derive(Debug)]
+pub(super) struct Attachment {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+/// Read and validate attachments from `--attach` arguments.
+///
+/// Rejects control characters in paths, non-regular files, empty files,
+/// and total size exceeding `MAX_TOTAL_ATTACHMENT_BYTES`.
+///
+/// Absolute and relative paths are both allowed. Unlike `--output-dir` (where
+/// write confinement matters), `--attach` only reads files the user's process
+/// already has access to. Path traversal restrictions would not prevent data
+/// exfiltration — an agent could read any file via other means (e.g., shell
+/// commands). The real mitigation for agent misuse is `--dry-run` and human
+/// review of the command before execution.
+pub(super) fn parse_attachments(matches: &ArgMatches) -> Result<Vec<Attachment>, GwsError> {
+    let paths: Vec<&String> = matches
+        .get_many::<String>("attach")
+        .map(|v| v.collect())
+        .unwrap_or_default();
+
+    let mut attachments = Vec::with_capacity(paths.len());
+    let mut total_bytes: u64 = 0;
+
+    for path in paths {
+        crate::validate::reject_control_chars(path, "--attach")?;
+
+        let metadata = std::fs::metadata(path)
+            .map_err(|e| GwsError::Validation(format!("Cannot read --attach '{path}': {e}")))?;
+        if !metadata.is_file() {
+            return Err(GwsError::Validation(format!(
+                "--attach '{path}' is not a regular file"
+            )));
+        }
+
+        let data = std::fs::read(path)
+            .map_err(|e| GwsError::Validation(format!("Cannot read --attach '{path}': {e}")))?;
+        if data.is_empty() {
+            return Err(GwsError::Validation(format!(
+                "--attach '{path}' is empty (0 bytes)"
+            )));
+        }
+        // Size check uses actual bytes read, not metadata, to avoid TOCTOU race
+        total_bytes += data.len() as u64;
+        if total_bytes > MAX_TOTAL_ATTACHMENT_BYTES {
+            return Err(GwsError::Validation(format!(
+                "Total attachment size exceeds {}MB limit",
+                MAX_TOTAL_ATTACHMENT_BYTES / (1024 * 1024)
+            )));
+        }
+        // file_name() is None for paths like "/", "..", or "." — already caught by is_file().
+        // to_str() is None only for non-UTF-8 filenames — impossible since path is &String.
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| {
+                GwsError::Validation(format!("--attach '{path}': could not extract filename"))
+            })?;
+        let content_type = mime_guess2::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+
+        attachments.push(Attachment {
+            filename: filename.to_string(),
+            content_type,
+            data,
+        });
+    }
+
+    Ok(attachments)
+}
+
 pub(super) fn resolve_send_method(
     doc: &crate::discovery::RestDescription,
 ) -> Result<&crate::discovery::RestMethod, GwsError> {
@@ -660,17 +752,11 @@ pub(super) fn resolve_send_method(
         .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
 }
 
-/// Build the JSON request body for `users.messages.send`, base64url-encoding
-/// (URL-safe, with padding) the raw RFC 5322 message and optionally including a threadId.
-pub(super) fn build_raw_send_body(raw_message: &str, thread_id: Option<&str>) -> Value {
-    let mut body =
-        serde_json::Map::from_iter([("raw".to_string(), json!(URL_SAFE.encode(raw_message)))]);
-
-    if let Some(thread_id) = thread_id {
-        body.insert("threadId".to_string(), json!(thread_id));
-    }
-
-    Value::Object(body)
+/// Build the JSON metadata for `users.messages.send` via the upload endpoint.
+/// Only contains `threadId` when replying/forwarding — the raw RFC 5322 message
+/// is sent as the media part, not base64-encoded in a `raw` field.
+fn build_send_metadata(thread_id: Option<&str>) -> Option<String> {
+    thread_id.map(|id| json!({ "threadId": id }).to_string())
 }
 
 pub(super) async fn send_raw_email(
@@ -680,8 +766,7 @@ pub(super) async fn send_raw_email(
     thread_id: Option<&str>,
     existing_token: Option<&str>,
 ) -> Result<(), GwsError> {
-    let body = build_raw_send_body(raw_message, thread_id);
-    let body_str = body.to_string();
+    let metadata = build_send_metadata(thread_id);
 
     let send_method = resolve_send_method(doc)?;
     let params = json!({ "userId": "me" });
@@ -712,12 +797,14 @@ pub(super) async fn send_raw_email(
         doc,
         send_method,
         Some(&params_str),
-        Some(&body_str),
+        metadata.as_deref(),
         token.as_deref(),
         auth_method,
         None,
-        None,
-        None,
+        Some(executor::UploadSource::Bytes {
+            data: raw_message.as_bytes(),
+            content_type: "message/rfc822",
+        }),
         matches.get_flag("dry-run"),
         &pagination,
         None,
@@ -730,9 +817,17 @@ pub(super) async fn send_raw_email(
     Ok(())
 }
 
-/// Add --cc, --bcc, --html, and --dry-run arguments shared by all mail subcommands.
+/// Add --attach, --cc, --bcc, --html, and --dry-run arguments shared by all mail subcommands.
 fn common_mail_args(cmd: Command) -> Command {
     cmd.arg(
+        Arg::new("attach")
+            .short('a')
+            .long("attach")
+            .help("Attach a file (can be specified multiple times)")
+            .action(ArgAction::Append)
+            .value_name("PATH"),
+    )
+    .arg(
         Arg::new("cc")
             .long("cc")
             .help("CC email address(es), comma-separated")
@@ -842,15 +937,15 @@ impl Helper for GmailHelper {
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
-  gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached.' --attachment ./report.pdf
-  gws gmail +send --to alice@example.com --subject 'Docs' --body 'Files attached.' --attachment a.pdf --attachment b.pdf
   gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
+  gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached' -a report.pdf
+  gws gmail +send --to alice@example.com --subject 'Files' --body 'Two files' -a a.pdf -a b.csv
 
 TIPS:
   Handles RFC 5322 formatting, MIME encoding, and base64 automatically.
   Use --from to send from a configured send-as alias instead of your primary address.
-  File MIME types are auto-detected from extensions (PDF, DOCX, PNG, etc.).
+  Use -a/--attach to add file attachments. Can be specified multiple times. Total size limit: 25MB.
   With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.",
             ),
         );
@@ -902,17 +997,18 @@ EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
-  gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
   gws gmail +reply --message-id 18f1a2b3c4d --body '<b>Bold reply</b>' --html
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Updated version' -a updated.docx
 
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
   Quotes the original message in the reply body.
+  --to adds extra recipients to the To field.
+  Use -a/--attach to add file attachments. Can be specified multiple times.
   With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
 Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
   With --html, inline images in the quoted message (cid: references) will appear broken. \
 Externally hosted images are unaffected.
-  --to adds extra recipients to the To field.
   For reply-all, use +reply-all instead.",
             ),
         );
@@ -934,9 +1030,8 @@ EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Sounds good to me!'
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Updated' --remove bob@example.com
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
-  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
   gws gmail +reply-all --message-id 18f1a2b3c4d --body '<i>Noted</i>' --html
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Notes attached' -a notes.pdf
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
@@ -945,6 +1040,7 @@ TIPS:
   Use --bcc for recipients who should not be visible to others.
   Use --remove to exclude recipients from the outgoing reply, including the sender or Reply-To target.
   The command fails if no To recipient remains after exclusions and --to additions.
+  Use -a/--attach to add file attachments. Can be specified multiple times.
   With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
 Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
   With --html, inline images in the quoted message (cid: references) will appear broken. \
@@ -989,11 +1085,12 @@ EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
-  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com -a notes.pdf
 
 TIPS:
   Includes the original message with sender, date, subject, and recipients.
+  Use -a/--attach to add file attachments. Can be specified multiple times.
   With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
 Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
   With --html, inline images in the forwarded message (cid: references) will appear broken. \
@@ -1534,19 +1631,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_raw_send_body_with_thread_id() {
-        let body = build_raw_send_body("raw message", Some("thread-123"));
-
-        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
-        assert_eq!(body["threadId"], "thread-123");
+    fn test_build_send_metadata_with_thread_id() {
+        let metadata = build_send_metadata(Some("thread-123")).unwrap();
+        let parsed: Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(parsed["threadId"], "thread-123");
     }
 
     #[test]
-    fn test_build_raw_send_body_without_thread_id() {
-        let body = build_raw_send_body("raw message", None);
-
-        assert_eq!(body["raw"], URL_SAFE.encode("raw message"));
-        assert!(body.get("threadId").is_none());
+    fn test_build_send_metadata_without_thread_id() {
+        assert!(build_send_metadata(None).is_none());
     }
 
     #[test]
@@ -2135,5 +2228,205 @@ mod tests {
         // Empty string becomes None
         let matches = cmd.try_get_matches_from(["test", "--empty", ""]).unwrap();
         assert!(parse_optional_trimmed(&matches, "empty").is_none());
+    }
+
+    // --- Attachment tests ---
+
+    fn make_attach_matches(args: &[&str]) -> ArgMatches {
+        let cmd = Command::new("test").arg(
+            Arg::new("attach")
+                .short('a')
+                .long("attach")
+                .action(ArgAction::Append),
+        );
+        cmd.try_get_matches_from(args).unwrap()
+    }
+
+    #[test]
+    fn test_attachment_single_file() {
+        let att = Attachment {
+            filename: "report.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            data: b"fake pdf data".to_vec(),
+        };
+        let mb = mail_builder::MessageBuilder::new()
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test");
+        let raw = finalize_message(mb, "Body", false, &[att]).unwrap();
+
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("report.pdf"));
+        assert!(raw.contains("application/pdf"));
+        assert!(raw.contains("Body"));
+    }
+
+    #[test]
+    fn test_attachment_multiple_files() {
+        let attachments = vec![
+            Attachment {
+                filename: "a.pdf".to_string(),
+                content_type: "application/pdf".to_string(),
+                data: b"pdf data".to_vec(),
+            },
+            Attachment {
+                filename: "b.csv".to_string(),
+                content_type: "text/csv".to_string(),
+                data: b"csv data".to_vec(),
+            },
+        ];
+        let mb = mail_builder::MessageBuilder::new()
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test");
+        let raw = finalize_message(mb, "Body", false, &attachments).unwrap();
+
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("a.pdf"));
+        assert!(raw.contains("b.csv"));
+    }
+
+    #[test]
+    fn test_attachment_with_html_body() {
+        let att = Attachment {
+            filename: "image.png".to_string(),
+            content_type: "image/png".to_string(),
+            data: vec![0x89, 0x50, 0x4E, 0x47],
+        };
+        let mb = mail_builder::MessageBuilder::new()
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test");
+        let raw = finalize_message(mb, "<p>Hello</p>", true, &[att]).unwrap();
+        let decoded = strip_qp_soft_breaks(&raw);
+
+        assert!(raw.contains("multipart/mixed"));
+        assert!(decoded.contains("text/html"));
+        assert!(decoded.contains("<p>Hello</p>"));
+        assert!(raw.contains("image.png"));
+    }
+
+    #[test]
+    fn test_attachment_empty_produces_no_multipart() {
+        let mb = mail_builder::MessageBuilder::new()
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test");
+        let raw = finalize_message(mb, "Body", false, &[]).unwrap();
+
+        assert!(!raw.contains("multipart/mixed"));
+        assert!(raw.contains("text/plain"));
+    }
+
+    #[test]
+    fn test_parse_attachments_rejects_control_chars() {
+        let matches = make_attach_matches(&["test", "-a", "file\0name.pdf"]);
+        let err = parse_attachments(&matches).unwrap_err();
+        assert!(err.to_string().contains("control characters"));
+    }
+
+    #[test]
+    fn test_parse_attachments_rejects_directory() {
+        let matches = make_attach_matches(&["test", "-a", "/tmp"]);
+        let err = parse_attachments(&matches).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"));
+    }
+
+    #[test]
+    fn test_parse_attachments_empty_returns_empty_vec() {
+        let matches = make_attach_matches(&["test"]);
+        let attachments = parse_attachments(&matches).unwrap();
+        assert!(attachments.is_empty());
+    }
+
+    #[test]
+    fn test_parse_attachments_reads_real_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(b"hello world").unwrap();
+        drop(f);
+
+        let path_str = file_path.to_str().unwrap().to_string();
+        let matches = make_attach_matches(&["test", "-a", &path_str]);
+        let attachments = parse_attachments(&matches).unwrap();
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "test.txt");
+        assert_eq!(attachments[0].content_type, "text/plain");
+        assert_eq!(attachments[0].data, b"hello world");
+    }
+
+    #[test]
+    fn test_parse_attachments_nonexistent_file() {
+        let matches = make_attach_matches(&["test", "-a", "/nonexistent/file.pdf"]);
+        let err = parse_attachments(&matches).unwrap_err();
+        assert!(
+            err.to_string().contains("Cannot read --attach"),
+            "error should mention the flag: {}",
+            err
+        );
+        assert!(
+            err.to_string().contains("/nonexistent/file.pdf"),
+            "error should include the path: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_attachments_unknown_extension_falls_back_to_octet_stream() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data.zzqqxx");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        f.write_all(b"unknown format").unwrap();
+        drop(f);
+
+        let path_str = file_path.to_str().unwrap().to_string();
+        let matches = make_attach_matches(&["test", "-a", &path_str]);
+        let attachments = parse_attachments(&matches).unwrap();
+
+        assert_eq!(attachments[0].content_type, "application/octet-stream");
+    }
+
+    #[test]
+    fn test_parse_attachments_size_limit_accumulates() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create two files whose combined size exceeds MAX_TOTAL_ATTACHMENT_BYTES
+        let file1 = dir.path().join("big1.bin");
+        let file2 = dir.path().join("big2.bin");
+        // Each file is just over half the limit
+        let half_plus_one = (MAX_TOTAL_ATTACHMENT_BYTES / 2 + 1) as usize;
+        std::fs::write(&file1, vec![0u8; half_plus_one]).unwrap();
+        std::fs::write(&file2, vec![0u8; half_plus_one]).unwrap();
+
+        let path1 = file1.to_str().unwrap().to_string();
+        let path2 = file2.to_str().unwrap().to_string();
+        let matches = make_attach_matches(&["test", "-a", &path1, "-a", &path2]);
+        let err = parse_attachments(&matches).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds"),
+            "error should mention exceeding limit: {}",
+            err
+        );
+
+        // A single file under the limit should succeed
+        let matches = make_attach_matches(&["test", "-a", &path1]);
+        assert!(parse_attachments(&matches).is_ok());
+    }
+
+    #[test]
+    fn test_parse_attachments_rejects_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("empty.txt");
+        std::fs::write(&file_path, b"").unwrap();
+
+        let path_str = file_path.to_str().unwrap().to_string();
+        let matches = make_attach_matches(&["test", "-a", &path_str]);
+        let err = parse_attachments(&matches).unwrap_err();
+        assert!(
+            err.to_string().contains("empty (0 bytes)"),
+            "error should mention empty file: {}",
+            err
+        );
     }
 }

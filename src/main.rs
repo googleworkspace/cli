@@ -215,17 +215,12 @@ async fn run() -> Result<(), GwsError> {
         .ok()
         .flatten()
         .map(|s| s.as_str());
-    let output_path = matched_args.get_one::<String>("output").map(|s| s.as_str());
     let upload_path = matched_args
         .try_get_one::<String>("upload")
         .ok()
         .flatten()
         .map(|s| s.as_str());
-    let upload_content_type = matched_args
-        .try_get_one::<String>("upload-content-type")
-        .ok()
-        .flatten()
-        .map(|s| s.as_str());
+    let output_path = matched_args.get_one::<String>("output").map(|s| s.as_str());
 
     // Validate file paths against traversal before any I/O.
     // Use the returned canonical paths so the validated path is the one
@@ -242,6 +237,18 @@ async fn run() -> Result<(), GwsError> {
     };
     let upload_path = upload_path_buf.as_deref().and_then(|p| p.to_str());
     let output_path = output_path_buf.as_deref().and_then(|p| p.to_str());
+
+    let upload = {
+        let upload_content_type = matched_args
+            .try_get_one::<String>("upload-content-type")
+            .ok()
+            .flatten()
+            .map(|s| s.as_str());
+        upload_path.map(|path| executor::UploadSource::File {
+            path,
+            content_type: upload_content_type,
+        })
+    };
 
     let dry_run = matched_args.get_flag("dry-run");
 
@@ -279,8 +286,7 @@ async fn run() -> Result<(), GwsError> {
         token.as_deref(),
         auth_method,
         output_path,
-        upload_path,
-        upload_content_type,
+        upload,
         dry_run,
         &pagination,
         sanitize_config.template.as_deref(),

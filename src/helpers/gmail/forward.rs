@@ -53,7 +53,7 @@ pub(super) async fn handle_forward(
         },
     };
 
-    let raw = create_forward_raw_message(&envelope, &original)?;
+    let raw = create_forward_raw_message(&envelope, &original, &config.attachments)?;
 
     super::send_raw_email(
         doc,
@@ -75,6 +75,7 @@ pub(super) struct ForwardConfig {
     pub bcc: Option<Vec<Mailbox>>,
     pub body: Option<String>,
     pub html: bool,
+    pub attachments: Vec<Attachment>,
 }
 
 struct ForwardEnvelope<'a> {
@@ -101,6 +102,7 @@ fn build_forward_subject(original_subject: &str) -> String {
 fn create_forward_raw_message(
     envelope: &ForwardEnvelope,
     original: &OriginalMessage,
+    attachments: &[Attachment],
 ) -> Result<String, GwsError> {
     let mb = mail_builder::MessageBuilder::new()
         .to(to_mb_address_list(envelope.to))
@@ -119,7 +121,7 @@ fn create_forward_raw_message(
         None => forwarded_block,
     };
 
-    finalize_message(mb, body, envelope.html)
+    finalize_message(mb, body, envelope.html, attachments)
 }
 
 /// Join mailboxes into a comma-separated Display string.
@@ -209,6 +211,7 @@ fn parse_forward_args(matches: &ArgMatches) -> Result<ForwardConfig, GwsError> {
         bcc: parse_optional_mailboxes(matches, "bcc"),
         body: parse_optional_trimmed(matches, "body"),
         html: matches.get_flag("html"),
+        attachments: parse_attachments(matches)?,
     })
 }
 
@@ -326,7 +329,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
 
         assert!(extract_header(&raw, "To")
             .unwrap()
@@ -374,7 +377,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
 
         assert!(extract_header(&raw, "To")
             .unwrap()
@@ -424,7 +427,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
 
         // All three message IDs should appear in the References header
         let refs_header = extract_header(&raw, "References").unwrap();
@@ -446,6 +449,12 @@ mod tests {
             .arg(Arg::new("bcc").long("bcc"))
             .arg(Arg::new("body").long("body"))
             .arg(Arg::new("html").long("html").action(ArgAction::SetTrue))
+            .arg(
+                Arg::new("attach")
+                    .short('a')
+                    .long("attach")
+                    .action(ArgAction::Append),
+            )
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
@@ -645,7 +654,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
         let decoded = strip_qp_soft_breaks(&raw);
 
         assert!(decoded.contains("text/html"));
@@ -684,7 +693,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
 
         let decoded = strip_qp_soft_breaks(&raw);
         assert!(decoded.contains("text/html"));
@@ -722,7 +731,7 @@ mod tests {
                 references: &refs,
             },
         };
-        let raw = create_forward_raw_message(&envelope, &original).unwrap();
+        let raw = create_forward_raw_message(&envelope, &original, &[]).unwrap();
         let decoded = strip_qp_soft_breaks(&raw);
 
         assert!(decoded.contains("text/html"));
@@ -730,5 +739,46 @@ mod tests {
         assert!(decoded.contains("gmail_quote"));
         assert!(decoded.contains("Forwarded message"));
         assert!(decoded.contains("<p>Original</p>"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_with_attachment() {
+        let original = OriginalMessage {
+            thread_id: Some("t1".to_string()),
+            message_id: "abc@example.com".to_string(),
+            from: Mailbox::parse("alice@example.com"),
+            to: vec![Mailbox::parse("bob@example.com")],
+            subject: "Hello".to_string(),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: "Original content".to_string(),
+            ..Default::default()
+        };
+
+        let refs = build_references_chain(&original);
+        let to = Mailbox::parse_list("dave@example.com");
+        let envelope = ForwardEnvelope {
+            to: &to,
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Hello",
+            body: Some("FYI, see attached"),
+            html: false,
+            threading: ThreadingHeaders {
+                in_reply_to: &original.message_id,
+                references: &refs,
+            },
+        };
+        let attachments = vec![Attachment {
+            filename: "report.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            data: b"fake pdf".to_vec(),
+        }];
+        let raw = create_forward_raw_message(&envelope, &original, &attachments).unwrap();
+
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("report.pdf"));
+        assert!(raw.contains("FYI, see attached"));
+        assert!(raw.contains("Forwarded message"));
     }
 }

@@ -213,7 +213,7 @@ fn normalize_dotdot(path: &Path) -> PathBuf {
 /// Rejects strings containing null bytes, ASCII control characters
 /// (including DEL, 0x7F), or dangerous Unicode characters such as
 /// zero-width chars, bidi overrides, and Unicode line/paragraph separators.
-fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
+pub(crate) fn reject_control_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
     for c in value.chars() {
         if (c as u32) < 0x20 || c as u32 == 0x7F {
             return Err(GwsError::Validation(format!(

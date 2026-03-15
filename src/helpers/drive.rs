@@ -110,8 +110,10 @@ TIPS:
                     token.as_deref(),
                     auth_method,
                     None,
-                    Some(file_path),
-                    None,
+                    Some(executor::UploadSource::File {
+                        path: file_path,
+                        content_type: None,
+                    }),
                     matches.get_flag("dry-run"),
                     &executor::PaginationConfig::default(),
                     None,
