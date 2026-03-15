@@ -808,7 +808,7 @@ fn resolve_upload_mime(
     }
 
     if let Some(path) = upload_path {
-        if let Some(detected) = mime_from_extension(path) {
+        if let Some(detected) = mime_guess2::from_path(path).first() {
             return detected.to_string();
         }
     }
@@ -822,33 +822,6 @@ fn resolve_upload_mime(
     }
 
     "application/octet-stream".to_string()
-}
-
-/// Infers a MIME type from a file path's extension.
-fn mime_from_extension(path: &str) -> Option<&'static str> {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())?;
-    match ext.to_lowercase().as_str() {
-        "md" | "markdown" => Some("text/markdown"),
-        "html" | "htm" => Some("text/html"),
-        "txt" => Some("text/plain"),
-        "json" => Some("application/json"),
-        "csv" => Some("text/csv"),
-        "xml" => Some("application/xml"),
-        "pdf" => Some("application/pdf"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "svg" => Some("image/svg+xml"),
-        "doc" => Some("application/msword"),
-        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-        "xls" => Some("application/vnd.ms-excel"),
-        "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-        "ppt" => Some("application/vnd.ms-powerpoint"),
-        "pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-        _ => None,
-    }
 }
 
 /// Builds a streaming multipart/related body for media upload requests.
