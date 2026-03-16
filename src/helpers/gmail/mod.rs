@@ -580,6 +580,153 @@ impl MessageBuilder<'_> {
 
         format!("{}\r\n\r\n{}", headers, body)
     }
+
+    /// Build an RFC 2822 multipart/mixed message with file attachments.
+    ///
+    /// The text (or HTML) body becomes the first MIME part; each attachment
+    /// is base64-encoded as a subsequent part.
+    pub fn build_with_attachments(
+        &self,
+        body: &str,
+        attachments: &[Attachment],
+    ) -> String {
+        if attachments.is_empty() {
+            return self.build(body);
+        }
+
+        debug_assert!(
+            !self.to.is_empty(),
+            "MessageBuilder: `to` must not be empty"
+        );
+
+        let boundary = generate_mime_boundary();
+
+        let mut headers = format!(
+            "To: {}\r\nSubject: {}",
+            encode_address_header(&sanitize_header_value(self.to)),
+            encode_header_value(&sanitize_header_value(self.subject)),
+        );
+
+        if let Some(ref threading) = self.threading {
+            headers.push_str(&format!(
+                "\r\nIn-Reply-To: {}\r\nReferences: {}",
+                sanitize_header_value(threading.in_reply_to),
+                sanitize_header_value(threading.references),
+            ));
+        }
+
+        headers.push_str(&format!(
+            "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\""
+        ));
+
+        if let Some(from) = self.from {
+            headers.push_str(&format!(
+                "\r\nFrom: {}",
+                encode_address_header(&sanitize_header_value(from))
+            ));
+        }
+
+        if let Some(cc) = self.cc {
+            headers.push_str(&format!(
+                "\r\nCc: {}",
+                encode_address_header(&sanitize_header_value(cc))
+            ));
+        }
+
+        if let Some(bcc) = self.bcc {
+            headers.push_str(&format!(
+                "\r\nBcc: {}",
+                encode_address_header(&sanitize_header_value(bcc))
+            ));
+        }
+
+        // Body part
+        let body_content_type = if self.html {
+            "text/html; charset=utf-8"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+
+        let mut message = format!(
+            "{headers}\r\n\r\n\
+             --{boundary}\r\n\
+             Content-Type: {body_content_type}\r\n\
+             \r\n\
+             {body}\r\n"
+        );
+
+        // Attachment parts
+        for att in attachments {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&att.data);
+            message.push_str(&format!(
+                "--{boundary}\r\n\
+                 Content-Type: {mime_type}\r\n\
+                 Content-Transfer-Encoding: base64\r\n\
+                 Content-Disposition: attachment; filename=\"{filename}\"\r\n\
+                 \r\n\
+                 {encoded}\r\n",
+                mime_type = att.mime_type,
+                filename = sanitize_header_value(&att.filename),
+            ));
+        }
+
+        // Closing boundary
+        message.push_str(&format!("--{boundary}--\r\n"));
+        message
+    }
+}
+
+/// A file attachment ready to be included in a MIME message.
+pub(super) struct Attachment {
+    pub filename: String,
+    pub mime_type: String,
+    pub data: Vec<u8>,
+}
+
+/// Generate a unique MIME boundary string.
+fn generate_mime_boundary() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let random: u128 = rng.gen();
+    format!("gws_{random:032x}")
+}
+
+/// Guess MIME type from a file extension. Falls back to
+/// `application/octet-stream` for unknown extensions.
+pub(super) fn mime_type_from_extension(filename: &str) -> &'static str {
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "zip" => "application/zip",
+        "gz" | "gzip" => "application/gzip",
+        "tar" => "application/x-tar",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "mp3" => "audio/mpeg",
+        "mp4" => "video/mp4",
+        "wav" => "audio/wav",
+        "ics" => "text/calendar",
+        "eml" => "message/rfc822",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Build the References header value. Returns just the message ID when there
@@ -735,6 +882,13 @@ impl Helper for GmailHelper {
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
+                    Arg::new("attachment")
+                        .long("attachment")
+                        .help("Attach a file (can be repeated for multiple files)")
+                        .action(ArgAction::Append)
+                        .value_name("PATH"),
+                )
+                .arg(
                     Arg::new("dry-run")
                         .long("dry-run")
                         .help("Show the request that would be sent without executing it")
@@ -745,12 +899,13 @@ impl Helper for GmailHelper {
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
-  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
+  gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached.' --attachment ./report.pdf
+  gws gmail +send --to alice@example.com --subject 'Docs' --body 'Files attached.' --attachment a.pdf --attachment b.pdf
   gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
 
 TIPS:
-  Handles RFC 2822 formatting and base64 encoding automatically.
-  For attachments, use the raw API instead: gws gmail users messages send --json '...'",
+  Handles RFC 2822 formatting, MIME encoding, and base64 automatically.
+  File MIME types are auto-detected from extensions (PDF, DOCX, PNG, etc.).",
                 ),
         );
 
@@ -1937,5 +2092,48 @@ mod tests {
             "<strong class=\"gmail_sendername\" dir=\"auto\">alice@example.com</strong> \
              <span dir=\"auto\">&lt;<a href=\"mailto:alice@example.com\">alice@example.com</a>&gt;</span>"
         );
+    }
+
+    // --- MIME type detection tests ---
+
+    #[test]
+    fn test_mime_type_from_extension_common_types() {
+        assert_eq!(mime_type_from_extension("report.pdf"), "application/pdf");
+        assert_eq!(
+            mime_type_from_extension("doc.docx"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(mime_type_from_extension("image.png"), "image/png");
+        assert_eq!(mime_type_from_extension("photo.jpg"), "image/jpeg");
+        assert_eq!(mime_type_from_extension("data.csv"), "text/csv");
+        assert_eq!(mime_type_from_extension("archive.zip"), "application/zip");
+    }
+
+    #[test]
+    fn test_mime_type_from_extension_case_insensitive() {
+        assert_eq!(mime_type_from_extension("FILE.PDF"), "application/pdf");
+        assert_eq!(mime_type_from_extension("IMAGE.PNG"), "image/png");
+        assert_eq!(mime_type_from_extension("Doc.DOCX"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    }
+
+    #[test]
+    fn test_mime_type_from_extension_unknown_fallback() {
+        assert_eq!(
+            mime_type_from_extension("file.xyz"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            mime_type_from_extension("noextension"),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_generate_mime_boundary_is_unique() {
+        let b1 = generate_mime_boundary();
+        let b2 = generate_mime_boundary();
+        assert_ne!(b1, b2);
+        assert!(b1.starts_with("gws_"));
     }
 }
