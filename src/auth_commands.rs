@@ -13,12 +13,156 @@
 // limitations under the License.
 
 use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::credential_store;
 use crate::error::GwsError;
+
+/// Check if HTTP proxy environment variables are set
+fn has_proxy_env() -> bool {
+    std::env::var("http_proxy").is_ok()
+        || std::env::var("HTTP_PROXY").is_ok()
+        || std::env::var("https_proxy").is_ok()
+        || std::env::var("HTTPS_PROXY").is_ok()
+        || std::env::var("all_proxy").is_ok()
+        || std::env::var("ALL_PROXY").is_ok()
+}
+
+/// Response from Google's token endpoint
+#[derive(Debug, Deserialize)]
+struct OAuthTokenResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    #[allow(dead_code)]
+    expires_in: u64,
+    #[allow(dead_code)]
+    token_type: String,
+}
+
+/// Exchange authorization code for tokens using reqwest (supports HTTP proxy)
+async fn exchange_code_with_reqwest(
+    client_id: &str,
+    client_secret: &str,
+    code: &str,
+    redirect_uri: &str,
+) -> Result<OAuthTokenResponse, GwsError> {
+    let client = reqwest::Client::new();
+    let params = [
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("grant_type", "authorization_code"),
+    ];
+
+    let response = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| GwsError::Auth(format!("Failed to send token request: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(GwsError::Auth(format!(
+            "Token exchange failed with status {}: {}",
+            status, body
+        )));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| GwsError::Auth(format!("Failed to parse token response: {e}")))
+}
+
+/// Perform OAuth login flow with proxy support using reqwest for token exchange
+async fn login_with_proxy_support(
+    client_id: &str,
+    client_secret: &str,
+    scopes: &[String],
+) -> Result<(String, String), GwsError> {
+    // Start local server to receive OAuth callback
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| GwsError::Auth(format!("Failed to start local server: {e}")))?;
+    let port = listener.local_addr().unwrap().port();
+    let redirect_uri = format!("http://localhost:{}", port);
+
+    // Build OAuth URL
+    let scopes_str = scopes.join(" ");
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/auth?\
+         scope={}&\
+         access_type=offline&\
+         redirect_uri={}&\
+         response_type=code&\
+         client_id={}&\
+         prompt=select_account+consent",
+        urlencoding(&scopes_str),
+        urlencoding(&redirect_uri),
+        urlencoding(client_id)
+    );
+
+    println!("Open this URL in your browser to authenticate:\n");
+    println!("  {}\n", auth_url);
+
+    // Wait for OAuth callback
+    let (mut stream, _) = listener
+        .accept()
+        .map_err(|e| GwsError::Auth(format!("Failed to accept connection: {e}")))?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
+
+    // Extract code from URL: GET /?code=XXX&... HTTP/1.1
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| GwsError::Auth("Invalid HTTP request".to_string()))?;
+
+    let code = path
+        .split('?')
+        .nth(1)
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let mut parts = pair.split('=');
+                if parts.next() == Some("code") {
+                    parts.next().map(|v| v.to_string())
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| GwsError::Auth("No authorization code in callback".to_string()))?;
+
+    // Send success response to browser
+    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
+        <html><body><h1>Success!</h1><p>You may now close this window.</p></body></html>";
+    let _ = stream.write_all(response.as_bytes());
+
+    // Exchange code for tokens using reqwest (proxy-aware)
+    let token_response = exchange_code_with_reqwest(client_id, client_secret, &code, &redirect_uri).await?;
+
+    let refresh_token = token_response
+        .refresh_token
+        .ok_or_else(|| GwsError::Auth("No refresh token returned".to_string()))?;
+
+    Ok((token_response.access_token, refresh_token))
+}
+
+/// Simple URL encoding
+fn urlencoding(s: &str) -> String {
+    percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
+}
 
 /// Mask a secret string by showing only the first 4 and last 4 characters.
 /// Strings with 8 or fewer characters are fully replaced with "***".
@@ -266,15 +410,6 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     // Remove restrictive scopes when broader alternatives are present.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
-    let secret = yup_oauth2::ApplicationSecret {
-        client_id: client_id.clone(),
-        client_secret: client_secret.clone(),
-        auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
-        token_uri: "https://oauth2.googleapis.com/token".to_string(),
-        redirect_uris: vec!["http://localhost".to_string()],
-        ..Default::default()
-    };
-
     // Ensure openid + email scopes are always present so we can identify the user
     // via the userinfo endpoint after login.
     let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
@@ -284,96 +419,97 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         }
     }
 
-    // Use a temp file for yup-oauth2's token persistence, then encrypt it
-    let temp_path = config_dir().join("credentials.tmp");
-
-    // Always start fresh — delete any stale temp cache from prior login attempts.
-    let _ = std::fs::remove_file(&temp_path);
-
     // Ensure config directory exists
-    if let Some(parent) = temp_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
-    }
+    let config = config_dir();
+    std::fs::create_dir_all(&config)
+        .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
 
-    let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
-        secret,
-        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-    )
-    .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
-        temp_path.clone(),
-    )))
-    .force_account_selection(true) // Adds prompt=consent so Google always returns a refresh_token
-    .flow_delegate(Box::new(CliFlowDelegate { login_hint: None }))
-    .build()
-    .await
-    .map_err(|e| GwsError::Auth(format!("Failed to build authenticator: {e}")))?;
+    // If proxy env vars are set, use proxy-aware OAuth flow (reqwest)
+    // Otherwise use yup-oauth2 (faster, but doesn't support proxy)
+    let (access_token, refresh_token) = if has_proxy_env() {
+        login_with_proxy_support(&client_id, &client_secret, &scopes).await?
+    } else {
+        // No proxy - use yup-oauth2
+        let secret = yup_oauth2::ApplicationSecret {
+            client_id: client_id.clone(),
+            client_secret: client_secret.clone(),
+            auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
+            token_uri: "https://oauth2.googleapis.com/token".to_string(),
+            redirect_uris: vec!["http://localhost".to_string()],
+            ..Default::default()
+        };
 
-    // Request a token — this triggers the browser OAuth flow
-    let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-    let token = auth
-        .token(&scope_refs)
+        let temp_path = config.join("credentials.tmp");
+        let _ = std::fs::remove_file(&temp_path);
+
+        let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
+            secret,
+            yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+        )
+        .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
+            temp_path.clone(),
+        )))
+        .force_account_selection(true)
+        .flow_delegate(Box::new(CliFlowDelegate { login_hint: None }))
+        .build()
         .await
-        .map_err(|e| GwsError::Auth(format!("OAuth flow failed: {e}")))?;
+        .map_err(|e| GwsError::Auth(format!("Failed to build authenticator: {e}")))?;
 
-    if token.token().is_some() {
-        // Read yup-oauth2's token cache to extract the refresh_token.
-        // EncryptedTokenStorage stores data encrypted, so we must decrypt first.
+        let scope_refs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
+        let token = auth
+            .token(&scope_refs)
+            .await
+            .map_err(|e| GwsError::Auth(format!("OAuth flow failed: {e}")))?;
+
+        let access_token = token
+            .token()
+            .ok_or_else(|| GwsError::Auth("No access token returned".to_string()))?
+            .to_string();
+
         let token_data = std::fs::read(&temp_path)
             .ok()
             .and_then(|bytes| crate::credential_store::decrypt(&bytes).ok())
             .and_then(|decrypted| String::from_utf8(decrypted).ok())
             .unwrap_or_default();
         let refresh_token = extract_refresh_token(&token_data).ok_or_else(|| {
-            GwsError::Auth(
-                "OAuth flow completed but no refresh token was returned. \
-                     Ensure the OAuth consent screen includes 'offline' access."
-                    .to_string(),
-            )
+            GwsError::Auth("No refresh token returned".to_string())
         })?;
 
-        // Build credentials in the standard authorized_user format
-        let creds_json = json!({
-            "type": "authorized_user",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-        });
-
-        let creds_str = serde_json::to_string_pretty(&creds_json)
-            .map_err(|e| GwsError::Validation(format!("Failed to serialize credentials: {e}")))?;
-
-        // Fetch the user's email from Google userinfo
-        let access_token = token.token().unwrap_or_default();
-        let actual_email = fetch_userinfo_email(access_token).await;
-
-        // Save encrypted credentials
-        let enc_path = credential_store::save_encrypted(&creds_str)
-            .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
-
-        // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
+        (access_token, refresh_token)
+    };
 
-        let output = json!({
-            "status": "success",
-            "message": "Authentication successful. Encrypted credentials saved.",
-            "account": actual_email.as_deref().unwrap_or("(unknown)"),
-            "credentials_file": enc_path.display().to_string(),
-            "encryption": "AES-256-GCM (key in OS keyring or local `.encryption_key`; set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file for headless)",
-            "scopes": scopes,
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
-        );
-        Ok(())
-    } else {
-        // Clean up temp file on failure
-        let _ = std::fs::remove_file(&temp_path);
-        Err(GwsError::Auth(
-            "OAuth flow completed but no token was returned.".to_string(),
-        ))
-    }
+    // Build credentials in the standard authorized_user format
+    let creds_json = json!({
+        "type": "authorized_user",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    });
+
+    let creds_str = serde_json::to_string_pretty(&creds_json)
+        .map_err(|e| GwsError::Validation(format!("Failed to serialize credentials: {e}")))?;
+
+    // Fetch the user's email from Google userinfo
+    let actual_email = fetch_userinfo_email(&access_token).await;
+
+    // Save encrypted credentials
+    let enc_path = credential_store::save_encrypted(&creds_str)
+        .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+
+    let output = json!({
+        "status": "success",
+        "message": "Authentication successful. Encrypted credentials saved.",
+        "account": actual_email.as_deref().unwrap_or("(unknown)"),
+        "credentials_file": enc_path.display().to_string(),
+        "encryption": "AES-256-GCM (key in OS keyring or local `.encryption_key`; set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file for headless)",
+        "scopes": scopes,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
+    Ok(())
 }
 
 /// Fetch the authenticated user's email from Google's userinfo endpoint.
