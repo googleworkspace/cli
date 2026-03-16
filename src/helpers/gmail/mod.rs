@@ -491,7 +491,32 @@ pub(super) fn encode_address_header(value: &str) -> String {
 
             // ASCII display name — reconstruct from parsed components
             // to strip any potential residual injection data.
-            format!("{} <{}>", display, email)
+            // Re-quote if the display name contains RFC 2822 special characters
+            // (commas, parens, etc.) to prevent header parsing issues.
+            if display.contains(|c: char| ",;()<>@\\\".[]".contains(c)) {
+                // Build a properly escaped quoted-string in one pass.
+                // extract_display_name strips outer quotes but leaves inner
+                // escapes (e.g. \"), so we skip already-escaped chars and
+                // escape any bare quotes or backslashes.
+                let mut escaped = String::with_capacity(display.len());
+                let mut chars = display.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '\\' && chars.peek().map_or(false, |&c| c == '"' || c == '\\') {
+                        // Already escaped — pass through as-is
+                        escaped.push(ch);
+                        escaped.push(chars.next().unwrap());
+                    } else if ch == '"' || ch == '\\' {
+                        // Bare special char — escape it
+                        escaped.push('\\');
+                        escaped.push(ch);
+                    } else {
+                        escaped.push(ch);
+                    }
+                }
+                format!("\"{}\" <{}>", escaped, email)
+            } else {
+                format!("{} <{}>", display, email)
+            }
         })
         .collect();
 
@@ -1487,6 +1512,41 @@ mod tests {
     #[test]
     fn test_encode_address_header_empty_input() {
         assert_eq!(encode_address_header(""), "");
+    }
+
+    #[test]
+    fn test_encode_address_header_display_name_with_comma() {
+        // Corporate email: "Last, First (DEPT)" <email@corp.com>
+        let input = "\"Anderson, Rich (CORP)\" <richard.anderson@adp.com>";
+        let result = encode_address_header(input);
+        assert_eq!(
+            result,
+            "\"Anderson, Rich (CORP)\" <richard.anderson@adp.com>",
+            "Display name with comma and parens must be quoted: {result}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_display_name_with_parens() {
+        let input = "Rich (CORP) <rich@example.com>";
+        let result = encode_address_header(input);
+        assert_eq!(
+            result,
+            "\"Rich (CORP)\" <rich@example.com>",
+            "Display name with parentheses must be quoted: {result}"
+        );
+    }
+
+    #[test]
+    fn test_encode_address_header_display_name_with_escaped_quotes() {
+        // Display name with already-escaped quotes must not double-escape
+        let input = "\"Rich \\\"The Man\\\" Anderson\" <rich@example.com>";
+        let result = encode_address_header(input);
+        assert_eq!(
+            result,
+            "\"Rich \\\"The Man\\\" Anderson\" <rich@example.com>",
+            "Already-escaped quotes must not be double-escaped: {result}"
+        );
     }
 
     #[test]
