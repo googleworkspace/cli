@@ -28,7 +28,8 @@ use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::discovery::{RestDescription, RestMethod};
-use crate::error::{sanitize_for_terminal, GwsError};
+use crate::error::GwsError;
+use crate::output::sanitize_for_terminal;
 
 /// Tracks what authentication method was used for the request.
 #[derive(Debug, Clone, PartialEq)]

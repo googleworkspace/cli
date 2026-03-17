@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use crate::error::sanitize_for_terminal;
+use crate::output::sanitize_for_terminal;
 
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, Nonce};

@@ -28,9 +28,9 @@ use triage::handle_triage;
 use watch::handle_watch;
 
 pub(super) use crate::auth;
-use crate::error::sanitize_for_terminal;
 pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
+use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
 pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};

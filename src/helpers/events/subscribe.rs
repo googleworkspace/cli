@@ -1,7 +1,7 @@
 use super::*;
 use crate::auth::AccessTokenProvider;
-use crate::error::sanitize_for_terminal;
 use crate::helpers::PUBSUB_API_BASE;
+use crate::output::sanitize_for_terminal;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default, Builder)]

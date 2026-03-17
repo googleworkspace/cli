@@ -70,7 +70,7 @@ pub(super) async fn handle_read(
                 continue;
             }
             // Replace newlines to prevent header spoofing in the output, then sanitize.
-            let sanitized_value = sanitize_terminal_output(&value.replace(['\r', '\n'], " "));
+            let sanitized_value = sanitize_for_terminal(&value.replace(['\r', '\n'], " "));
             writeln!(stdout, "{}: {}", name, sanitized_value)
                 .with_context(|| format!("Failed to write '{name}' header"))?;
         }
@@ -87,8 +87,7 @@ pub(super) async fn handle_read(
         &original.body_text
     };
 
-    writeln!(stdout, "{}", sanitize_terminal_output(body))
-        .context("Failed to write message body")?;
+    writeln!(stdout, "{}", sanitize_for_terminal(body)).context("Failed to write message body")?;
 
     Ok(())
 }
@@ -102,17 +101,16 @@ fn format_mailbox_list(mailboxes: &[Mailbox]) -> String {
         .join(", ")
 }
 
-/// Re-export the crate-wide terminal sanitizer for use in this module.
-use crate::error::sanitize_for_terminal as sanitize_terminal_output;
+use crate::output::sanitize_for_terminal;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_sanitize_terminal_output() {
+    fn test_sanitize_for_terminal() {
         let malicious = "Subject: \x1b]0;MALICIOUS\x07Hello\nWorld\r\t";
-        let sanitized = sanitize_terminal_output(malicious);
+        let sanitized = sanitize_for_terminal(malicious);
         // ANSI escape sequences (control chars) should be removed
         assert!(!sanitized.contains('\x1b'));
         assert!(!sanitized.contains('\x07'));

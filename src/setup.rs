@@ -22,7 +22,8 @@ use std::process::Command;
 
 use serde_json::json;
 
-use crate::error::{sanitize_for_terminal, GwsError};
+use crate::error::GwsError;
+use crate::output::sanitize_for_terminal;
 
 use crate::setup_tui::{PickerResult, SelectItem, SetupWizard, StepStatus};
 

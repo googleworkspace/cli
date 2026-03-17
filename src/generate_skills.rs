@@ -18,7 +18,8 @@
 
 use crate::commands;
 use crate::discovery;
-use crate::error::{sanitize_for_terminal, GwsError};
+use crate::error::GwsError;
+use crate::output::sanitize_for_terminal;
 use crate::services;
 use clap::Command;
 use std::path::Path;

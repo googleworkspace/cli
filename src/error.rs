@@ -148,9 +148,7 @@ impl GwsError {
     }
 }
 
-// Re-export from the consolidated output module so existing callers
-// that import from `crate::error` continue to work.
-pub(crate) use crate::output::{colorize, sanitize_for_terminal};
+use crate::output::{colorize, sanitize_for_terminal};
 
 /// Format a colored error label for the given error variant.
 fn error_label(err: &GwsError) -> String {

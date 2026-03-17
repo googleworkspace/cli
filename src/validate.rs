@@ -21,8 +21,7 @@
 use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
-// Re-export from the consolidated output module.
-pub(crate) use crate::output::reject_dangerous_chars as reject_control_chars;
+use crate::output::reject_dangerous_chars as reject_control_chars;
 
 /// Validates that `dir` is a safe output directory.
 ///

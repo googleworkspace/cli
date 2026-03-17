@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use yup_oauth2::storage::{TokenInfo, TokenStorage, TokenStorageError};
 
-use crate::error::sanitize_for_terminal;
+use crate::output::sanitize_for_terminal;
 
 /// A custom token storage implementation for `yup-oauth2` that encrypts
 /// the cached tokens at rest using AES-256-GCM encryption.

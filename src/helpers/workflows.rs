@@ -17,7 +17,8 @@
 
 use super::Helper;
 use crate::auth;
-use crate::error::{sanitize_for_terminal, GwsError};
+use crate::error::GwsError;
+use crate::output::sanitize_for_terminal;
 use clap::{Arg, ArgMatches, Command};
 use serde_json::{json, Value};
 use std::future::Future;
