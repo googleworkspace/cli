@@ -38,7 +38,6 @@ pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
 pub(super) use serde_json::{json, Value};
 use std::future::Future;
-use std::path::Path;
 use std::pin::Pin;
 
 pub struct GmailHelper;
@@ -688,9 +687,9 @@ pub(super) fn parse_attachments(matches: &ArgMatches) -> Result<Vec<Attachment>,
     let mut total_bytes: u64 = 0;
 
     for path in paths {
-        crate::validate::reject_control_chars(path, "--attach")?;
+        let canonical = crate::validate::validate_safe_file_path(path, "--attach")?;
 
-        let metadata = std::fs::metadata(path)
+        let metadata = std::fs::metadata(&canonical)
             .map_err(|e| GwsError::Validation(format!("Cannot read --attach '{path}': {e}")))?;
         if !metadata.is_file() {
             return Err(GwsError::Validation(format!(
@@ -698,7 +697,7 @@ pub(super) fn parse_attachments(matches: &ArgMatches) -> Result<Vec<Attachment>,
             )));
         }
 
-        let data = std::fs::read(path)
+        let data = std::fs::read(&canonical)
             .map_err(|e| GwsError::Validation(format!("Cannot read --attach '{path}': {e}")))?;
         if data.is_empty() {
             return Err(GwsError::Validation(format!(
@@ -715,13 +714,13 @@ pub(super) fn parse_attachments(matches: &ArgMatches) -> Result<Vec<Attachment>,
         }
         // file_name() is None for paths like "/", "..", or "." — already caught by is_file().
         // to_str() is None only for non-UTF-8 filenames — impossible since path is &String.
-        let filename = Path::new(path)
+        let filename = canonical
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| {
                 GwsError::Validation(format!("--attach '{path}': could not extract filename"))
             })?;
-        let content_type = mime_guess2::from_path(path)
+        let content_type = mime_guess2::from_path(&canonical)
             .first_or_octet_stream()
             .to_string();
 
@@ -2323,7 +2322,8 @@ mod tests {
 
     #[test]
     fn test_parse_attachments_rejects_directory() {
-        let matches = make_attach_matches(&["test", "-a", "/tmp"]);
+        // Use a relative directory that exists in CWD
+        let matches = make_attach_matches(&["test", "-a", "src"]);
         let err = parse_attachments(&matches).unwrap_err();
         assert!(err.to_string().contains("not a regular file"));
     }
@@ -2338,7 +2338,7 @@ mod tests {
     #[test]
     fn test_parse_attachments_reads_real_file() {
         use std::io::Write;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(".").unwrap();
         let file_path = dir.path().join("test.txt");
         let mut f = std::fs::File::create(&file_path).unwrap();
         f.write_all(b"hello world").unwrap();
@@ -2356,15 +2356,10 @@ mod tests {
 
     #[test]
     fn test_parse_attachments_nonexistent_file() {
-        let matches = make_attach_matches(&["test", "-a", "/nonexistent/file.pdf"]);
+        let matches = make_attach_matches(&["test", "-a", "nonexistent_file.pdf"]);
         let err = parse_attachments(&matches).unwrap_err();
         assert!(
-            err.to_string().contains("Cannot read --attach"),
-            "error should mention the flag: {}",
-            err
-        );
-        assert!(
-            err.to_string().contains("/nonexistent/file.pdf"),
+            err.to_string().contains("nonexistent_file.pdf"),
             "error should include the path: {}",
             err
         );
@@ -2373,7 +2368,7 @@ mod tests {
     #[test]
     fn test_parse_attachments_unknown_extension_falls_back_to_octet_stream() {
         use std::io::Write;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(".").unwrap();
         let file_path = dir.path().join("data.zzqqxx");
         let mut f = std::fs::File::create(&file_path).unwrap();
         f.write_all(b"unknown format").unwrap();
@@ -2389,7 +2384,7 @@ mod tests {
     #[test]
     fn test_parse_attachments_size_limit_accumulates() {
         use std::io::Write;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(".").unwrap();
 
         // Create two files whose combined size exceeds MAX_TOTAL_ATTACHMENT_BYTES
         let file1 = dir.path().join("big1.bin");
@@ -2416,7 +2411,7 @@ mod tests {
 
     #[test]
     fn test_parse_attachments_rejects_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in(".").unwrap();
         let file_path = dir.path().join("empty.txt");
         std::fs::write(&file_path, b"").unwrap();
 
