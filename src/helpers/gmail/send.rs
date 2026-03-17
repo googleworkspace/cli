@@ -137,27 +137,29 @@ fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
         ));
     }
 
-    let attachments: Vec<PathBuf> = matches
+    let raw_attachments: Vec<PathBuf> = matches
         .get_many::<String>("attachment")
         .map(|vals| vals.map(PathBuf::from).collect())
         .unwrap_or_default();
 
-    // Validate attachment paths
-    for path in &attachments {
+    // Validate and canonicalize attachment paths to prevent TOCTOU races.
+    let mut attachments = Vec::with_capacity(raw_attachments.len());
+    for path in &raw_attachments {
         let path_str = path.to_string_lossy();
-        crate::validate::validate_safe_file_path(&path_str, "--attachment")?;
-        if !path.exists() {
+        let canonical = crate::validate::validate_safe_file_path(&path_str, "--attachment")?;
+        if !canonical.exists() {
             return Err(GwsError::Validation(format!(
                 "Attachment file not found: {}",
                 path.display()
             )));
         }
-        if !path.is_file() {
+        if !canonical.is_file() {
             return Err(GwsError::Validation(format!(
                 "Attachment path is not a file: {}",
                 path.display()
             )));
         }
+        attachments.push(canonical);
     }
 
     Ok(SendConfig {
