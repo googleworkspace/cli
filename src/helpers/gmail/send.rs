@@ -276,15 +276,15 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_parse_send_args_with_attachments() {
         let dir = tempdir().unwrap();
-        let file1 = dir.path().join("doc.pdf");
-        let file2 = dir.path().join("image.png");
-        fs::write(&file1, b"fake pdf").unwrap();
-        fs::write(&file2, b"fake png").unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        fs::write(canonical_dir.join("doc.pdf"), b"fake pdf").unwrap();
+        fs::write(canonical_dir.join("image.png"), b"fake png").unwrap();
 
-        let f1 = file1.to_string_lossy().to_string();
-        let f2 = file2.to_string_lossy().to_string();
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
 
         let matches = make_matches_send(&[
             "test",
@@ -295,11 +295,13 @@ mod tests {
             "--body",
             "See attached",
             "--attachment",
-            &f1,
+            "doc.pdf",
             "--attachment",
-            &f2,
+            "image.png",
         ]);
         let config = parse_send_args(&matches).unwrap();
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
         assert_eq!(config.attachments.len(), 2);
     }
 
