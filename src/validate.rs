@@ -166,13 +166,18 @@ pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBu
     };
 
     // For existing files, canonicalize to resolve symlinks.
-    // For non-existing files, normalize the path.
+    // For non-existing files, get the prefix canonicalized then normalize
+    // the remaining components to resolve any `..` or `.` segments.
     let canonical = if resolved.exists() {
         resolved.canonicalize().map_err(|e| {
             GwsError::Validation(format!("Failed to resolve {flag_name} '{}': {e}", path_str))
         })?
     } else {
-        normalize_non_existing(&resolved)?
+        let raw = normalize_non_existing(&resolved)?;
+        // normalize_non_existing does NOT resolve `..` in the non-existent
+        // suffix. We must resolve them here to prevent bypass via paths like
+        // `non_existent/../../etc/passwd`.
+        normalize_dotdot(&raw)
     };
 
     let canonical_cwd = cwd.canonicalize().map_err(|e| {
@@ -188,6 +193,21 @@ pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBu
     }
 
     Ok(canonical)
+}
+
+/// Resolve `.` and `..` components in a path without touching the filesystem.
+fn normalize_dotdot(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Rejects strings containing null bytes, ASCII control characters
@@ -818,5 +838,26 @@ mod tests {
 
             assert!(result.is_err(), "symlink escape should be rejected");
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_file_path_rejects_traversal_via_nonexistent_prefix() {
+        // Regression: non_existent/../../etc/passwd could bypass starts_with
+        // because normalize_non_existing preserves ".." in the non-existent
+        // suffix. The normalize_dotdot fix resolves this.
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_safe_file_path("doesnt_exist/../../etc/passwd", "--output");
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(
+            result.is_err(),
+            "traversal via non-existent prefix should be rejected"
+        );
     }
 }
