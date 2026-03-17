@@ -165,6 +165,20 @@ fn colorize(text: &str, ansi_color: &str) -> String {
     }
 }
 
+/// Strip terminal control characters from `text` to prevent escape-sequence
+/// injection when printing untrusted content (API responses, user input) to
+/// stderr.  Preserves newlines and tabs for readability.
+pub(crate) fn sanitize_for_terminal(text: &str) -> String {
+    text.chars()
+        .filter(|&c| {
+            if c == '\n' || c == '\t' {
+                return true;
+            }
+            !c.is_control()
+        })
+        .collect()
+}
+
 /// Format a colored error label for the given error variant.
 fn error_label(err: &GwsError) -> String {
     match err {
@@ -212,7 +226,11 @@ pub fn print_error_json(err: &GwsError) {
             return;
         }
     }
-    eprintln!("{} {}", error_label(err), err);
+    eprintln!(
+        "{} {}",
+        error_label(err),
+        sanitize_for_terminal(&err.to_string())
+    );
 }
 
 #[cfg(test)]
@@ -400,5 +418,22 @@ mod tests {
 
         let other_err = GwsError::Other(anyhow::anyhow!("oops"));
         assert!(error_label(&other_err).contains("error:"));
+    }
+
+    #[test]
+    fn test_sanitize_for_terminal_strips_control_chars() {
+        // ANSI escape sequence should be stripped
+        let input = "normal \x1b[31mred text\x1b[0m end";
+        let sanitized = sanitize_for_terminal(input);
+        assert_eq!(sanitized, "normal [31mred text[0m end");
+        assert!(!sanitized.contains('\x1b'));
+
+        // Newlines and tabs preserved
+        let input2 = "line1\nline2\ttab";
+        assert_eq!(sanitize_for_terminal(input2), "line1\nline2\ttab");
+
+        // Other control characters stripped
+        let input3 = "hello\x07bell\x08backspace";
+        assert_eq!(sanitize_for_terminal(input3), "hellobellbackspace");
     }
 }
