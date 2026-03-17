@@ -41,6 +41,7 @@ Shortcut commands for common operations.
 | [gws-gmail-reply](../skills/gws-gmail-reply/SKILL.md) | Gmail: Reply to a message (handles threading automatically). |
 | [gws-gmail-reply-all](../skills/gws-gmail-reply-all/SKILL.md) | Gmail: Reply-all to a message (handles threading automatically). |
 | [gws-gmail-forward](../skills/gws-gmail-forward/SKILL.md) | Gmail: Forward a message to new recipients. |
+| [gws-gmail-read](../skills/gws-gmail-read/SKILL.md) | Gmail: Read a message and extract its body or headers. |
 | [gws-gmail-watch](../skills/gws-gmail-watch/SKILL.md) | Gmail: Watch for new emails and stream them as NDJSON. |
 | [gws-calendar-insert](../skills/gws-calendar-insert/SKILL.md) | Google Calendar: Create a new event. |
 | [gws-calendar-agenda](../skills/gws-calendar-agenda/SKILL.md) | Google Calendar: Show upcoming events across all calendars. |

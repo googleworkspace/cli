@@ -29,10 +29,10 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 | `--message-id` | ✓ | — | Gmail message ID to forward |
 | `--to` | ✓ | — | Recipient email address(es), comma-separated |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
+| `--body` | — | — | Optional note to include above the forwarded message (plain text, or HTML with --html) |
 | `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
-| `--body` | — | — | Optional note to include above the forwarded message (plain text, or HTML with --html) |
-| `--html` | — | — | Send as HTML (formats forwarded block with Gmail styling; treat --body as HTML) |
+| `--html` | — | — | Treat --body as HTML content (default is plain text) |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
@@ -48,6 +48,8 @@ gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI
 ## Tips
 
 - Includes the original message with sender, date, subject, and recipients.
+- With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+- With --html, inline images in the forwarded message (cid: references) will appear broken. Externally hosted images are unaffected.
 
 ## See Also
 

@@ -30,9 +30,9 @@ gws gmail +reply --message-id <ID> --body <TEXT>
 | `--body` | ✓ | — | Reply body (plain text, or HTML with --html) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
 | `--to` | — | — | Additional To email address(es), comma-separated |
-| `--cc` | — | — | Additional CC email address(es), comma-separated |
+| `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
-| `--html` | — | — | Send as HTML (quotes original with Gmail styling; treat --body as HTML) |
+| `--html` | — | — | Treat --body as HTML content (default is plain text) |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
 
 ## Examples
@@ -49,6 +49,8 @@ gws gmail +reply --message-id 18f1a2b3c4d --body '<b>Bold reply</b>' --html
 
 - Automatically sets In-Reply-To, References, and threadId headers.
 - Quotes the original message in the reply body.
+- With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+- With --html, inline images in the quoted message (cid: references) will appear broken. Externally hosted images are unaffected.
 - --to adds extra recipients to the To field.
 - For reply-all, use +reply-all instead.
 
