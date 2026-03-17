@@ -30,6 +30,7 @@ gws gmail +reply --message-id <ID> --body <TEXT>
 | `--body` | ✓ | — | Reply body (plain text, or HTML with --html) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
 | `--to` | — | — | Additional To email address(es), comma-separated |
+| `--attach` | — | — | Attach a file (can be specified multiple times) |
 | `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--html` | — | — | Treat --body as HTML content (default is plain text) |
@@ -41,17 +42,18 @@ gws gmail +reply --message-id <ID> --body <TEXT>
 gws gmail +reply --message-id 18f1a2b3c4d --body 'Thanks, got it!'
 gws gmail +reply --message-id 18f1a2b3c4d --body 'Looping in Carol' --cc carol@example.com
 gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
-gws gmail +reply --message-id 18f1a2b3c4d --body 'Reply' --bcc secret@example.com
 gws gmail +reply --message-id 18f1a2b3c4d --body '<b>Bold reply</b>' --html
+gws gmail +reply --message-id 18f1a2b3c4d --body 'Updated version' -a updated.docx
 ```
 
 ## Tips
 
 - Automatically sets In-Reply-To, References, and threadId headers.
 - Quotes the original message in the reply body.
+- --to adds extra recipients to the To field.
+- Use -a/--attach to add file attachments. Can be specified multiple times.
 - With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
 - With --html, inline images in the quoted message (cid: references) will appear broken. Externally hosted images are unaffected.
-- --to adds extra recipients to the To field.
 - For reply-all, use +reply-all instead.
 
 ## See Also

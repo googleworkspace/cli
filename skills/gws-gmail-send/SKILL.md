@@ -31,6 +31,7 @@ gws gmail +send --to <EMAILS> --subject <SUBJECT> --body <TEXT>
 | `--body` | ✓ | — | Email body (plain text, or HTML with --html) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
 | `--attachment` | — | — | Attach a file (can be repeated for multiple files) |
+| `--attach` | — | — | Attach a file (can be specified multiple times) |
 | `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--html` | — | — | Treat --body as HTML content (default is plain text) |
@@ -41,17 +42,17 @@ gws gmail +send --to <EMAILS> --subject <SUBJECT> --body <TEXT>
 ```bash
 gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
 gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
-gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached.' --attachment ./report.pdf
-gws gmail +send --to alice@example.com --subject 'Docs' --body 'Files attached.' --attachment a.pdf --attachment b.pdf
 gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
 gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
+gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached' -a report.pdf
+gws gmail +send --to alice@example.com --subject 'Files' --body 'Two files' -a a.pdf -a b.csv
 ```
 
 ## Tips
 
 - Handles RFC 5322 formatting, MIME encoding, and base64 automatically.
 - Use --from to send from a configured send-as alias instead of your primary address.
-- File MIME types are auto-detected from extensions (PDF, DOCX, PNG, etc.).
+- Use -a/--attach to add file attachments. Can be specified multiple times. Total size limit: 25MB.
 - With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.
 
 > [!CAUTION]

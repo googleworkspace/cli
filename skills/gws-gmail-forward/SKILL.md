@@ -30,6 +30,7 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 | `--to` | ✓ | — | Recipient email address(es), comma-separated |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
 | `--body` | — | — | Optional note to include above the forwarded message (plain text, or HTML with --html) |
+| `--attach` | — | — | Attach a file (can be specified multiple times) |
 | `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--html` | — | — | Treat --body as HTML content (default is plain text) |
@@ -41,13 +42,14 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body 'FYI see below'
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@example.com
-gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --bcc secret@example.com
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
+gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com -a notes.pdf
 ```
 
 ## Tips
 
 - Includes the original message with sender, date, subject, and recipients.
+- Use -a/--attach to add file attachments. Can be specified multiple times.
 - With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
 - With --html, inline images in the forwarded message (cid: references) will appear broken. Externally hosted images are unaffected.
 
