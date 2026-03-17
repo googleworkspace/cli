@@ -14,12 +14,14 @@
 
 use super::Helper;
 pub mod forward;
+pub mod read;
 pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
 use forward::handle_forward;
+use read::handle_read;
 use reply::handle_reply;
 use send::handle_send;
 use triage::handle_triage;
@@ -33,6 +35,7 @@ pub(super) use anyhow::Context;
 pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};
 pub(super) use mail_builder::headers::address::Address as MbAddress;
+pub(super) use serde::Serialize;
 pub(super) use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
@@ -55,7 +58,7 @@ fn sanitize_control_chars(s: &str) -> String {
 }
 
 /// A parsed RFC 5322 mailbox: optional display name + email address.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(super) struct Mailbox {
     pub name: Option<String>,
     pub email: String,
@@ -146,7 +149,7 @@ pub(super) fn strip_angle_brackets(id: &str) -> &str {
 /// message snippet when no `text/plain` MIME part is found. Semantically optional
 /// fields (`cc`, `reply_to`, `date`, `body_html`) use `Option` so the compiler
 /// enforces absence checks.
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(super) struct OriginalMessage {
     pub thread_id: String,
     /// Bare message ID (no angle brackets), e.g. `"abc@example.com"`.
@@ -826,6 +829,13 @@ impl Helper for GmailHelper {
                             .long("from")
                             .help("Sender address (for send-as/alias; omit to use account default)")
                             .value_name("EMAIL"),
+                    )
+                    .arg(
+                        Arg::new("attachment")
+                            .long("attachment")
+                            .help("Attach a file (can be repeated for multiple files)")
+                            .action(ArgAction::Append)
+                            .value_name("PATH"),
                     ),
             )
             .after_help(
@@ -833,15 +843,16 @@ impl Helper for GmailHelper {
 EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi Alice!'
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --cc bob@example.com
-  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --bcc secret@example.com
+  gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached.' --attachment ./report.pdf
+  gws gmail +send --to alice@example.com --subject 'Docs' --body 'Files attached.' --attachment a.pdf --attachment b.pdf
   gws gmail +send --to alice@example.com --subject 'Hello' --body '<b>Bold</b> text' --html
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
 
 TIPS:
-  Handles RFC 5322 formatting and base64 encoding automatically.
+  Handles RFC 5322 formatting, MIME encoding, and base64 automatically.
   Use --from to send from a configured send-as alias instead of your primary address.
-  With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.
-  For attachments, use the raw API instead: gws gmail users messages send --json '...'",
+  File MIME types are auto-detected from extensions (PDF, DOCX, PNG, etc.).
+  With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.",
             ),
         );
 
@@ -992,6 +1003,55 @@ Externally hosted images are unaffected.",
         );
 
         cmd = cmd.subcommand(
+            Command::new("+read")
+                .about("[Helper] Read a message and extract its body or headers")
+                .arg(
+                    Arg::new("id")
+                        .long("id")
+                        .alias("message-id")
+                        .required(true)
+                        .help("The Gmail message ID to read")
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("headers")
+                        .long("headers")
+                        .help("Include headers (From, To, Subject, Date) in the output")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .help("Output format (text, json)")
+                        .value_parser(["text", "json"])
+                        .default_value("text"),
+                )
+                .arg(
+                    Arg::new("html")
+                        .long("html")
+                        .help("Return HTML body instead of plain text")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .help("Show the request that would be sent without executing it")
+                        .action(ArgAction::SetTrue),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws gmail +read --id 18f1a2b3c4d
+  gws gmail +read --id 18f1a2b3c4d --headers
+  gws gmail +read --id 18f1a2b3c4d --format json | jq '.body'
+
+TIPS:
+  Converts HTML-only messages to plain text automatically.
+  Handles multipart/alternative and base64 decoding.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
             Command::new("+watch")
                 .about("[Helper] Watch for new emails and stream them as NDJSON")
                 .arg(
@@ -1105,6 +1165,11 @@ TIPS:
 
             if let Some(matches) = matches.subcommand_matches("+triage") {
                 handle_triage(matches).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+read") {
+                handle_read(doc, matches).await?;
                 return Ok(true);
             }
 
@@ -1467,6 +1532,7 @@ mod tests {
         assert!(subcommands.contains(&"+reply"));
         assert!(subcommands.contains(&"+reply-all"));
         assert!(subcommands.contains(&"+forward"));
+        assert!(subcommands.contains(&"+read"));
     }
 
     #[test]
