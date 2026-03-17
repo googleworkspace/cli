@@ -806,29 +806,21 @@ fn resolve_upload_mime(
     upload_path: Option<&str>,
     metadata: &Option<Value>,
 ) -> String {
-    let raw = if let Some(mime) = explicit {
-        mime.to_string()
-    } else if let Some(path) = upload_path {
-        if let Some(detected) = mime_from_extension(path) {
-            detected.to_string()
-        } else if let Some(mime) = metadata
-            .as_ref()
-            .and_then(|m| m.get("mimeType"))
-            .and_then(|v| v.as_str())
-        {
-            mime.to_string()
-        } else {
-            return "application/octet-stream".to_string();
-        }
-    } else if let Some(mime) = metadata
-        .as_ref()
-        .and_then(|m| m.get("mimeType"))
-        .and_then(|v| v.as_str())
-    {
-        mime.to_string()
-    } else {
-        return "application/octet-stream".to_string();
-    };
+    let raw = explicit
+        .map(|s| s.to_string())
+        .or_else(|| {
+            upload_path
+                .and_then(mime_from_extension)
+                .map(|s| s.to_string())
+        })
+        .or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|m| m.get("mimeType"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string());
 
     // Strip CR/LF and other control characters to prevent MIME header injection.
     let sanitized: String = raw.chars().filter(|c| !c.is_control()).collect();

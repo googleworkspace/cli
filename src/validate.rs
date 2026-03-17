@@ -144,6 +144,14 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
 /// Absolute paths are allowed (reading an existing file from a known
 /// location is legitimate) but the resolved target must still live
 /// under CWD.
+///
+/// # TOCTOU caveat
+///
+/// This is a best-effort defence-in-depth check. A local attacker with
+/// write access to a parent directory could replace a path component
+/// between this validation and the subsequent I/O. Fully eliminating
+/// TOCTOU would require `openat(O_NOFOLLOW)` on each path component,
+/// which is tracked as a follow-up for Unix platforms.
 pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
     reject_control_chars(path_str, flag_name)?;
 
