@@ -1,5 +1,33 @@
 # @googleworkspace/cli
 
+## 0.17.0
+
+### Minor Changes
+
+- 1b0a21f: feat: support google meet video conferencing in calendar +insert
+
+### Patch Changes
+
+- 811fe7b: Fix critical security vulnerability (TOCTOU/Symlink race) in atomic file writes.
+
+  The atomic_write and atomic_write_async utilities now use:
+
+  - Randomized temporary filenames to prevent predictability.
+  - O_EXCL creation flags to prevent following pre-existing symlinks.
+  - Strict 0600 permissions from the moment of file creation on Unix systems.
+  - Redundant post-write permission calls have been removed to close race windows.
+
+- b241a5b: fix(security): cap Retry-After sleep, sanitize upload mimeType, and validate --upload/--output paths
+- 6f92e5b: Stderr/output hygiene rollup: route diagnostics to stderr, add colored error labels, propagate auth errors.
+
+  - **triage.rs**: "No messages found" sent to stderr so stdout stays valid JSON for pipes
+  - **modelarmor.rs**: response body printed only on success; error message now includes body for diagnostics
+  - **error.rs**: colored `error[variant]:` labels on stderr (respects `NO_COLOR` env var), `hint:` prefix for accessNotConfigured guidance
+  - **calendar, chat, docs, drive, script, sheets**: auth failures now propagate as `GwsError::Auth` instead of silently proceeding unauthenticated (dry-run still works without auth)
+
+- 398e80c: Sync generated skills with latest Google Discovery API specs
+- 8458104: Extend input validation to reject dangerous Unicode characters (zero-width chars, bidi overrides, Unicode line/paragraph separators) that were not caught by the previous ASCII-range check
+
 ## 0.16.0
 
 ### Minor Changes
