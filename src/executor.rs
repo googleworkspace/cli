@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::discovery::{RestDescription, RestMethod};
-use crate::error::GwsError;
+use crate::error::{sanitize_for_terminal, GwsError};
 
 /// Tracks what authentication method was used for the request.
 #[derive(Debug, Clone, PartialEq)]
@@ -287,7 +287,10 @@ async fn handle_json_response(
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Model Armor sanitization failed: {e}");
+                    eprintln!(
+                        "⚠️  Model Armor sanitization failed: {}",
+                        sanitize_for_terminal(&e.to_string())
+                    );
                 }
             }
         }
@@ -822,30 +825,34 @@ fn handle_error_response<T>(
 /// represents the *source* type (what the bytes are). When a user uploads
 /// `notes.md` with `"mimeType":"application/vnd.google-apps.document"`, the
 /// media part should be `text/markdown`, not a Google Workspace MIME type.
+/// All returned MIME types have control characters stripped to prevent
+/// MIME header injection via user-controlled metadata.
 fn resolve_upload_mime(
     explicit: Option<&str>,
     upload_path: Option<&str>,
     metadata: &Option<Value>,
 ) -> String {
-    if let Some(mime) = explicit {
-        return mime.to_string();
-    }
+    let raw = explicit
+        .map(|s| s.to_string())
+        .or_else(|| {
+            upload_path.and_then(|path| mime_guess2::from_path(path).first().map(|m| m.to_string()))
+        })
+        .or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|m| m.get("mimeType"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    if let Some(path) = upload_path {
-        if let Some(detected) = mime_guess2::from_path(path).first() {
-            return detected.to_string();
-        }
+    // Strip CR/LF and other control characters to prevent MIME header injection.
+    let sanitized: String = raw.chars().filter(|c| !c.is_control()).collect();
+    if sanitized.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        sanitized
     }
-
-    if let Some(mime) = metadata
-        .as_ref()
-        .and_then(|m| m.get("mimeType"))
-        .and_then(|v| v.as_str())
-    {
-        return mime.to_string();
-    }
-
-    "application/octet-stream".to_string()
 }
 
 /// Builds a streaming multipart/related body for media upload requests.
