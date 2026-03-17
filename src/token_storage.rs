@@ -18,6 +18,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use yup_oauth2::storage::{TokenInfo, TokenStorage, TokenStorageError};
 
+use crate::error::sanitize_for_terminal;
+
 /// A custom token storage implementation for `yup-oauth2` that encrypts
 /// the cached tokens at rest using AES-256-GCM encryption.
 pub struct EncryptedTokenStorage {
@@ -55,7 +57,10 @@ impl EncryptedTokenStorage {
         let json = match String::from_utf8(decrypted) {
             Ok(j) => j,
             Err(e) => {
-                eprintln!("warning: token cache contains invalid UTF-8: {e}");
+                eprintln!(
+                    "warning: token cache contains invalid UTF-8: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
                 return HashMap::new();
             }
         };
@@ -63,7 +68,10 @@ impl EncryptedTokenStorage {
         match serde_json::from_str(&json) {
             Ok(map) => map,
             Err(e) => {
-                eprintln!("warning: failed to parse token cache JSON: {e}");
+                eprintln!(
+                    "warning: failed to parse token cache JSON: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
                 HashMap::new()
             }
         }

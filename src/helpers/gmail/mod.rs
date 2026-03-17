@@ -26,6 +26,7 @@ use triage::handle_triage;
 use watch::handle_watch;
 
 pub(super) use crate::auth;
+use crate::error::sanitize_for_terminal;
 pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
 pub(super) use anyhow::Context;
@@ -223,11 +224,17 @@ fn extract_body_by_mime(payload: &Value, target_mime: &str) -> Option<String> {
                 Ok(decoded) => match String::from_utf8(decoded) {
                     Ok(s) => return Some(s),
                     Err(e) => {
-                        eprintln!("Warning: {target_mime} body is not valid UTF-8: {e}");
+                        eprintln!(
+                            "Warning: {target_mime} body is not valid UTF-8: {}",
+                            sanitize_for_terminal(&e.to_string())
+                        );
                     }
                 },
                 Err(e) => {
-                    eprintln!("Warning: {target_mime} body has invalid base64: {e}");
+                    eprintln!(
+                        "Warning: {target_mime} body has invalid base64: {}",
+                        sanitize_for_terminal(&e.to_string())
+                    );
                 }
             }
         }
@@ -389,7 +396,10 @@ pub(super) fn format_date_for_attribution(raw_date: &str) -> String {
     chrono::DateTime::parse_from_rfc2822(raw_date)
         .map(|dt| dt.format("%a, %b %-d, %Y at %-I:%M\u{202f}%p").to_string())
         .unwrap_or_else(|e| {
-            eprintln!("Note: could not parse date as RFC 2822 ({e}); using raw value.");
+            eprintln!(
+                "Note: could not parse date as RFC 2822 ({}); using raw value.",
+                sanitize_for_terminal(&e.to_string())
+            );
             html_escape(raw_date)
         })
 }

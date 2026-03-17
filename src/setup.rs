@@ -22,7 +22,7 @@ use std::process::Command;
 
 use serde_json::json;
 
-use crate::error::GwsError;
+use crate::error::{sanitize_for_terminal, GwsError};
 
 use crate::setup_tui::{PickerResult, SelectItem, SetupWizard, StepStatus};
 
@@ -1371,7 +1371,7 @@ async fn stage_enable_apis(ctx: &mut SetupContext) -> Result<SetupStage, GwsErro
     if !ctx.failed.is_empty() {
         eprintln!();
         for (api, err) in &ctx.failed {
-            eprintln!("  ⚠  {} — {}", api, err);
+            eprintln!("  ⚠  {} — {}", api, sanitize_for_terminal(err));
         }
         eprintln!();
     }

@@ -14,6 +14,8 @@
 
 use std::path::PathBuf;
 
+use crate::error::sanitize_for_terminal;
+
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 
@@ -31,7 +33,10 @@ fn ensure_key_dir(path: &std::path::Path) -> std::io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
             {
-                eprintln!("Warning: failed to set secure permissions on key directory: {e}");
+                eprintln!(
+                    "Warning: failed to set secure permissions on key directory: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
             }
         }
     }
@@ -251,7 +256,10 @@ fn resolve_key(
                 }
             }
             Err(e) => {
-                eprintln!("Warning: keyring access failed, falling back to file storage: {e}");
+                eprintln!(
+                    "Warning: keyring access failed, falling back to file storage: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
             }
         }
     }

@@ -18,7 +18,7 @@
 
 use crate::commands;
 use crate::discovery;
-use crate::error::GwsError;
+use crate::error::{sanitize_for_terminal, GwsError};
 use crate::services;
 use clap::Command;
 use std::path::Path;
@@ -123,7 +123,10 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
             match discovery::fetch_discovery_document(entry.api_name, entry.version).await {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("  WARNING: Failed to fetch discovery doc for {alias}: {e}");
+                    eprintln!(
+                        "  WARNING: Failed to fetch discovery doc for {alias}: {}",
+                        sanitize_for_terminal(&e.to_string())
+                    );
                     continue;
                 }
             }

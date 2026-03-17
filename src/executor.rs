@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::discovery::{RestDescription, RestMethod};
-use crate::error::GwsError;
+use crate::error::{sanitize_for_terminal, GwsError};
 
 /// Tracks what authentication method was used for the request.
 #[derive(Debug, Clone, PartialEq)]
@@ -261,7 +261,10 @@ async fn handle_json_response(
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Model Armor sanitization failed: {e}");
+                    eprintln!(
+                        "⚠️  Model Armor sanitization failed: {}",
+                        sanitize_for_terminal(&e.to_string())
+                    );
                 }
             }
         }

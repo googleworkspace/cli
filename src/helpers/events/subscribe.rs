@@ -1,5 +1,6 @@
 use super::*;
 use crate::auth::AccessTokenProvider;
+use crate::error::sanitize_for_terminal;
 use crate::helpers::PUBSUB_API_BASE;
 use std::path::PathBuf;
 
@@ -375,7 +376,11 @@ async fn pull_loop(
                     .unwrap_or(0);
                 let path = dir.join(format!("{ts}_{file_counter}.json"));
                 if let Err(e) = std::fs::write(&path, &json_str) {
-                    eprintln!("Warning: failed to write {}: {e}", path.display());
+                    eprintln!(
+                        "Warning: failed to write {}: {}",
+                        path.display(),
+                        sanitize_for_terminal(&e.to_string())
+                    );
                 } else {
                     eprintln!("Wrote {}", path.display());
                 }

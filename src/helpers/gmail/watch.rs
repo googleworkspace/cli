@@ -1,5 +1,6 @@
 use super::*;
 use crate::auth::AccessTokenProvider;
+use crate::error::sanitize_for_terminal;
 use crate::helpers::PUBSUB_API_BASE;
 
 const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
@@ -453,7 +454,7 @@ async fn fetch_and_output_messages(
                             }
                         }
                         Err(e) => {
-                            eprintln!("\x1b[33m[WARNING]\x1b[0m Model Armor sanitization failed for message {msg_id}: {e}");
+                            eprintln!("\x1b[33m[WARNING]\x1b[0m Model Armor sanitization failed for message {msg_id}: {}", sanitize_for_terminal(&e.to_string()));
                         }
                     }
                 }
@@ -466,7 +467,11 @@ async fn fetch_and_output_messages(
                         crate::validate::encode_path_segment(&msg_id)
                     ));
                     if let Err(e) = std::fs::write(&path, &json_str) {
-                        eprintln!("Warning: failed to write {}: {e}", path.display());
+                        eprintln!(
+                            "Warning: failed to write {}: {}",
+                            path.display(),
+                            sanitize_for_terminal(&e.to_string())
+                        );
                     } else {
                         eprintln!("Wrote {}", path.display());
                     }
