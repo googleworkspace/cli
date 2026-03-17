@@ -76,13 +76,13 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
     let messages = match list_json.get("messages").and_then(|m| m.as_array()) {
         Some(m) => m,
         None => {
-            println!("No messages found matching query: {query}");
+            eprintln!("{}", no_messages_msg(query));
             return Ok(());
         }
     };
 
     if messages.is_empty() {
-        println!("No messages found matching query: {query}");
+        eprintln!("{}", no_messages_msg(query));
         return Ok(());
     }
 
@@ -178,8 +178,15 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
     Ok(())
 }
 
+/// Returns the human-readable "no messages" diagnostic string.
+/// Extracted so the test can reference the exact same message without duplication.
+fn no_messages_msg(query: &str) -> String {
+    format!("No messages found matching query: {query}")
+}
+
 #[cfg(test)]
 mod tests {
+    use super::no_messages_msg;
     use clap::{Arg, ArgAction, Command};
 
     /// Build a clap command matching the +triage definition so we can
@@ -282,5 +289,14 @@ mod tests {
             .map(|s| crate::formatter::OutputFormat::from_str(s))
             .unwrap_or(crate::formatter::OutputFormat::Table);
         assert!(matches!(fmt, crate::formatter::OutputFormat::Json));
+    }
+
+    #[test]
+    fn empty_result_message_is_not_json() {
+        // Verify that no_messages_msg() produces a human-readable string that
+        // belongs on stderr, not stdout. If it were valid JSON it could corrupt
+        // pipe workflows like `gws gmail +triage | jq`.
+        let msg = no_messages_msg("label:inbox");
+        assert!(serde_json::from_str::<serde_json::Value>(&msg).is_err());
     }
 }
