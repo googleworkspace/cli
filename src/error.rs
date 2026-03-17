@@ -209,12 +209,10 @@ pub fn print_error_json(err: &GwsError) {
                 eprintln!("      Visit the GCP Console → APIs & Services → Library to enable the required API.");
             }
             eprintln!("      After enabling, wait a few seconds and retry your command.");
-        } else {
-            eprintln!("{} {}", error_label(err), err);
+            return;
         }
-    } else {
-        eprintln!("{} {}", error_label(err), err);
     }
+    eprintln!("{} {}", error_label(err), err);
 }
 
 #[cfg(test)]
