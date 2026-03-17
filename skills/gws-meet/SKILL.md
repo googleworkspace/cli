@@ -26,6 +26,7 @@ gws meet <resource> <method> [flags]
   - `list` — Lists the conference records. By default, ordered by start time and in descending order.
   - `participants` — Operations on the 'participants' resource
   - `recordings` — Operations on the 'recordings' resource
+  - `smartNotes` — Operations on the 'smartNotes' resource
   - `transcripts` — Operations on the 'transcripts' resource
 
 ### spaces
