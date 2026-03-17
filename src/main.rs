@@ -33,6 +33,7 @@ mod generate_skills;
 mod helpers;
 mod logging;
 mod oauth_config;
+mod output;
 mod schema;
 mod services;
 mod setup;

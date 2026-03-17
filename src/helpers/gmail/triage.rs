@@ -181,7 +181,10 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
 /// Returns the human-readable "no messages" diagnostic string.
 /// Extracted so the test can reference the exact same message without duplication.
 fn no_messages_msg(query: &str) -> String {
-    format!("No messages found matching query: {query}")
+    format!(
+        "No messages found matching query: {}",
+        crate::output::sanitize_for_terminal(query)
+    )
 }
 
 #[cfg(test)]

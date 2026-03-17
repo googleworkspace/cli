@@ -2,6 +2,7 @@ use super::*;
 use crate::auth::AccessTokenProvider;
 use crate::error::sanitize_for_terminal;
 use crate::helpers::PUBSUB_API_BASE;
+use crate::output::colorize;
 
 const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 
@@ -100,7 +101,7 @@ pub(super) async fn handle_watch(
                     "    --member=serviceAccount:gmail-api-push@system.gserviceaccount.com \\"
                 );
                 eprintln!("    --role=roles/pubsub.publisher");
-                eprintln!("Error: {body}");
+                eprintln!("Error: {}", sanitize_for_terminal(&body));
             }
 
             t
@@ -454,7 +455,11 @@ async fn fetch_and_output_messages(
                             }
                         }
                         Err(e) => {
-                            eprintln!("\x1b[33m[WARNING]\x1b[0m Model Armor sanitization failed for message {msg_id}: {}", sanitize_for_terminal(&e.to_string()));
+                            eprintln!(
+                                "{} Model Armor sanitization failed for message {msg_id}: {}",
+                                colorize("warning:", "33"),
+                                sanitize_for_terminal(&e.to_string())
+                            );
                         }
                     }
                 }
@@ -498,12 +503,16 @@ fn apply_sanitization_result(
         match sanitize_config.mode {
             crate::helpers::modelarmor::SanitizeMode::Block => {
                 eprintln!(
-                    "\x1b[31m[BLOCKED]\x1b[0m Message {msg_id} blocked by Model Armor (match found)"
+                    "{} Message {msg_id} blocked by Model Armor (match found)",
+                    colorize("blocked:", "31")
                 );
                 return None;
             }
             crate::helpers::modelarmor::SanitizeMode::Warn => {
-                eprintln!("\x1b[33m[WARNING]\x1b[0m Model Armor match found in message {msg_id}");
+                eprintln!(
+                    "{} Model Armor match found in message {msg_id}",
+                    colorize("warning:", "33")
+                );
                 full_msg["_sanitization"] = serde_json::json!({
                     "filterMatchState": result.filter_match_state,
                     "filterResults": result.filter_results,

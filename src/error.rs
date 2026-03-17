@@ -148,36 +148,9 @@ impl GwsError {
     }
 }
 
-/// Returns true when stderr is connected to an interactive terminal,
-/// meaning ANSI color codes will be visible to the user.
-fn stderr_supports_color() -> bool {
-    use std::io::IsTerminal;
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Wrap `text` in ANSI bold + the given color code, resetting afterwards.
-/// Returns the plain text unchanged when stderr is not a TTY.
-fn colorize(text: &str, ansi_color: &str) -> String {
-    if stderr_supports_color() {
-        format!("\x1b[1;{ansi_color}m{text}\x1b[0m")
-    } else {
-        text.to_string()
-    }
-}
-
-/// Strip terminal control characters from `text` to prevent escape-sequence
-/// injection when printing untrusted content (API responses, user input) to
-/// stderr.  Preserves newlines and tabs for readability.
-pub(crate) fn sanitize_for_terminal(text: &str) -> String {
-    text.chars()
-        .filter(|&c| {
-            if c == '\n' || c == '\t' {
-                return true;
-            }
-            !c.is_control()
-        })
-        .collect()
-}
+// Re-export from the consolidated output module so existing callers
+// that import from `crate::error` continue to work.
+pub(crate) use crate::output::{colorize, sanitize_for_terminal};
 
 /// Format a colored error label for the given error variant.
 fn error_label(err: &GwsError) -> String {
