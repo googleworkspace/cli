@@ -563,18 +563,6 @@ mod tests {
         let json_resp = json!({}).to_string();
         assert!(parse_sanitize_response(&json_resp).is_err());
     }
-
-    #[test]
-    fn test_error_path_message_includes_status_and_body() {
-        // Verify that the error message produced by model_armor_post (when the
-        // API returns a non-2xx status) contains both the HTTP status code and
-        // the response body, so callers get actionable diagnostics.
-        let status = reqwest::StatusCode::FORBIDDEN;
-        let body = r#"{"error":{"message":"permission denied"}}"#;
-        let msg = format!("API returned status {status}: {body}");
-        assert!(msg.contains("403 Forbidden"));
-        assert!(msg.contains("permission denied"));
-    }
 }
 
 pub fn build_sanitize_request_data(
