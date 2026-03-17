@@ -189,11 +189,9 @@ pub fn print_error_json(err: &GwsError) {
         serde_json::to_string_pretty(&json).unwrap_or_default()
     );
 
-    // Print a colored summary line to stderr so humans can quickly scan
-    // the error type without parsing JSON.
-    eprintln!("{} {}", error_label(err), err);
-
-    // Print actionable guidance to stderr for accessNotConfigured errors
+    // Print a colored summary to stderr. For accessNotConfigured errors,
+    // print specialized guidance instead of the generic message to avoid
+    // redundant output (the full API error already appears in the JSON).
     if let GwsError::Api {
         reason, enable_url, ..
     } = err
@@ -201,14 +199,21 @@ pub fn print_error_json(err: &GwsError) {
         if reason == "accessNotConfigured" {
             eprintln!();
             let hint = colorize("hint:", "36"); // cyan
-            eprintln!("{hint} API not enabled for your GCP project.");
+            eprintln!(
+                "{} {hint} API not enabled for your GCP project.",
+                error_label(err)
+            );
             if let Some(url) = enable_url {
                 eprintln!("      Enable it at: {url}");
             } else {
                 eprintln!("      Visit the GCP Console → APIs & Services → Library to enable the required API.");
             }
             eprintln!("      After enabling, wait a few seconds and retry your command.");
+        } else {
+            eprintln!("{} {}", error_label(err), err);
         }
+    } else {
+        eprintln!("{} {}", error_label(err), err);
     }
 }
 
