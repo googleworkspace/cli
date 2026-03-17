@@ -523,8 +523,9 @@ pub(super) struct MessageBuilder<'a> {
 }
 
 impl MessageBuilder<'_> {
-    /// Build the complete RFC 2822 message (headers + blank line + body).
-    pub fn build(&self, body: &str) -> String {
+    /// Build the common RFC 2822 headers shared by both simple and multipart
+    /// messages: To, Subject, threading, From, Cc, Bcc.
+    fn build_common_headers(&self) -> String {
         debug_assert!(
             !self.to.is_empty(),
             "MessageBuilder: `to` must not be empty"
@@ -545,15 +546,6 @@ impl MessageBuilder<'_> {
                 sanitize_header_value(threading.references),
             ));
         }
-
-        let content_type = if self.html {
-            "text/html; charset=utf-8"
-        } else {
-            "text/plain; charset=utf-8"
-        };
-        headers.push_str(&format!(
-            "\r\nMIME-Version: 1.0\r\nContent-Type: {content_type}"
-        ));
 
         if let Some(from) = self.from {
             headers.push_str(&format!(
@@ -578,6 +570,22 @@ impl MessageBuilder<'_> {
             ));
         }
 
+        headers
+    }
+
+    /// Build the complete RFC 2822 message (headers + blank line + body).
+    pub fn build(&self, body: &str) -> String {
+        let mut headers = self.build_common_headers();
+
+        let content_type = if self.html {
+            "text/html; charset=utf-8"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        headers.push_str(&format!(
+            "\r\nMIME-Version: 1.0\r\nContent-Type: {content_type}"
+        ));
+
         format!("{}\r\n\r\n{}", headers, body)
     }
 
@@ -594,51 +602,12 @@ impl MessageBuilder<'_> {
             return self.build(body);
         }
 
-        debug_assert!(
-            !self.to.is_empty(),
-            "MessageBuilder: `to` must not be empty"
-        );
-
         let boundary = generate_mime_boundary();
-
-        let mut headers = format!(
-            "To: {}\r\nSubject: {}",
-            encode_address_header(&sanitize_header_value(self.to)),
-            encode_header_value(&sanitize_header_value(self.subject)),
-        );
-
-        if let Some(ref threading) = self.threading {
-            headers.push_str(&format!(
-                "\r\nIn-Reply-To: {}\r\nReferences: {}",
-                sanitize_header_value(threading.in_reply_to),
-                sanitize_header_value(threading.references),
-            ));
-        }
+        let mut headers = self.build_common_headers();
 
         headers.push_str(&format!(
             "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"{boundary}\""
         ));
-
-        if let Some(from) = self.from {
-            headers.push_str(&format!(
-                "\r\nFrom: {}",
-                encode_address_header(&sanitize_header_value(from))
-            ));
-        }
-
-        if let Some(cc) = self.cc {
-            headers.push_str(&format!(
-                "\r\nCc: {}",
-                encode_address_header(&sanitize_header_value(cc))
-            ));
-        }
-
-        if let Some(bcc) = self.bcc {
-            headers.push_str(&format!(
-                "\r\nBcc: {}",
-                encode_address_header(&sanitize_header_value(bcc))
-            ));
-        }
 
         // Body part
         let body_content_type = if self.html {
@@ -658,6 +627,12 @@ impl MessageBuilder<'_> {
         // Attachment parts
         for att in attachments {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&att.data);
+            // Escape backslashes and quotes per RFC 2183 to prevent
+            // malformed Content-Disposition headers from filenames like:
+            //   my"file.txt  →  my\"file.txt
+            let safe_filename = sanitize_header_value(&att.filename)
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"");
             message.push_str(&format!(
                 "--{boundary}\r\n\
                  Content-Type: {mime_type}\r\n\
@@ -666,7 +641,7 @@ impl MessageBuilder<'_> {
                  \r\n\
                  {encoded}\r\n",
                 mime_type = att.mime_type,
-                filename = sanitize_header_value(&att.filename),
+                filename = safe_filename,
             ));
         }
 

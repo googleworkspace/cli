@@ -7,29 +7,21 @@ pub(super) async fn handle_send(
 ) -> Result<(), GwsError> {
     let config = parse_send_args(matches)?;
 
+    let builder = MessageBuilder {
+        to: &config.to,
+        subject: &config.subject,
+        from: None,
+        cc: config.cc.as_deref(),
+        bcc: config.bcc.as_deref(),
+        threading: None,
+        html: config.html,
+    };
+
     let raw = if config.attachments.is_empty() {
-        MessageBuilder {
-            to: &config.to,
-            subject: &config.subject,
-            from: None,
-            cc: config.cc.as_deref(),
-            bcc: config.bcc.as_deref(),
-            threading: None,
-            html: config.html,
-        }
-        .build(&config.body)
+        builder.build(&config.body)
     } else {
         let attachments = load_attachments(&config.attachments)?;
-        MessageBuilder {
-            to: &config.to,
-            subject: &config.subject,
-            from: None,
-            cc: config.cc.as_deref(),
-            bcc: config.bcc.as_deref(),
-            threading: None,
-            html: config.html,
-        }
-        .build_with_attachments(&config.body, &attachments)
+        builder.build_with_attachments(&config.body, &attachments)
     };
 
     super::send_raw_email(doc, matches, &raw, None, None).await
@@ -70,9 +62,9 @@ fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
 
 /// Validate that an attachment path is safe to read.
 ///
-/// Rejects paths with control characters, null bytes, or path traversal
-/// segments (`..`). The file must exist and be a regular file (not a
-/// directory or device).
+/// Rejects absolute paths, paths with control characters, and paths that
+/// resolve (after following symlinks) to a location outside the current
+/// working directory. The file must exist and be a regular file.
 fn validate_attachment_path(path: &PathBuf) -> Result<(), GwsError> {
     let path_str = path.to_string_lossy();
 
@@ -84,24 +76,39 @@ fn validate_attachment_path(path: &PathBuf) -> Result<(), GwsError> {
         )));
     }
 
-    // Reject path traversal
-    for component in path.components() {
-        if let std::path::Component::ParentDir = component {
-            return Err(GwsError::Validation(format!(
-                "--attachment path must not contain '..' traversal: {}",
-                path_str
-            )));
-        }
-    }
-
-    // File must exist and be a regular file
-    if !path.exists() {
+    // Reject absolute paths — force CWD-relative access
+    if path.is_absolute() {
         return Err(GwsError::Validation(format!(
-            "--attachment file not found: {}",
+            "--attachment path must be relative: {}",
             path_str
         )));
     }
-    if !path.is_file() {
+
+    // Resolve symlinks and normalize the path (also checks existence)
+    let canonical_path = path.canonicalize().map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to resolve attachment path '{}': {}. Ensure the file exists and is accessible.",
+            path_str, e
+        ))
+    })?;
+
+    // Ensure the resolved path is within the current working directory
+    let cwd = std::env::current_dir().map_err(|e| {
+        GwsError::Validation(format!("Failed to determine current directory: {e}"))
+    })?;
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
+    })?;
+
+    if !canonical_path.starts_with(&canonical_cwd) {
+        return Err(GwsError::Validation(format!(
+            "--attachment path '{}' resolves outside the current directory",
+            path_str
+        )));
+    }
+
+    // Must be a regular file (not a directory or device)
+    if !canonical_path.is_file() {
         return Err(GwsError::Validation(format!(
             "--attachment path is not a file: {}",
             path_str
@@ -297,28 +304,44 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_attachment_path_rejects_traversal() {
-        let path = PathBuf::from("../../etc/passwd");
-        let result = validate_attachment_path(&path);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("traversal"), "got: {msg}");
-    }
-
-    #[test]
     fn test_validate_attachment_path_rejects_missing_file() {
         let path = PathBuf::from("nonexistent_file_12345.pdf");
         let result = validate_attachment_path(&path);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("not found"), "got: {msg}");
+        assert!(
+            msg.contains("Failed to resolve") || msg.contains("not found"),
+            "got: {msg}"
+        );
     }
 
     #[test]
+    fn test_validate_attachment_path_rejects_absolute() {
+        let path = if cfg!(windows) {
+            PathBuf::from("C:\\Windows\\System32\\notepad.exe")
+        } else {
+            PathBuf::from("/etc/passwd")
+        };
+        let result = validate_attachment_path(&path);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("must be relative"), "got: {msg}");
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_validate_attachment_path_rejects_directory() {
         let dir = tempdir().unwrap();
-        let path = dir.path().to_path_buf();
-        let result = validate_attachment_path(&path);
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let sub = canonical_dir.join("subdir");
+        fs::create_dir(&sub).unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_attachment_path(&PathBuf::from("subdir"));
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("not a file"), "got: {msg}");
@@ -331,6 +354,23 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("control characters"), "got: {msg}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_validate_attachment_path_accepts_valid_file() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let file = canonical_dir.join("valid.pdf");
+        fs::write(&file, b"data").unwrap();
+
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let result = validate_attachment_path(&PathBuf::from("valid.pdf"));
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
+        assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
 
     #[test]
@@ -371,6 +411,31 @@ mod tests {
         assert!(raw.contains("Content-Disposition: attachment; filename=\"test.pdf\""));
         assert!(raw.contains("Content-Type: application/pdf"));
         assert!(raw.contains("Content-Transfer-Encoding: base64"));
+    }
+
+    #[test]
+    fn test_build_with_attachments_escapes_filename_quotes() {
+        let attachment = super::super::Attachment {
+            filename: "my\"file.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            data: b"data".to_vec(),
+        };
+
+        let raw = MessageBuilder {
+            to: "bob@example.com",
+            subject: "Test",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+            html: false,
+        }
+        .build_with_attachments("Body.", &[attachment]);
+
+        assert!(
+            raw.contains("filename=\"my\\\"file.pdf\""),
+            "quotes in filename should be escaped: {raw}"
+        );
     }
 
     #[test]
