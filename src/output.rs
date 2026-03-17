@@ -62,14 +62,14 @@ pub(crate) fn sanitize_for_terminal(text: &str) -> String {
         .collect()
 }
 
-/// Rejects strings containing null bytes, ASCII control characters
-/// (including DEL, 0x7F), or dangerous Unicode characters such as
-/// zero-width chars, bidi overrides, and Unicode line/paragraph separators.
+/// Rejects strings containing control characters (C0: U+0000–U+001F,
+/// C1: U+0080–U+009F, and DEL: U+007F) or dangerous Unicode characters
+/// such as zero-width chars, bidi overrides, and line/paragraph separators.
 ///
 /// Used for validating CLI argument values at the parse boundary.
 pub(crate) fn reject_dangerous_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
     for c in value.chars() {
-        if (c as u32) < 0x20 || c as u32 == 0x7F {
+        if c.is_control() {
             return Err(GwsError::Validation(format!(
                 "{flag_name} contains invalid control characters"
             )));
@@ -244,6 +244,13 @@ mod tests {
         assert!(reject_dangerous_chars("日本語", "test").is_ok());
         assert!(reject_dangerous_chars("café", "test").is_ok());
         assert!(reject_dangerous_chars("αβγ", "test").is_ok());
+    }
+
+    #[test]
+    fn reject_c1_control_csi() {
+        // U+009B is the C1 "Control Sequence Introducer" — can inject
+        // terminal escape sequences just like ESC+[
+        assert!(reject_dangerous_chars("foo\u{009B}bar", "test").is_err());
     }
 
     // ── colorize ──────────────────────────────────────────────────
