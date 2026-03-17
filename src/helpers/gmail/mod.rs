@@ -151,7 +151,7 @@ pub(super) fn strip_angle_brackets(id: &str) -> &str {
 /// enforces absence checks.
 #[derive(Default, Serialize)]
 pub(super) struct OriginalMessage {
-    pub thread_id: String,
+    pub thread_id: Option<String>,
     /// Bare message ID (no angle brackets), e.g. `"abc@example.com"`.
     pub message_id: String,
     /// Bare message IDs (no angle brackets) forming the references chain.
@@ -171,7 +171,7 @@ impl OriginalMessage {
     /// Placeholder used for `--dry-run` to avoid requiring auth/network.
     pub(super) fn dry_run_placeholder(message_id: &str) -> Self {
         Self {
-            thread_id: format!("thread-{message_id}"),
+            thread_id: Some(format!("thread-{message_id}")),
             message_id: format!("{message_id}@example.com"),
             from: Mailbox::parse("sender@example.com"),
             to: vec![Mailbox::parse("you@example.com")],
@@ -258,12 +258,11 @@ pub(super) fn non_empty_slice<T>(s: &[T]) -> Option<&[T]> {
 }
 
 fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
-    let thread_id = msg.get("threadId").and_then(|v| v.as_str()).unwrap_or("");
-    if thread_id.is_empty() {
-        return Err(GwsError::Other(anyhow::anyhow!(
-            "Message is missing threadId"
-        )));
-    }
+    let thread_id = msg
+        .get("threadId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
 
     let snippet = msg
         .get("snippet")
@@ -311,7 +310,7 @@ fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
     let date = Some(parsed_headers.date).filter(|s| !s.is_empty());
 
     Ok(OriginalMessage {
-        thread_id: thread_id.to_string(),
+        thread_id,
         message_id: message_id.to_string(),
         references,
         from: Mailbox::parse(&parsed_headers.from),
@@ -1296,7 +1295,7 @@ mod tests {
     #[test]
     fn test_original_message_default() {
         let d = OriginalMessage::default();
-        assert!(d.thread_id.is_empty());
+        assert!(d.thread_id.is_none());
         assert!(d.message_id.is_empty());
         assert!(d.references.is_empty());
         assert!(d.from.email.is_empty());
@@ -1328,7 +1327,7 @@ mod tests {
             }
         });
         let original = parse_original_message(&msg).unwrap();
-        assert_eq!(original.thread_id, "t1");
+        assert_eq!(original.thread_id.as_deref(), Some("t1"));
         assert_eq!(original.from.email, "alice@example.com");
         assert_eq!(original.subject, "Hi");
         assert_eq!(original.body_text, "Hello");
@@ -1385,9 +1384,8 @@ mod tests {
                 "body": { "data": URL_SAFE.encode("Hello") }
             }
         });
-        let result = parse_original_message(&msg);
-        assert!(result.is_err());
-        assert!(result.err().unwrap().to_string().contains("threadId"));
+        let result = parse_original_message(&msg).unwrap();
+        assert!(result.thread_id.is_none());
     }
 
     #[test]
@@ -1591,7 +1589,7 @@ mod tests {
 
         let original = parse_original_message(&msg).unwrap();
 
-        assert_eq!(original.thread_id, "thread-123");
+        assert_eq!(original.thread_id.as_deref(), Some("thread-123"));
         assert_eq!(original.from.email, "alice@example.com");
         let reply_to = original.reply_to.unwrap();
         assert_eq!(reply_to.len(), 2);

@@ -59,7 +59,7 @@ pub(super) async fn handle_forward(
         doc,
         matches,
         &raw,
-        Some(&original.thread_id),
+        original.thread_id.as_deref(),
         token.as_deref(),
     )
     .await
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_without_body() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_with_all_optional_headers() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_references_chain() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "msg-2@example.com".to_string(),
             references: vec![
                 "msg-0@example.com".to_string(),
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_html_without_body() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_html_plain_text_fallback() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn test_create_forward_raw_message_html() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],

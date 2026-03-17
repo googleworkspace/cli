@@ -101,7 +101,14 @@ pub(super) async fn handle_reply(
     let raw = create_reply_raw_message(&envelope, &original)?;
 
     let auth_token = token.as_ref().map(|(t, _)| t.as_str());
-    super::send_raw_email(doc, matches, &raw, Some(&original.thread_id), auth_token).await
+    super::send_raw_email(
+        doc,
+        matches,
+        &raw,
+        original.thread_id.as_deref(),
+        auth_token,
+    )
+    .await
 }
 
 // --- Data structures ---
@@ -411,7 +418,7 @@ mod tests {
     #[test]
     fn test_create_reply_raw_message_basic() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -454,7 +461,7 @@ mod tests {
     #[test]
     fn test_create_reply_raw_message_with_all_optional_headers() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -1147,7 +1154,7 @@ mod tests {
     #[test]
     fn test_extra_to_appears_in_raw_message() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("me@example.com")],
@@ -1186,7 +1193,7 @@ mod tests {
     #[test]
     fn test_intro_pattern_raw_message() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("me@example.com")],
@@ -1295,7 +1302,7 @@ mod tests {
     #[test]
     fn test_create_reply_raw_message_html() {
         let original = OriginalMessage {
-            thread_id: "t1".to_string(),
+            thread_id: Some("t1".to_string()),
             message_id: "abc@example.com".to_string(),
             from: Mailbox::parse("alice@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
