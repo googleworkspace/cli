@@ -33,18 +33,20 @@ gws calendar +insert --summary <TEXT> --start <TIME> --end <TIME>
 | `--location` | — | — | Event location |
 | `--description` | — | — | Event description/body |
 | `--attendee` | — | — | Attendee email (can be used multiple times) |
+| `--meet` | — | — | Add a Google Meet video conference link |
 
 ## Examples
 
 ```bash
 gws calendar +insert --summary 'Standup' --start '2026-06-17T09:00:00-07:00' --end '2026-06-17T09:30:00-07:00'
 gws calendar +insert --summary 'Review' --start ... --end ... --attendee alice@example.com
+gws calendar +insert --summary 'Meet' --start ... --end ... --meet
 ```
 
 ## Tips
 
 - Use RFC3339 format for times (e.g. 2026-06-17T09:00:00-07:00).
-- For recurring events or conference links, use the raw API instead.
+- The --meet flag automatically adds a Google Meet link to the event.
 
 > [!CAUTION]
 > This is a **write** command — confirm with the user before executing.
