@@ -102,14 +102,8 @@ fn format_mailbox_list(mailboxes: &[Mailbox]) -> String {
         .join(", ")
 }
 
-/// Sanitizes a string for terminal output by filtering out control characters
-/// to prevent terminal injection attacks. Safe control characters like
-/// newline, carriage return, and tab are preserved.
-fn sanitize_terminal_output(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
-        .collect()
-}
+/// Re-export the crate-wide terminal sanitizer for use in this module.
+use crate::error::sanitize_for_terminal as sanitize_terminal_output;
 
 #[cfg(test)]
 mod tests {
@@ -122,10 +116,11 @@ mod tests {
         // ANSI escape sequences (control chars) should be removed
         assert!(!sanitized.contains('\x1b'));
         assert!(!sanitized.contains('\x07'));
-        // Whitespace and formatting should be preserved
+        // CR is also stripped (can be abused for terminal overwrite attacks)
+        assert!(!sanitized.contains('\r'));
+        // Newline and tab should be preserved
         assert!(sanitized.contains("Hello"));
         assert!(sanitized.contains('\n'));
-        assert!(sanitized.contains('\r'));
         assert!(sanitized.contains('\t'));
     }
 
