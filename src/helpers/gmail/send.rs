@@ -44,10 +44,8 @@ fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
         .map(|s| PathBuf::from(s.trim()))
         .collect();
 
-    // Validate each attachment path
-    for path in &attachments {
-        validate_attachment_path(path)?;
-    }
+    // Path validation is deferred to load_attachments() to minimize the
+    // TOCTOU window — validate immediately before reading.
 
     Ok(SendConfig {
         to: matches.get_one::<String>("to").unwrap().to_string(),
@@ -119,10 +117,16 @@ fn validate_attachment_path(path: &PathBuf) -> Result<(), GwsError> {
 }
 
 /// Read attachment files from disk and prepare them for MIME encoding.
+///
+/// Validation is performed immediately before reading each file to minimize
+/// the TOCTOU (time-of-check to time-of-use) window.
 fn load_attachments(paths: &[PathBuf]) -> Result<Vec<super::Attachment>, GwsError> {
     let mut attachments = Vec::with_capacity(paths.len());
 
     for path in paths {
+        // Validate right before reading to minimize TOCTOU window
+        validate_attachment_path(path)?;
+
         let data = std::fs::read(path).map_err(|e| {
             GwsError::Validation(format!(
                 "Failed to read attachment '{}': {}",
@@ -376,12 +380,18 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_load_attachments() {
         let dir = tempdir().unwrap();
-        let file = dir.path().join("report.pdf");
-        fs::write(&file, b"PDF content here").unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        fs::write(canonical_dir.join("report.pdf"), b"PDF content here").unwrap();
 
-        let attachments = load_attachments(&[file]).unwrap();
+        let saved_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&canonical_dir).unwrap();
+
+        let attachments = load_attachments(&[PathBuf::from("report.pdf")]).unwrap();
+        std::env::set_current_dir(&saved_cwd).unwrap();
+
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].filename, "report.pdf");
         assert_eq!(attachments[0].mime_type, "application/pdf");
@@ -437,6 +447,42 @@ mod tests {
         assert!(
             raw.contains("filename=\"my\\\"file.pdf\""),
             "quotes in filename should be escaped: {raw}"
+        );
+    }
+
+    #[test]
+    fn test_build_with_attachments_non_ascii_filename() {
+        let attachment = super::super::Attachment {
+            filename: "résumé.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            data: b"data".to_vec(),
+        };
+
+        let raw = MessageBuilder {
+            to: "bob@example.com",
+            subject: "Test",
+            from: None,
+            cc: None,
+            bcc: None,
+            threading: None,
+            html: false,
+        }
+        .build_with_attachments("Body.", &[attachment]);
+
+        // Should have RFC 2231 filename* parameter
+        assert!(
+            raw.contains("filename*=UTF-8''"),
+            "non-ASCII filename should use RFC 2231 encoding: {raw}"
+        );
+        // Should have ASCII fallback
+        assert!(
+            raw.contains("filename=\"r_sum_.pdf\""),
+            "should include ASCII fallback filename: {raw}"
+        );
+        // Should have percent-encoded UTF-8
+        assert!(
+            raw.contains("r%C3%A9sum%C3%A9.pdf"),
+            "should percent-encode non-ASCII bytes: {raw}"
         );
     }
 

@@ -627,21 +627,15 @@ impl MessageBuilder<'_> {
         // Attachment parts
         for att in attachments {
             let encoded = base64::engine::general_purpose::STANDARD.encode(&att.data);
-            // Escape backslashes and quotes per RFC 2183 to prevent
-            // malformed Content-Disposition headers from filenames like:
-            //   my"file.txt  →  my\"file.txt
-            let safe_filename = sanitize_header_value(&att.filename)
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"");
+            let disposition = encode_content_disposition(&att.filename);
             message.push_str(&format!(
                 "--{boundary}\r\n\
                  Content-Type: {mime_type}\r\n\
                  Content-Transfer-Encoding: base64\r\n\
-                 Content-Disposition: attachment; filename=\"{filename}\"\r\n\
+                 {disposition}\r\n\
                  \r\n\
                  {encoded}\r\n",
                 mime_type = att.mime_type,
-                filename = safe_filename,
             ));
         }
 
@@ -702,6 +696,55 @@ pub(super) fn mime_type_from_extension(filename: &str) -> &'static str {
         "eml" => "message/rfc822",
         _ => "application/octet-stream",
     }
+}
+
+/// Build a Content-Disposition header for an attachment.
+///
+/// For ASCII-only filenames, uses the simple `filename="..."` form with
+/// backslash/quote escaping per RFC 2183.
+///
+/// For filenames containing non-ASCII characters, adds an RFC 2231/5987
+/// `filename*` parameter with UTF-8 percent-encoding so that international
+/// filenames display correctly in email clients.
+fn encode_content_disposition(filename: &str) -> String {
+    let sanitized = sanitize_header_value(filename);
+    let is_ascii = sanitized.bytes().all(|b| b.is_ascii() && b != b'\0');
+
+    if is_ascii {
+        // Simple form: escape backslashes and quotes
+        let escaped = sanitized.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("Content-Disposition: attachment; filename=\"{escaped}\"")
+    } else {
+        // RFC 2231: filename*=UTF-8''percent-encoded-name
+        // Also include a plain ASCII fallback for older clients.
+        let ascii_fallback = sanitized
+            .chars()
+            .map(|c| if c.is_ascii() && c != '"' && c != '\\' { c } else { '_' })
+            .collect::<String>();
+        let encoded = percent_encode_filename(&sanitized);
+        format!(
+            "Content-Disposition: attachment; filename=\"{ascii_fallback}\"; \
+             filename*=UTF-8''{encoded}"
+        )
+    }
+}
+
+/// Percent-encode a filename for RFC 2231 `filename*` parameter.
+/// Encodes all non-ASCII bytes and RFC 5987 attr-char special characters.
+fn percent_encode_filename(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        // RFC 5987 attr-char allows: ALPHA DIGIT ! # $ & + - . ^ _ ` | ~
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'!' | b'#' | b'$' | b'&' | b'+' | b'-'
+                              | b'.' | b'^' | b'_' | b'`' | b'|' | b'~')
+        {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    out
 }
 
 /// Build the References header value. Returns just the message ID when there
@@ -2110,5 +2153,60 @@ mod tests {
         let b2 = generate_mime_boundary();
         assert_ne!(b1, b2);
         assert!(b1.starts_with("gws_"));
+    }
+
+    // --- Content-Disposition encoding tests ---
+
+    #[test]
+    fn test_encode_content_disposition_ascii() {
+        let header = encode_content_disposition("report.pdf");
+        assert_eq!(
+            header,
+            "Content-Disposition: attachment; filename=\"report.pdf\""
+        );
+    }
+
+    #[test]
+    fn test_encode_content_disposition_escapes_quotes() {
+        let header = encode_content_disposition("my\"file.pdf");
+        assert!(header.contains("filename=\"my\\\"file.pdf\""), "got: {header}");
+    }
+
+    #[test]
+    fn test_encode_content_disposition_escapes_backslash() {
+        let header = encode_content_disposition("path\\file.pdf");
+        assert!(header.contains("filename=\"path\\\\file.pdf\""), "got: {header}");
+    }
+
+    #[test]
+    fn test_encode_content_disposition_non_ascii_uses_rfc2231() {
+        let header = encode_content_disposition("résumé.pdf");
+        // Should have both ASCII fallback and RFC 2231 filename*
+        assert!(header.contains("filename=\"r_sum_.pdf\""), "missing ASCII fallback: {header}");
+        assert!(header.contains("filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"), "missing RFC 2231: {header}");
+    }
+
+    #[test]
+    fn test_encode_content_disposition_swedish_chars() {
+        let header = encode_content_disposition("ärende_åtgärd.pdf");
+        assert!(header.contains("filename*=UTF-8''"), "should use RFC 2231 for Swedish chars: {header}");
+        assert!(header.contains("%C3%A4"), "should encode ä: {header}");
+        assert!(header.contains("%C3%A5"), "should encode å: {header}");
+    }
+
+    #[test]
+    fn test_percent_encode_filename_ascii() {
+        assert_eq!(percent_encode_filename("report.pdf"), "report.pdf");
+    }
+
+    #[test]
+    fn test_percent_encode_filename_spaces() {
+        assert_eq!(percent_encode_filename("my report.pdf"), "my%20report.pdf");
+    }
+
+    #[test]
+    fn test_percent_encode_filename_unicode() {
+        let encoded = percent_encode_filename("résumé.pdf");
+        assert_eq!(encoded, "r%C3%A9sum%C3%A9.pdf");
     }
 }
