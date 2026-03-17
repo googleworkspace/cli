@@ -145,7 +145,7 @@ fn parse_send_args(matches: &ArgMatches) -> Result<SendConfig, GwsError> {
     // Validate attachment paths
     for path in &attachments {
         let path_str = path.to_string_lossy();
-        crate::validate::validate_safe_dir_path(&path_str)?;
+        crate::validate::validate_safe_file_path(&path_str, "--attachment")?;
         if !path.exists() {
             return Err(GwsError::Validation(format!(
                 "Attachment file not found: {}",
