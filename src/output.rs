@@ -96,7 +96,7 @@ pub(crate) fn stderr_supports_color() -> bool {
 /// Returns the plain text unchanged when stderr is not a TTY or `NO_COLOR`
 /// is set.
 pub(crate) fn colorize(text: &str, ansi_color: &str) -> String {
-    if stderr_supports_color() {
+    if stderr_supports_color() && ansi_color.chars().all(|c| c.is_ascii_digit()) {
         format!("\x1b[1;{ansi_color}m{text}\x1b[0m")
     } else {
         text.to_string()
