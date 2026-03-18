@@ -1,5 +1,38 @@
 # @googleworkspace/cli
 
+## 0.18.0
+
+### Minor Changes
+
+- 908cf73: feat(gmail): auto-populate From header with display name from send-as settings
+
+  Fetch the user's send-as identities to set the From header with a display name in all mail helpers (+send, +reply, +reply-all, +forward), matching Gmail web client behavior. Also enriches bare `--from` emails with their configured display name.
+
+- 6e4daaf: Gmail helpers rollup: mail-builder migration, --attach flag (upload endpoint), +read helper
+
+  - Migrate `+send`, `+reply`, `+reply-all`, and `+forward` to the `mail-builder` crate for RFC-compliant MIME construction
+  - Add `--from` flag to `+send` for send-as alias support
+  - Add `-a`/`--attach` flag to all mail helpers (`+send`, `+reply`, `+reply-all`, `+forward`) with `mime_guess2` auto-detection, 25MB size validation, and upload endpoint support (35MB API limit vs 5MB metadata-only)
+  - Add `+read` helper to extract message body and headers (text, HTML, or JSON output)
+  - Make `OriginalMessage.thread_id` optional (`Option<String>`) for draft compatibility
+  - RFC 2822 display name quoting is handled natively by `mail-builder`
+  - Introduce `UploadSource` enum in executor for type-safe upload strategies
+
+### Patch Changes
+
+- 1e90380: fix(gmail): remove dead `--attachment` arg from `+send`
+
+  The `+send` subcommand defined a duplicate `"attachment"` arg alongside the
+  `"attach"` arg already provided by `common_mail_args`. Since `parse_attachments`
+  reads `"attach"`, the `--attachment` flag was silently ignored. Removed the
+  dead duplicate.
+
+- 908cf73: fix(gmail): handle reply-all to own message correctly
+
+  Reply-all to a message you sent no longer errors with "No To recipient remains." The original To recipients are now used as reply targets, matching Gmail web client behavior.
+
+- 2e909ae: Consolidate terminal sanitization, coloring, and output helpers into a new `output.rs` module. Fixes raw ANSI escape codes in `watch.rs` that bypassed `NO_COLOR` and TTY detection, upgrades `sanitize_for_terminal` to also strip dangerous Unicode characters (bidi overrides, zero-width spaces, directional isolates), and sanitizes previously raw API error body and user query outputs.
+
 ## 0.17.0
 
 ### Minor Changes
