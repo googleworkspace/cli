@@ -391,19 +391,25 @@ mod tests {
 
     #[test]
     fn test_exit_codes_json_contains_all_codes() {
+        use std::collections::HashSet;
+
         let val = exit_codes_json();
-        let codes: Vec<i64> = val["exit_codes"]
+        let actual: HashSet<i64> = val["exit_codes"]
             .as_array()
-            .unwrap()
+            .expect("exit_codes must be an array")
             .iter()
-            .map(|e| e["code"].as_i64().unwrap())
+            .map(|e| e["code"].as_i64().expect("code must be an integer"))
             .collect();
-        for (expected, _, _) in EXIT_CODE_TABLE {
-            assert!(
-                codes.contains(&(*expected as i64)),
-                "missing code {expected}"
-            );
-        }
+
+        let expected: HashSet<i64> = EXIT_CODE_TABLE
+            .iter()
+            .map(|(code, _, _)| *code as i64)
+            .collect();
+
+        assert_eq!(
+            actual, expected,
+            "exit_codes_json() codes must exactly match EXIT_CODE_TABLE (no duplicates, no extras)"
+        );
     }
 
     // --- accessNotConfigured tests ---
