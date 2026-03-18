@@ -445,6 +445,7 @@ mod tests {
                 filename: "report.pdf".to_string(),
                 content_type: "application/pdf".to_string(),
                 data: b"fake pdf".to_vec(),
+                content_id: None,
             }],
         };
         let raw = create_send_raw_message(&config).unwrap();
