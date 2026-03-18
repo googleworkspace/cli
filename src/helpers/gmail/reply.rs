@@ -201,8 +201,31 @@ fn build_reply_all_recipients(
     self_email: Option<&str>,
     from_alias: Option<&str>,
 ) -> Result<ReplyRecipients, GwsError> {
-    let to_candidates = extract_reply_to_address(original);
     let excluded = collect_excluded_emails(remove, self_email, from_alias);
+
+    // When replying to your own message, the original sender (you) would be
+    // excluded from To, leaving it empty. Gmail web handles this by using the
+    // original To recipients as the reply targets instead, ignoring Reply-To.
+    // (Gmail ignores Reply-To on self-sent messages — we approximate this by
+    // checking the primary address and the current From alias.)
+    let is_self_reply = [self_email, from_alias]
+        .into_iter()
+        .flatten()
+        .any(|e| original.from.email.eq_ignore_ascii_case(e));
+
+    let (to_candidates, mut cc_candidates) = if is_self_reply {
+        // Self-reply: To = original To, CC = original CC
+        let cc = original.cc.clone().unwrap_or_default();
+        (original.to.clone(), cc)
+    } else {
+        // Normal reply: To = Reply-To or From, CC = original To + CC
+        let mut cc = original.to.clone();
+        if let Some(orig_cc) = &original.cc {
+            cc.extend(orig_cc.iter().cloned());
+        }
+        (extract_reply_to_address(original), cc)
+    };
+
     let mut to_emails = std::collections::HashSet::new();
     let to: Vec<Mailbox> = to_candidates
         .into_iter()
@@ -215,18 +238,12 @@ fn build_reply_all_recipients(
         })
         .collect();
 
-    // Combine original To and Cc as CC candidates
-    let mut cc_candidates: Vec<Mailbox> = original.to.clone();
-    if let Some(orig_cc) = &original.cc {
-        cc_candidates.extend(orig_cc.iter().cloned());
-    }
-
     // Add extra CC if provided
     if let Some(extra) = extra_cc {
         cc_candidates.extend(extra.iter().cloned());
     }
 
-    // Filter CC: remove reply-to recipients, excluded addresses, and duplicates
+    // Filter CC: remove To recipients, excluded addresses, and duplicates
     let mut seen = std::collections::HashSet::new();
     let cc: Vec<Mailbox> = cc_candidates
         .into_iter()
@@ -601,7 +618,9 @@ mod tests {
     }
 
     #[test]
-    fn test_build_reply_all_from_alias_removes_primary_returns_empty_to() {
+    fn test_build_reply_all_from_alias_is_self_reply() {
+        // When from_alias matches original.from, this is a self-reply.
+        // To should be the original To recipients, not empty.
         let original = OriginalMessage {
             from: Mailbox::parse("sales@example.com"),
             to: vec![Mailbox::parse("bob@example.com")],
@@ -617,7 +636,8 @@ mod tests {
             Some("sales@example.com"),
         )
         .unwrap();
-        assert!(recipients.to.is_empty());
+        assert_eq!(recipients.to.len(), 1);
+        assert_eq!(recipients.to[0].email, "bob@example.com");
     }
 
     fn make_reply_matches(args: &[&str]) -> ArgMatches {
@@ -995,6 +1015,90 @@ mod tests {
             1
         );
         assert!(cc.iter().any(|m| m.email == "carol@example.com"));
+    }
+
+    // --- self-reply tests ---
+
+    #[test]
+    fn test_reply_all_to_own_message_puts_original_to_in_to() {
+        let original = OriginalMessage {
+            from: Mailbox::parse("me@example.com"),
+            to: vec![
+                Mailbox::parse("alice@example.com"),
+                Mailbox::parse("bob@example.com"),
+            ],
+            cc: Some(vec![Mailbox::parse("carol@example.com")]),
+            ..Default::default()
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, None, Some("me@example.com"), None)
+                .unwrap();
+        // To should be the original To recipients, not the original sender
+        assert_eq!(recipients.to.len(), 2);
+        assert!(recipients.to.iter().any(|m| m.email == "alice@example.com"));
+        assert!(recipients.to.iter().any(|m| m.email == "bob@example.com"));
+        // CC should be the original CC
+        let cc = recipients.cc.unwrap();
+        assert_eq!(cc.len(), 1);
+        assert!(cc.iter().any(|m| m.email == "carol@example.com"));
+    }
+
+    #[test]
+    fn test_reply_all_to_own_message_detected_via_alias() {
+        let original = OriginalMessage {
+            from: Mailbox::parse("alias@work.com"),
+            to: vec![Mailbox::parse("alice@example.com")],
+            ..Default::default()
+        };
+        // self_email is primary, from_alias matches the original sender
+        let recipients = build_reply_all_recipients(
+            &original,
+            None,
+            None,
+            Some("me@gmail.com"),
+            Some("alias@work.com"),
+        )
+        .unwrap();
+        assert_eq!(recipients.to.len(), 1);
+        assert_eq!(recipients.to[0].email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_reply_all_to_own_message_excludes_self_from_original_to() {
+        // You sent to yourself + Alice (e.g. a note-to-self CC'd to someone)
+        let original = OriginalMessage {
+            from: Mailbox::parse("me@example.com"),
+            to: vec![
+                Mailbox::parse("me@example.com"),
+                Mailbox::parse("alice@example.com"),
+            ],
+            ..Default::default()
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, None, Some("me@example.com"), None)
+                .unwrap();
+        // Self should still be excluded from To
+        assert_eq!(recipients.to.len(), 1);
+        assert_eq!(recipients.to[0].email, "alice@example.com");
+    }
+
+    #[test]
+    fn test_reply_all_to_own_message_ignores_reply_to() {
+        // Gmail web ignores Reply-To on self-sent messages. Verify that
+        // self-reply uses original.to, not Reply-To.
+        let original = OriginalMessage {
+            from: Mailbox::parse("me@example.com"),
+            to: vec![Mailbox::parse("alice@example.com")],
+            reply_to: Some(vec![Mailbox::parse("list@example.com")]),
+            ..Default::default()
+        };
+        let recipients =
+            build_reply_all_recipients(&original, None, None, Some("me@example.com"), None)
+                .unwrap();
+        assert_eq!(recipients.to.len(), 1);
+        assert_eq!(recipients.to[0].email, "alice@example.com");
+        // No CC — Reply-To address should not appear anywhere
+        assert!(recipients.cc.is_none());
     }
 
     // --- dedup_recipients tests ---

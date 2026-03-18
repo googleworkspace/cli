@@ -477,9 +477,10 @@ fn parse_send_as_response(body: &Value) -> Vec<SendAsIdentity> {
 
 /// Given pre-fetched send-as identities, resolve the `From` address.
 ///
-/// - `from` is `None` → returns the default send-as identity
-/// - `from` has bare emails (no display name) → enriches with send-as display names
-/// - `from` already has display names → returns as-is
+/// - `from` is `None` → returns the default send-as identity (or `None` if
+///   no default exists in the list)
+/// - `from` has bare emails → enriches with send-as display names (mailboxes
+///   that already have a display name pass through unchanged)
 fn resolve_sender_from_identities(
     from: Option<&[Mailbox]>,
     identities: &[SendAsIdentity],
