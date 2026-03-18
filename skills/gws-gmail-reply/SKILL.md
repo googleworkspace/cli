@@ -53,7 +53,7 @@ gws gmail +reply --message-id 18f1a2b3c4d --body 'Updated version' -a updated.do
 - --to adds extra recipients to the To field.
 - Use -a/--attach to add file attachments. Can be specified multiple times.
 - With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
-- With --html, inline images in the quoted message (cid: references) will appear broken. Externally hosted images are unaffected.
+- With --html, inline images in the quoted message are preserved via cid: references.
 - For reply-all, use +reply-all instead.
 
 ## See Also

@@ -23,9 +23,10 @@ pub(super) async fn handle_reply(
     let mut config = parse_reply_args(matches)?;
     let dry_run = matches.get_flag("dry-run");
 
-    let (original, token, self_email) = if dry_run {
+    let (original, token, self_email, client) = if dry_run {
         (
             OriginalMessage::dry_run_placeholder(&config.message_id),
+            None,
             None,
             None,
         )
@@ -33,20 +34,20 @@ pub(super) async fn handle_reply(
         let t = auth::get_token(&[GMAIL_SCOPE])
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
-        let client = crate::client::build_client()?;
-        let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
-        config.from = resolve_sender(&client, &t, config.from.as_deref()).await?;
+        let c = crate::client::build_client()?;
+        let orig = fetch_message_metadata(&c, &t, &config.message_id).await?;
+        config.from = resolve_sender(&c, &t, config.from.as_deref()).await?;
         // For reply-all, always fetch the primary email for self-dedup and
         // self-reply detection. The resolved sender may be an alias that differs from the primary
         // address — both must be excluded from recipients. from_alias_email
         // (extracted from config.from below) handles the alias; self_email
         // handles the primary.
         let self_addr = if reply_all {
-            Some(fetch_user_email(&client, &t).await?)
+            Some(fetch_user_email(&c, &t).await?)
         } else {
             None
         };
-        (orig, Some(t), self_addr)
+        (orig, Some(t), self_addr, Some(c))
     };
 
     let self_email = self_email.as_deref();
@@ -105,7 +106,29 @@ pub(super) async fn handle_reply(
         html: config.html,
     };
 
-    let raw = create_reply_raw_message(&envelope, &original, &config.attachments)?;
+    // Fetch inline images for HTML replies only. In plain-text mode, inline
+    // images are dropped entirely — matching Gmail web, which strips them from
+    // both plain-text replies and plain-text forwards.
+    let mut all_attachments = config.attachments;
+    if let (true, Some(client), Some(token)) = (config.html, &client, &token) {
+        let inline_parts: Vec<_> = original
+            .parts
+            .iter()
+            .filter(|p| p.is_inline())
+            .cloned()
+            .collect();
+
+        fetch_and_merge_original_parts(
+            client,
+            token,
+            &config.message_id,
+            &inline_parts,
+            &mut all_attachments,
+        )
+        .await?;
+    }
+
+    let raw = create_reply_raw_message(&envelope, &original, &all_attachments)?;
 
     super::send_raw_email(
         doc,
@@ -1499,6 +1522,7 @@ mod tests {
             filename: "notes.txt".to_string(),
             content_type: "text/plain".to_string(),
             data: b"some notes".to_vec(),
+            content_id: None,
         }];
         let raw = create_reply_raw_message(&envelope, &original, &attachments).unwrap();
 
@@ -1506,5 +1530,48 @@ mod tests {
         assert!(raw.contains("notes.txt"));
         assert!(raw.contains("See attached notes"));
         assert!(raw.contains("> Original body"));
+    }
+
+    #[test]
+    fn test_create_reply_raw_message_html_with_inline_image() {
+        let original = OriginalMessage {
+            thread_id: Some("t1".to_string()),
+            message_id: "abc@example.com".to_string(),
+            from: Mailbox::parse("alice@example.com"),
+            to: vec![Mailbox::parse("bob@example.com")],
+            subject: "Photo".to_string(),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: "See photo".to_string(),
+            body_html: Some("<p>See <img src=\"cid:photo@example.com\"></p>".to_string()),
+            ..Default::default()
+        };
+
+        let refs = build_references_chain(&original);
+        let to = vec![Mailbox::parse("alice@example.com")];
+        let envelope = ReplyEnvelope {
+            to: &to,
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Re: Photo",
+            threading: ThreadingHeaders {
+                in_reply_to: &original.message_id,
+                references: &refs,
+            },
+            body: "Nice photo!",
+            html: true,
+        };
+        let attachments = vec![Attachment {
+            filename: "photo.png".to_string(),
+            content_type: "image/png".to_string(),
+            data: vec![0x89, 0x50],
+            content_id: Some("photo@example.com".to_string()),
+        }];
+        let raw = create_reply_raw_message(&envelope, &original, &attachments).unwrap();
+
+        // Should produce multipart/related for inline image in HTML reply
+        assert!(raw.contains("multipart/related"));
+        assert!(raw.contains("Content-ID: <photo@example.com>"));
+        assert!(!raw.contains("multipart/mixed"));
     }
 }

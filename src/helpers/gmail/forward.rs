@@ -23,20 +23,48 @@ pub(super) async fn handle_forward(
 
     let dry_run = matches.get_flag("dry-run");
 
-    let (original, token) = if dry_run {
+    let (original, token, client) = if dry_run {
         (
             OriginalMessage::dry_run_placeholder(&config.message_id),
+            None,
             None,
         )
     } else {
         let t = auth::get_token(&[GMAIL_SCOPE])
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
-        let client = crate::client::build_client()?;
-        let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
-        config.from = resolve_sender(&client, &t, config.from.as_deref()).await?;
-        (orig, Some(t))
+        let c = crate::client::build_client()?;
+        let orig = fetch_message_metadata(&c, &t, &config.message_id).await?;
+        config.from = resolve_sender(&c, &t, config.from.as_deref()).await?;
+        (orig, Some(t), Some(c))
     };
+
+    // Select which original parts to include:
+    // - --no-original-attachments: skip regular file attachments, but still
+    //   include inline images in HTML mode (they're part of the body, not
+    //   "attachments" in the UI sense)
+    // - Plain-text mode: drop inline images entirely (matching Gmail web)
+    // - HTML mode: include inline images (rendered via cid: in multipart/related)
+    let mut all_attachments = config.attachments;
+    if let (Some(client), Some(token)) = (&client, &token) {
+        let selected: Vec<_> = original
+            .parts
+            .iter()
+            .filter(|p| include_original_part(p, config.html, config.no_original_attachments))
+            .cloned()
+            .collect();
+
+        fetch_and_merge_original_parts(
+            client,
+            token,
+            &config.message_id,
+            &selected,
+            &mut all_attachments,
+        )
+        .await?;
+    } else {
+        eprintln!("Note: original attachments not included in dry-run preview");
+    }
 
     let subject = build_forward_subject(&original.subject);
     let refs = build_references_chain(&original);
@@ -54,7 +82,7 @@ pub(super) async fn handle_forward(
         },
     };
 
-    let raw = create_forward_raw_message(&envelope, &original, &config.attachments)?;
+    let raw = create_forward_raw_message(&envelope, &original, &all_attachments)?;
 
     super::send_raw_email(
         doc,
@@ -64,6 +92,21 @@ pub(super) async fn handle_forward(
         token.as_deref(),
     )
     .await
+}
+
+/// Whether an original MIME part should be included when forwarding.
+///
+/// - Regular attachments are included unless `--no-original-attachments` is set.
+/// - Inline images are included only in HTML mode (matching Gmail web, which
+///   strips them from plain-text forwards).
+fn include_original_part(part: &OriginalPart, html: bool, no_original_attachments: bool) -> bool {
+    if no_original_attachments && !part.is_inline() {
+        return false; // skip regular attachments when flag is set
+    }
+    if !html && part.is_inline() {
+        return false; // skip inline images in plain-text mode
+    }
+    true
 }
 
 // --- Data structures ---
@@ -77,6 +120,7 @@ pub(super) struct ForwardConfig {
     pub body: Option<String>,
     pub html: bool,
     pub attachments: Vec<Attachment>,
+    pub no_original_attachments: bool,
 }
 
 struct ForwardEnvelope<'a> {
@@ -213,6 +257,7 @@ fn parse_forward_args(matches: &ArgMatches) -> Result<ForwardConfig, GwsError> {
         body: parse_optional_trimmed(matches, "body"),
         html: matches.get_flag("html"),
         attachments: parse_attachments(matches)?,
+        no_original_attachments: matches.get_flag("no-original-attachments"),
     })
 }
 
@@ -460,6 +505,11 @@ mod tests {
                 Arg::new("dry-run")
                     .long("dry-run")
                     .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("no-original-attachments")
+                    .long("no-original-attachments")
+                    .action(ArgAction::SetTrue),
             );
         cmd.try_get_matches_from(args).unwrap()
     }
@@ -474,6 +524,21 @@ mod tests {
         assert!(config.cc.is_none());
         assert!(config.bcc.is_none());
         assert!(config.body.is_none());
+        assert!(!config.no_original_attachments);
+    }
+
+    #[test]
+    fn test_parse_forward_args_no_original_attachments() {
+        let matches = make_forward_matches(&[
+            "test",
+            "--message-id",
+            "abc123",
+            "--to",
+            "dave@example.com",
+            "--no-original-attachments",
+        ]);
+        let config = parse_forward_args(&matches).unwrap();
+        assert!(config.no_original_attachments);
     }
 
     #[test]
@@ -774,6 +839,7 @@ mod tests {
             filename: "report.pdf".to_string(),
             content_type: "application/pdf".to_string(),
             data: b"fake pdf".to_vec(),
+            content_id: None,
         }];
         let raw = create_forward_raw_message(&envelope, &original, &attachments).unwrap();
 
@@ -781,5 +847,154 @@ mod tests {
         assert!(raw.contains("report.pdf"));
         assert!(raw.contains("FYI, see attached"));
         assert!(raw.contains("Forwarded message"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_html_with_inline_image() {
+        let original = OriginalMessage {
+            thread_id: Some("t1".to_string()),
+            message_id: "abc@example.com".to_string(),
+            from: Mailbox::parse("alice@example.com"),
+            to: vec![Mailbox::parse("bob@example.com")],
+            subject: "Photo".to_string(),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: "See photo".to_string(),
+            body_html: Some("<p>See <img src=\"cid:baby@example.com\"></p>".to_string()),
+            ..Default::default()
+        };
+
+        let refs = build_references_chain(&original);
+        let to = Mailbox::parse_list("dave@example.com");
+        let envelope = ForwardEnvelope {
+            to: &to,
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Photo",
+            body: None,
+            html: true,
+            threading: ThreadingHeaders {
+                in_reply_to: &original.message_id,
+                references: &refs,
+            },
+        };
+        // Simulate original inline image + regular attachment
+        let attachments = vec![
+            Attachment {
+                filename: "baby.jpg".to_string(),
+                content_type: "image/jpeg".to_string(),
+                data: b"fake jpeg".to_vec(),
+                content_id: Some("baby@example.com".to_string()),
+            },
+            Attachment {
+                filename: "report.pdf".to_string(),
+                content_type: "application/pdf".to_string(),
+                data: b"fake pdf".to_vec(),
+                content_id: None,
+            },
+        ];
+        let raw = create_forward_raw_message(&envelope, &original, &attachments).unwrap();
+
+        // Should have multipart/mixed > multipart/related + attachment
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("multipart/related"));
+        assert!(raw.contains("Content-ID: <baby@example.com>"));
+        assert!(raw.contains("report.pdf"));
+    }
+
+    #[test]
+    fn test_create_forward_raw_message_plain_text_no_inline_images() {
+        // In plain-text mode, inline images are filtered out upstream by the
+        // handler (matching Gmail web, which strips them entirely). Only regular
+        // attachments reach create_forward_raw_message.
+        let original = OriginalMessage {
+            thread_id: Some("t1".to_string()),
+            message_id: "abc@example.com".to_string(),
+            from: Mailbox::parse("alice@example.com"),
+            to: vec![Mailbox::parse("bob@example.com")],
+            subject: "Photo".to_string(),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: "See photo".to_string(),
+            ..Default::default()
+        };
+
+        let refs = build_references_chain(&original);
+        let to = Mailbox::parse_list("dave@example.com");
+        let envelope = ForwardEnvelope {
+            to: &to,
+            cc: None,
+            bcc: None,
+            from: None,
+            subject: "Fwd: Photo",
+            body: None,
+            html: false,
+            threading: ThreadingHeaders {
+                in_reply_to: &original.message_id,
+                references: &refs,
+            },
+        };
+        // Only regular attachment — inline images are filtered out by the handler
+        let attachments = vec![Attachment {
+            filename: "report.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            data: b"fake pdf".to_vec(),
+            content_id: None,
+        }];
+        let raw = create_forward_raw_message(&envelope, &original, &attachments).unwrap();
+
+        assert!(!raw.contains("multipart/related"));
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("report.pdf"));
+        // No inline images in plain-text forward
+        assert!(!raw.contains("Content-ID"));
+    }
+
+    // --- include_original_part filter matrix ---
+
+    fn make_part(inline: bool) -> OriginalPart {
+        OriginalPart {
+            filename: "test".to_string(),
+            content_type: "image/png".to_string(),
+            size: 100,
+            attachment_id: "ATT1".to_string(),
+            content_id: if inline {
+                Some("cid@example.com".to_string())
+            } else {
+                None
+            },
+        }
+    }
+
+    #[test]
+    fn test_include_original_part_default_html_includes_all() {
+        let regular = make_part(false);
+        let inline = make_part(true);
+        assert!(include_original_part(&regular, true, false));
+        assert!(include_original_part(&inline, true, false));
+    }
+
+    #[test]
+    fn test_include_original_part_default_plain_drops_inline() {
+        let regular = make_part(false);
+        let inline = make_part(true);
+        assert!(include_original_part(&regular, false, false));
+        assert!(!include_original_part(&inline, false, false));
+    }
+
+    #[test]
+    fn test_include_original_part_no_attachments_html_keeps_inline() {
+        let regular = make_part(false);
+        let inline = make_part(true);
+        // Key behavior: --no-original-attachments skips files but keeps inline images
+        assert!(!include_original_part(&regular, true, true));
+        assert!(include_original_part(&inline, true, true));
+    }
+
+    #[test]
+    fn test_include_original_part_no_attachments_plain_drops_everything() {
+        let regular = make_part(false);
+        let inline = make_part(true);
+        assert!(!include_original_part(&regular, false, true));
+        assert!(!include_original_part(&inline, false, true));
     }
 }
