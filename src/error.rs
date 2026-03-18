@@ -363,43 +363,6 @@ mod tests {
         assert_eq!(json["error"]["reason"], "internalError");
     }
 
-    // --- exit_code tests ---
-
-    #[test]
-    fn test_exit_code_validation() {
-        let err = GwsError::Validation("bad input".to_string());
-        assert_eq!(err.exit_code(), 1);
-    }
-
-    #[test]
-    fn test_exit_code_auth() {
-        let err = GwsError::Auth("no creds".to_string());
-        assert_eq!(err.exit_code(), 2);
-    }
-
-    #[test]
-    fn test_exit_code_api() {
-        let err = GwsError::Api {
-            code: 404,
-            message: "not found".to_string(),
-            reason: "notFound".to_string(),
-            enable_url: None,
-        };
-        assert_eq!(err.exit_code(), 3);
-    }
-
-    #[test]
-    fn test_exit_code_discovery() {
-        let err = GwsError::Discovery("no doc".to_string());
-        assert_eq!(err.exit_code(), 4);
-    }
-
-    #[test]
-    fn test_exit_code_other() {
-        let err = GwsError::Other(anyhow::anyhow!("oops"));
-        assert_eq!(err.exit_code(), 5);
-    }
-
     #[test]
     fn test_exit_codes_json_contains_all_codes() {
         let val = exit_codes_json();

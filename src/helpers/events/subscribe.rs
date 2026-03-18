@@ -323,7 +323,7 @@ async fn pull_loop(
 
     #[cfg(unix)]
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("failed to register SIGTERM handler");
+        .context("failed to register SIGTERM handler")?;
 
     loop {
         let token = token_provider
