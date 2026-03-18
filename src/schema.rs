@@ -155,6 +155,8 @@ fn build_schema_output(doc: &RestDescription, method: &RestMethod) -> Value {
         "description": method.description.as_deref().unwrap_or(""),
         "parameters": params,
         "scopes": method.scopes,
+        "timeout_ms": 30_000_u32,
+        "exit_codes": crate::error::exit_codes_json()["exit_codes"].clone(),
     });
 
     if !method.parameter_order.is_empty() {

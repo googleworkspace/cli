@@ -166,6 +166,7 @@ async fn build_http_request(
     page_token: Option<&str>,
     pages_fetched: u32,
     upload: &Option<UploadSource<'_>>,
+    idempotency_key: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, GwsError> {
     let mut request = match method.http_method.as_str() {
         "GET" => client.get(&input.full_url),
@@ -183,6 +184,12 @@ async fn build_http_request(
     if let Some(token) = token {
         if *auth_method == AuthMethod::OAuth {
             request = request.bearer_auth(token);
+        }
+    }
+
+    if let Some(key) = idempotency_key {
+        if matches!(method.http_method.as_str(), "POST" | "PUT" | "PATCH") {
+            request = request.header("Idempotency-Key", key);
         }
     }
 
@@ -409,6 +416,7 @@ pub async fn execute_method(
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
+    idempotency_key: Option<&str>,
 ) -> Result<Option<Value>, GwsError> {
     let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some())?;
 
@@ -420,6 +428,7 @@ pub async fn execute_method(
             "query_params": input.query_params,
             "body": input.body,
             "is_multipart_upload": input.is_upload,
+            "idempotency_key": idempotency_key,
         });
         if capture_output {
             return Ok(Some(dry_run_info));
@@ -446,6 +455,7 @@ pub async fn execute_method(
             page_token.as_deref(),
             pages_fetched,
             &upload,
+            idempotency_key,
         )
         .await?;
 
@@ -2096,6 +2106,7 @@ async fn test_execute_method_dry_run() {
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
         false,
+        None,
     )
     .await;
 
@@ -2139,6 +2150,7 @@ async fn test_execute_method_missing_path_param() {
         &sanitize_mode,
         &crate::formatter::OutputFormat::default(),
         false,
+        None,
     )
     .await;
 
@@ -2310,6 +2322,7 @@ async fn test_post_without_body_sets_content_length_zero() {
         None,
         0,
         &None,
+        None,
     )
     .await
     .unwrap();
@@ -2350,6 +2363,7 @@ async fn test_post_with_body_does_not_add_content_length_zero() {
         None,
         0,
         &None,
+        None,
     )
     .await
     .unwrap();
@@ -2388,6 +2402,7 @@ async fn test_get_does_not_set_content_length_zero() {
         None,
         0,
         &None,
+        None,
     )
     .await
     .unwrap();

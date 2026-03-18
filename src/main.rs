@@ -42,7 +42,7 @@ mod timezone;
 mod token_storage;
 pub(crate) mod validate;
 
-use error::{print_error_json, GwsError};
+use error::{exit_codes_json, print_error_json, GwsError};
 
 #[tokio::main]
 async fn main() {
@@ -123,6 +123,15 @@ async fn run() -> Result<(), GwsError> {
         // The path is args[2], flags might follow.
         let path = &args[2];
         return schema::handle_schema_command(path, resolve_refs).await;
+    }
+
+    // Handle the `exit-codes` command
+    if first_arg == "exit-codes" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&exit_codes_json()).unwrap_or_default()
+        );
+        return Ok(());
     }
 
     // Handle the `generate-skills` command
@@ -251,6 +260,9 @@ async fn run() -> Result<(), GwsError> {
     };
 
     let dry_run = matched_args.get_flag("dry-run");
+    let idempotency_key = matched_args
+        .get_one::<String>("idempotency-key")
+        .map(|s| s.as_str());
 
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);
@@ -293,6 +305,7 @@ async fn run() -> Result<(), GwsError> {
         &sanitize_config.mode,
         &output_format,
         false,
+        idempotency_key,
     )
     .await
     .map(|_| ())
@@ -449,6 +462,7 @@ fn print_usage() {
     println!("    gws sheets spreadsheets get --params '{{\"spreadsheetId\": \"...\"}}'");
     println!("    gws gmail users messages list --params '{{\"userId\": \"me\"}}'");
     println!("    gws schema drive.files.list");
+    println!("    gws exit-codes");
     println!();
     println!("FLAGS:");
     println!("    --params <JSON>       URL/Query parameters as JSON");

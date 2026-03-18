@@ -810,6 +810,7 @@ pub(super) async fn send_raw_email(
         &crate::helpers::modelarmor::SanitizeMode::Warn,
         &crate::formatter::OutputFormat::default(),
         false,
+        None,
     )
     .await?;
 

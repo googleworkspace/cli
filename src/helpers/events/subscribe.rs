@@ -320,6 +320,11 @@ async fn pull_loop(
     pubsub_api_base: &str,
 ) -> Result<(), GwsError> {
     let mut file_counter: u64 = 0;
+
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
+
     loop {
         let token = token_provider
             .access_token()
@@ -337,6 +342,13 @@ async fn pull_loop(
             .timeout(std::time::Duration::from_secs(config.poll_interval.max(10)))
             .send();
 
+        // Hoist SIGTERM future outside select! — #[cfg] attributes are not supported
+        // inside tokio::select! branches; we use a cfg'd let binding instead.
+        #[cfg(unix)]
+        let sigterm_recv = sigterm.recv();
+        #[cfg(not(unix))]
+        let sigterm_recv = std::future::pending::<Option<()>>();
+
         let resp = tokio::select! {
             result = pull_future => {
                 match result {
@@ -347,6 +359,10 @@ async fn pull_loop(
             }
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("\nReceived interrupt, stopping...");
+                return Ok(());
+            }
+            _ = sigterm_recv => {
+                eprintln!("\nReceived SIGTERM, stopping...");
                 return Ok(());
             }
         };
@@ -411,11 +427,20 @@ async fn pull_loop(
             break;
         }
 
-        // Check for SIGINT between polls
+        // Check for SIGINT/SIGTERM between polls
+        #[cfg(unix)]
+        let sigterm_sleep = sigterm.recv();
+        #[cfg(not(unix))]
+        let sigterm_sleep = std::future::pending::<Option<()>>();
+
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(config.poll_interval)) => {},
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("\nReceived interrupt, stopping...");
+                break;
+            }
+            _ = sigterm_sleep => {
+                eprintln!("\nReceived SIGTERM, stopping...");
                 break;
             }
         }

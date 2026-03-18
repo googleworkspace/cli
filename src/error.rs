@@ -190,6 +190,20 @@ fn error_label(err: &GwsError) -> String {
     }
 }
 
+/// Returns the exit code taxonomy as a JSON value for `gws exit-codes` and schema output.
+pub fn exit_codes_json() -> serde_json::Value {
+    serde_json::json!({
+        "exit_codes": [
+            { "code": 0, "reason": "success",         "meaning": "Command completed successfully" },
+            { "code": GwsError::EXIT_CODE_API,         "reason": "apiError",        "meaning": "Remote API returned an error response" },
+            { "code": GwsError::EXIT_CODE_AUTH,        "reason": "authError",       "meaning": "Missing or invalid credentials" },
+            { "code": GwsError::EXIT_CODE_VALIDATION,  "reason": "validationError", "meaning": "Bad input or wrong arguments" },
+            { "code": GwsError::EXIT_CODE_DISCOVERY,   "reason": "discoveryError",  "meaning": "Could not load API Discovery document" },
+            { "code": GwsError::EXIT_CODE_OTHER,       "reason": "internalError",   "meaning": "Unexpected or transient failure" },
+        ]
+    })
+}
+
 /// Formats any error as a JSON object and prints to stdout.
 ///
 /// A human-readable colored label is printed to stderr when connected to a
@@ -347,6 +361,57 @@ mod tests {
         assert_eq!(json["error"]["code"], 500);
         assert_eq!(json["error"]["message"], "Something went wrong");
         assert_eq!(json["error"]["reason"], "internalError");
+    }
+
+    // --- exit_code tests ---
+
+    #[test]
+    fn test_exit_code_validation() {
+        let err = GwsError::Validation("bad input".to_string());
+        assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn test_exit_code_auth() {
+        let err = GwsError::Auth("no creds".to_string());
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn test_exit_code_api() {
+        let err = GwsError::Api {
+            code: 404,
+            message: "not found".to_string(),
+            reason: "notFound".to_string(),
+            enable_url: None,
+        };
+        assert_eq!(err.exit_code(), 3);
+    }
+
+    #[test]
+    fn test_exit_code_discovery() {
+        let err = GwsError::Discovery("no doc".to_string());
+        assert_eq!(err.exit_code(), 4);
+    }
+
+    #[test]
+    fn test_exit_code_other() {
+        let err = GwsError::Other(anyhow::anyhow!("oops"));
+        assert_eq!(err.exit_code(), 5);
+    }
+
+    #[test]
+    fn test_exit_codes_json_contains_all_codes() {
+        let val = exit_codes_json();
+        let codes: Vec<i64> = val["exit_codes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["code"].as_i64().unwrap())
+            .collect();
+        for expected in 0..=5 {
+            assert!(codes.contains(&expected), "missing code {expected}");
+        }
     }
 
     // --- accessNotConfigured tests ---

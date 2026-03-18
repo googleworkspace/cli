@@ -41,6 +41,13 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("idempotency-key")
+                .long("idempotency-key")
+                .value_name("KEY")
+                .help("Idempotency key sent as 'Idempotency-Key' HTTP header for POST/PUT/PATCH requests")
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("format")
                 .long("format")
                 .help("Output format: json (default), table, yaml, csv")

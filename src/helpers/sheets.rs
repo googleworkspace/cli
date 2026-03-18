@@ -143,6 +143,7 @@ TIPS:
                     &crate::helpers::modelarmor::SanitizeMode::Warn,
                     &crate::formatter::OutputFormat::default(),
                     false,
+                    None,
                 )
                 .await?;
 
@@ -186,6 +187,7 @@ TIPS:
                     &crate::helpers::modelarmor::SanitizeMode::Warn,
                     &crate::formatter::OutputFormat::default(),
                     false,
+                    None,
                 )
                 .await?;
 
