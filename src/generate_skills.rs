@@ -391,7 +391,8 @@ metadata:
   openclaw:
     category: "productivity"
     requires:
-      bins: ["gws"]
+      bins:
+        - gws
     cliHelp: "gws {alias} --help"
 ---
 
@@ -527,7 +528,8 @@ metadata:
   openclaw:
     category: "{category}"
     requires:
-      bins: ["gws"]
+      bins:
+        - gws
     cliHelp: "gws {alias} {cmd_name} --help"
 ---
 
@@ -674,7 +676,8 @@ metadata:
   openclaw:
     category: "productivity"
     requires:
-      bins: ["gws"]
+      bins:
+        - gws
 ---
 
 # gws — Shared Reference
@@ -755,13 +758,13 @@ gws <service> <resource> [sub-resource] <method> [flags]
 fn render_persona_skill(persona: &PersonaEntry) -> String {
     let mut out = String::new();
 
-    // metadata JSON string for skills array
+    // Block-style YAML for skills array
     let required_skills = persona
         .services
         .iter()
-        .map(|s| format!("\"gws-{s}\""))
+        .map(|s| format!("        - gws-{s}"))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("\n");
 
     let trigger_desc = truncate_desc(&persona.description);
 
@@ -774,8 +777,10 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: [{skills}]
+      bins:
+        - gws
+      skills:
+{skills}
 ---
 
 # {title}
@@ -829,9 +834,9 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
     let required_skills = recipe
         .services
         .iter()
-        .map(|s| format!("\"gws-{s}\""))
+        .map(|s| format!("        - gws-{s}"))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("\n");
 
     let trigger_desc = truncate_desc(&recipe.description);
 
@@ -845,8 +850,10 @@ metadata:
     category: "recipe"
     domain: "{category}"
     requires:
-      bins: ["gws"]
-      skills: [{skills}]
+      bins:
+        - gws
+      skills:
+{skills}
 ---
 
 # {title}
@@ -1186,5 +1193,189 @@ mod tests {
     #[test]
     fn test_product_name_from_title_adds_google() {
         assert_eq!(product_name_from_title("Drive API"), "Google Drive");
+    }
+
+    /// Extract the YAML frontmatter (between `---` delimiters) from a skill string.
+    fn extract_frontmatter(content: &str) -> &str {
+        let content = content.strip_prefix("---").expect("no opening ---");
+        let (frontmatter, _) = content.split_once("\n---").expect("no closing ---");
+        frontmatter
+    }
+
+    /// Asserts that the frontmatter uses block-style YAML sequences.
+    ///
+    /// Detects flow sequences by checking whether YAML values start with `[`,
+    /// rather than looking for brackets anywhere in a line.  This avoids false
+    /// positives from string values that legitimately contain brackets
+    /// (e.g., `description: 'Note: [INTERNAL] ticket was filed'`).
+    fn assert_block_style_sequences(frontmatter: &str) {
+        for (i, line) in frontmatter.lines().enumerate() {
+            let trimmed = line.trim();
+            // Skip lines that don't look like YAML values (e.g., comments, empty)
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            // A YAML flow sequence is "key: [...]". Check the value after `:`.
+            if let Some(colon_pos) = trimmed.find(':') {
+                let value = trimmed[colon_pos + 1..].trim();
+                // A flow sequence is not quoted. A quoted string is a scalar.
+                let is_quoted = value.starts_with('"') || value.starts_with('\'');
+                assert!(
+                    is_quoted || !value.starts_with('['),
+                    "Flow sequence found on line {} of frontmatter: {:?}\n\
+                     Use block-style sequences instead (e.g., `- value`)",
+                    i + 1,
+                    trimmed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_service_skill_frontmatter_uses_block_sequences() {
+        let entry = &services::SERVICES[0]; // first service
+        let doc = crate::discovery::RestDescription {
+            name: entry.api_name.to_string(),
+            title: Some("Test API".to_string()),
+            description: Some(entry.description.to_string()),
+            ..Default::default()
+        };
+        let cli = crate::commands::build_cli(&doc);
+        let helpers: Vec<&Command> = cli
+            .get_subcommands()
+            .filter(|s| s.get_name().starts_with('+'))
+            .collect();
+        let resources: Vec<&Command> = cli
+            .get_subcommands()
+            .filter(|s| !s.get_name().starts_with('+'))
+            .collect();
+        let product_name = product_name_from_title("Test API");
+        let md = render_service_skill(
+            entry.aliases[0],
+            entry,
+            &helpers,
+            &resources,
+            &product_name,
+            &doc,
+        );
+        let fm = extract_frontmatter(&md);
+        assert_block_style_sequences(fm);
+        assert!(
+            fm.contains("bins:\n"),
+            "frontmatter should contain 'bins:' on its own line"
+        );
+        assert!(
+            fm.contains("- gws"),
+            "frontmatter should contain '- gws' block entry"
+        );
+    }
+
+    #[test]
+    fn test_shared_skill_frontmatter_uses_block_sequences() {
+        let tmp = tempfile::tempdir().unwrap();
+        generate_shared_skill(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path().join("gws-shared/SKILL.md")).unwrap();
+        let fm = extract_frontmatter(&content);
+        assert_block_style_sequences(fm);
+        assert!(
+            fm.contains("- gws"),
+            "shared skill frontmatter should contain '- gws'"
+        );
+    }
+
+    #[test]
+    fn test_persona_skill_frontmatter_uses_block_sequences() {
+        let persona = PersonaEntry {
+            name: "test-persona".to_string(),
+            title: "Test Persona".to_string(),
+            description: "A test persona for unit tests.".to_string(),
+            services: vec!["gmail".to_string(), "calendar".to_string()],
+            workflows: vec![],
+            instructions: vec!["Do this.".to_string()],
+            tips: vec![],
+        };
+        let md = render_persona_skill(&persona);
+        let fm = extract_frontmatter(&md);
+        assert_block_style_sequences(fm);
+        assert!(
+            fm.contains("- gws"),
+            "persona frontmatter should contain '- gws'"
+        );
+        assert!(
+            fm.contains("- gws-gmail"),
+            "persona frontmatter should contain '- gws-gmail'"
+        );
+        assert!(
+            fm.contains("- gws-calendar"),
+            "persona frontmatter should contain '- gws-calendar'"
+        );
+    }
+
+    #[test]
+    fn test_recipe_skill_frontmatter_uses_block_sequences() {
+        let recipe = RecipeEntry {
+            name: "test-recipe".to_string(),
+            title: "Test Recipe".to_string(),
+            description: "A test recipe for unit tests.".to_string(),
+            category: "testing".to_string(),
+            services: vec!["drive".to_string(), "sheets".to_string()],
+            steps: vec!["Step one.".to_string()],
+            caution: None,
+        };
+        let md = render_recipe_skill(&recipe);
+        let fm = extract_frontmatter(&md);
+        assert_block_style_sequences(fm);
+        assert!(
+            fm.contains("- gws"),
+            "recipe frontmatter should contain '- gws'"
+        );
+        assert!(
+            fm.contains("- gws-drive"),
+            "recipe frontmatter should contain '- gws-drive'"
+        );
+        assert!(
+            fm.contains("- gws-sheets"),
+            "recipe frontmatter should contain '- gws-sheets'"
+        );
+    }
+
+    #[test]
+    fn test_helper_skill_frontmatter_uses_block_sequences() {
+        // Use a service known to have helpers, e.g., drive
+        let entry = services::SERVICES
+            .iter()
+            .find(|s| s.api_name == "drive")
+            .unwrap();
+
+        let doc = crate::discovery::RestDescription {
+            name: entry.api_name.to_string(),
+            title: Some("Test API".to_string()),
+            description: Some(entry.description.to_string()),
+            ..Default::default()
+        };
+        let cli = crate::commands::build_cli(&doc);
+        let helper = cli
+            .get_subcommands()
+            .find(|s| s.get_name().starts_with('+'))
+            .expect("No helper command found for test");
+
+        let product_name = product_name_from_title("Test API");
+        let md = render_helper_skill(
+            entry.aliases[0],
+            helper.get_name(),
+            helper,
+            entry,
+            &product_name,
+        );
+        let fm = extract_frontmatter(&md);
+        assert_block_style_sequences(fm);
+        assert!(
+            fm.contains("bins:\n"),
+            "frontmatter should contain 'bins:' on its own line"
+        );
+        assert!(
+            fm.contains("- gws"),
+            "frontmatter should contain '- gws' block entry"
+        );
     }
 }
