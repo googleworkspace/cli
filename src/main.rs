@@ -261,7 +261,7 @@ async fn run() -> Result<(), GwsError> {
     let dry_run = matched_args.get_flag("dry-run");
     let idempotency_key = matched_args
         .get_one::<String>("idempotency-key")
-        .map(|s| s.as_str());
+        .and_then(|s| if s.is_empty() { None } else { Some(s.as_str()) });
 
     // Build pagination config from flags
     let pagination = parse_pagination_config(matched_args);

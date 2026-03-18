@@ -13,6 +13,9 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
 
     reqwest::Client::builder()
         .default_headers(headers)
+        .timeout(std::time::Duration::from_millis(
+            crate::schema::SCHEMA_TIMEOUT_MS.into(),
+        ))
         .build()
         .map_err(|e| {
             crate::error::GwsError::Other(anyhow::anyhow!("Failed to build HTTP client: {e}"))

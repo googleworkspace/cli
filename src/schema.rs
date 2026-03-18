@@ -20,6 +20,9 @@
 
 use serde_json::{json, Value};
 
+/// The request timeout advertised in schema output and enforced by the HTTP client.
+pub const SCHEMA_TIMEOUT_MS: u32 = 30_000;
+
 use crate::discovery::{
     fetch_discovery_document, JsonSchema, MethodParameter, RestDescription, RestMethod,
     RestResource,
@@ -155,7 +158,7 @@ fn build_schema_output(doc: &RestDescription, method: &RestMethod) -> Value {
         "description": method.description.as_deref().unwrap_or(""),
         "parameters": params,
         "scopes": method.scopes,
-        "timeout_ms": 30_000_u32,
+        "timeout_ms": SCHEMA_TIMEOUT_MS,
         "exit_codes": crate::error::exit_codes_json()["exit_codes"].clone(),
     });
 
