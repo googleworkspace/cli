@@ -71,7 +71,7 @@ pub fn save_client_config(
             auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
             token_uri: "https://oauth2.googleapis.com/token".to_string(),
             auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs".to_string(),
-            redirect_uris: vec!["http://localhost:8080".to_string()],
+            redirect_uris: vec!["http://localhost".to_string()],
         },
     };
 
