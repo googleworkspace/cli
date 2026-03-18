@@ -233,9 +233,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             args[i].strip_prefix("--port=")
         };
         if let Some(value) = port_str {
-            fixed_port = Some(value.parse::<u16>().map_err(|_| {
+            let port = value.parse::<u16>().map_err(|_| {
                 GwsError::Validation(format!("Invalid port number: {value}"))
-            })?);
+            })?;
+            if port == 0 {
+                return Err(GwsError::Validation(
+                    "Port number must be a non-zero value between 1 and 65535.".to_string(),
+                ));
+            }
+            fixed_port = Some(port);
             continue;
         }
 
