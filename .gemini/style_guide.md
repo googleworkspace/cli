@@ -4,6 +4,8 @@
 
 `gws` is a Rust CLI that dynamically generates commands from Google Discovery Documents at runtime. It does NOT use generated Rust crates (`google-drive3`, etc.) for API interaction. Do not suggest adding API-specific crates to `Cargo.toml`.
 
+For additional context, read `AGENTS.md`.
+
 ## Security: Trusted vs Untrusted Inputs
 
 This CLI is frequently invoked by AI/LLM agents. CLI arguments may be adversarial.
@@ -17,7 +19,7 @@ The `codecov/patch` check requires new/modified lines to be covered by tests. Pr
 
 ## Changesets
 
-Every PR must include a `.changeset/<name>.md` file. Use `patch` for fixes/chores, `minor` for features, `major` for breaking changes.
+Every PR must include a `.changeset/<name>.md` file. The package name **must** be `"@googleworkspace/cli"` (not `"googleworkspace-cli"`). Use `patch` for fixes/chores, `minor` for features, `major` for breaking changes.
 
 ## PR Scope
 
@@ -28,8 +30,6 @@ Examples of scope creep to avoid:
 - Adding constants for strings used elsewhere is a separate cleanup task.
 - Making a pre-existing function atomic is an enhancement, not a fix for the current PR.
 
-## Code Style
+## Severity Calibration
 
-- Rust: `cargo clippy -- -D warnings` must pass. `cargo fmt` enforced via pre-commit hook.
-- Node.js: Use `pnpm` not `npm`.
-- OAuth scope strings in test code will trigger "restricted/sensitive scope" warnings — these are expected and should be ignored.
+Mark issues as **critical** only when they cause data loss, security vulnerabilities, or incorrect behavior under normal conditions. Theoretical failures in infallible system APIs (e.g., `tokio::signal::ctrl_c()` registration) are **low** severity — do not label them critical. Contradicting a prior review suggestion (e.g., suggesting `expect()` then flagging `expect()` as wrong) erodes trust; verify consistency with earlier comments before posting.

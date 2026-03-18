@@ -53,3 +53,13 @@ jobs:
             exit 1
           fi
           echo "Changeset file found!"
+      - name: Validate Changeset Package Name
+        if: github.event_name == 'pull_request'
+        run: |
+          for f in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep "^.changeset/.*\.md$"); do
+            if grep -q '"googleworkspace-cli"' "$f"; then
+              echo "::error file=$f::Wrong package name. Use '\"@googleworkspace/cli\"' not '\"googleworkspace-cli\"'."
+              exit 1
+            fi
+          done
+          echo "Changeset package names valid!"
