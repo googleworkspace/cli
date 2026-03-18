@@ -922,13 +922,6 @@ impl Helper for GmailHelper {
                             .long("from")
                             .help("Sender address (for send-as/alias; omit to use account default)")
                             .value_name("EMAIL"),
-                    )
-                    .arg(
-                        Arg::new("attachment")
-                            .long("attachment")
-                            .help("Attach a file (can be repeated for multiple files)")
-                            .action(ArgAction::Append)
-                            .value_name("PATH"),
                     ),
             )
             .after_help(

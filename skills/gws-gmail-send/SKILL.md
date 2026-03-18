@@ -30,7 +30,6 @@ gws gmail +send --to <EMAILS> --subject <SUBJECT> --body <TEXT>
 | `--subject` | ✓ | — | Email subject |
 | `--body` | ✓ | — | Email body (plain text, or HTML with --html) |
 | `--from` | — | — | Sender address (for send-as/alias; omit to use account default) |
-| `--attachment` | — | — | Attach a file (can be repeated for multiple files) |
 | `--attach` | — | — | Attach a file (can be specified multiple times) |
 | `--cc` | — | — | CC email address(es), comma-separated |
 | `--bcc` | — | — | BCC email address(es), comma-separated |
