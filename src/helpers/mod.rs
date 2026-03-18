@@ -39,21 +39,40 @@ pub(crate) const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
 /// platforms only SIGINT is handled. Used by long-running pull loops
 /// (`gmail::watch`, `events::subscribe`) to exit cleanly under container
 /// orchestrators (Kubernetes, Docker, systemd) that send SIGTERM.
+///
+/// The signal handler is registered once in a background task on first call
+/// so it remains active for the lifetime of the process — no gap between
+/// loop iterations.
 pub(crate) async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = sigterm.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await.ok();
-    }
+    use std::sync::OnceLock;
+    use tokio::sync::Notify;
+
+    static NOTIFY: OnceLock<std::sync::Arc<Notify>> = OnceLock::new();
+
+    let notify = NOTIFY.get_or_init(|| {
+        let n = std::sync::Arc::new(Notify::new());
+        let n2 = n.clone();
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                tokio::signal::ctrl_c().await.ok();
+            }
+            n2.notify_waiters();
+        });
+        n
+    });
+
+    notify.notified().await;
 }
 
 /// A trait for service-specific CLI helpers that inject custom commands.
