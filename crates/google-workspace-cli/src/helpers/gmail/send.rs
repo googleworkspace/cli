@@ -25,12 +25,12 @@ pub(super) async fn handle_send(
     let token = if dry_run {
         None
     } else {
-        // Use the discovery doc scopes (e.g. gmail.send) rather than hardcoding
-        // gmail.modify, so credentials limited to narrower send-only scopes still
-        // work. resolve_sender gracefully degrades if the token doesn't cover the
-        // sendAs.list endpoint.
-        let send_method = super::resolve_send_method(doc)?;
-        let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+        // Resolve the target method (send or draft) and use its discovery
+        // doc scopes, so the token matches the operation. resolve_sender
+        // gracefully degrades if the token doesn't cover the sendAs.list
+        // endpoint.
+        let method = super::resolve_mail_method(doc, matches.get_flag("draft"))?;
+        let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
         let t = auth::get_token(&scopes)
             .await
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
@@ -41,7 +41,7 @@ pub(super) async fn handle_send(
 
     let raw = create_send_raw_message(&config)?;
 
-    super::send_raw_email(doc, matches, &raw, None, token.as_deref()).await
+    super::dispatch_raw_email(doc, matches, &raw, None, token.as_deref()).await
 }
 
 pub(super) struct SendConfig {
@@ -108,7 +108,8 @@ mod tests {
                     .long("attach")
                     .short('a')
                     .action(ArgAction::Append),
-            );
+            )
+            .arg(Arg::new("draft").long("draft").action(ArgAction::SetTrue));
         cmd.try_get_matches_from(args).unwrap()
     }
 

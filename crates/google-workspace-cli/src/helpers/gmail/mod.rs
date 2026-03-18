@@ -42,6 +42,9 @@ use std::pin::Pin;
 
 pub struct GmailHelper;
 
+/// Broad scope used by reply/forward handlers for both message metadata
+/// fetching and the final send/draft operation. Covers `messages.send`,
+/// `drafts.create`, and read access in a single token.
 pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 pub(super) const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
@@ -1364,7 +1367,7 @@ pub(super) fn parse_attachments(matches: &ArgMatches) -> Result<Vec<Attachment>,
     Ok(attachments)
 }
 
-pub(super) fn resolve_send_method(
+fn resolve_send_method(
     doc: &crate::discovery::RestDescription,
 ) -> Result<&crate::discovery::RestMethod, GwsError> {
     let users_res = doc
@@ -1381,30 +1384,70 @@ pub(super) fn resolve_send_method(
         .ok_or_else(|| GwsError::Discovery("Method 'users.messages.send' not found".to_string()))
 }
 
-/// Build the JSON metadata for `users.messages.send` via the upload endpoint.
-/// Only contains `threadId` when replying/forwarding — the raw RFC 5322 message
-/// is sent as the media part, not base64-encoded in a `raw` field.
-fn build_send_metadata(thread_id: Option<&str>) -> Option<String> {
-    thread_id.map(|id| json!({ "threadId": id }).to_string())
+fn resolve_draft_method(
+    doc: &crate::discovery::RestDescription,
+) -> Result<&crate::discovery::RestMethod, GwsError> {
+    let users_res = doc
+        .resources
+        .get("users")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users' not found".to_string()))?;
+    let drafts_res = users_res
+        .resources
+        .get("drafts")
+        .ok_or_else(|| GwsError::Discovery("Resource 'users.drafts' not found".to_string()))?;
+    drafts_res
+        .methods
+        .get("create")
+        .ok_or_else(|| GwsError::Discovery("Method 'users.drafts.create' not found".to_string()))
 }
 
-pub(super) async fn send_raw_email(
+/// Resolve either `users.drafts.create` or `users.messages.send` based on the draft flag.
+pub(super) fn resolve_mail_method(
+    doc: &crate::discovery::RestDescription,
+    draft: bool,
+) -> Result<&crate::discovery::RestMethod, GwsError> {
+    if draft {
+        resolve_draft_method(doc)
+    } else {
+        resolve_send_method(doc)
+    }
+}
+
+/// Build the JSON metadata for the upload endpoint.
+///
+/// For `users.messages.send`: `{"threadId": "..."}` (only when replying/forwarding);
+/// returns `None` for new messages.
+/// For `users.drafts.create`: `{"message": {"threadId": "..."}}` when replying/forwarding,
+/// or `{"message": {}}` for a new draft (wrapper is always required).
+fn build_send_metadata(thread_id: Option<&str>, draft: bool) -> Option<String> {
+    if draft {
+        let message = match thread_id {
+            Some(id) => json!({ "message": { "threadId": id } }),
+            None => json!({ "message": {} }),
+        };
+        Some(message.to_string())
+    } else {
+        thread_id.map(|id| json!({ "threadId": id }).to_string())
+    }
+}
+
+pub(super) async fn dispatch_raw_email(
     doc: &crate::discovery::RestDescription,
     matches: &ArgMatches,
     raw_message: &str,
     thread_id: Option<&str>,
     existing_token: Option<&str>,
 ) -> Result<(), GwsError> {
-    let metadata = build_send_metadata(thread_id);
-
-    let send_method = resolve_send_method(doc)?;
+    let draft = matches.get_flag("draft");
+    let metadata = build_send_metadata(thread_id, draft);
+    let method = resolve_mail_method(doc, draft)?;
     let params = json!({ "userId": "me" });
     let params_str = params.to_string();
 
     let (token, auth_method) = match existing_token {
         Some(t) => (Some(t.to_string()), executor::AuthMethod::OAuth),
         None => {
-            let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+            let scopes: Vec<&str> = method.scopes.iter().map(|s| s.as_str()).collect();
             match auth::get_token(&scopes).await {
                 Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                 Err(e) if matches.get_flag("dry-run") => {
@@ -1424,7 +1467,7 @@ pub(super) async fn send_raw_email(
 
     executor::execute_method(
         doc,
-        send_method,
+        method,
         Some(&params_str),
         metadata.as_deref(),
         token.as_deref(),
@@ -1443,10 +1486,15 @@ pub(super) async fn send_raw_email(
     )
     .await?;
 
+    if draft && !matches.get_flag("dry-run") {
+        eprintln!("Tip: copy the draft \"id\" from the response above, then send with:");
+        eprintln!("  gws gmail users.drafts.send --body '{{\"id\":\"<draft-id>\"}}'");
+    }
+
     Ok(())
 }
 
-/// Add --attach, --cc, --bcc, --html, and --dry-run arguments shared by all mail subcommands.
+/// Add common arguments shared by all mail subcommands (--attach, --cc, --bcc, --html, --dry-run, --draft).
 fn common_mail_args(cmd: Command) -> Command {
     cmd.arg(
         Arg::new("attach")
@@ -1478,6 +1526,12 @@ fn common_mail_args(cmd: Command) -> Command {
         Arg::new("dry-run")
             .long("dry-run")
             .help("Show the request that would be sent without executing it")
+            .action(ArgAction::SetTrue),
+    )
+    .arg(
+        Arg::new("draft")
+            .long("draft")
+            .help("Save as draft instead of sending")
             .action(ArgAction::SetTrue),
     )
 }
@@ -1563,12 +1617,14 @@ EXAMPLES:
   gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --from alias@example.com
   gws gmail +send --to alice@example.com --subject 'Report' --body 'See attached' -a report.pdf
   gws gmail +send --to alice@example.com --subject 'Files' --body 'Two files' -a a.pdf -a b.csv
+  gws gmail +send --to alice@example.com --subject 'Hello' --body 'Hi!' --draft
 
 TIPS:
   Handles RFC 5322 formatting, MIME encoding, and base64 automatically.
   Use --from to send from a configured send-as alias instead of your primary address.
   Use -a/--attach to add file attachments. Can be specified multiple times. Total size limit: 25MB.
-  With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.",
+  With --html, use fragment tags (<p>, <b>, <a>, <br>, etc.) — no <html>/<body> wrapper needed.
+  Use --draft to save the message as a draft instead of sending it immediately.",
             ),
         );
 
@@ -1621,6 +1677,7 @@ EXAMPLES:
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Adding Dave' --to dave@example.com
   gws gmail +reply --message-id 18f1a2b3c4d --body '<b>Bold reply</b>' --html
   gws gmail +reply --message-id 18f1a2b3c4d --body 'Updated version' -a updated.docx
+  gws gmail +reply --message-id 18f1a2b3c4d --body 'Draft reply' --draft
 
 TIPS:
   Automatically sets In-Reply-To, References, and threadId headers.
@@ -1630,6 +1687,7 @@ TIPS:
   With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
 Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
   With --html, inline images in the quoted message are preserved via cid: references.
+  Use --draft to save the reply as a draft instead of sending it immediately.
   For reply-all, use +reply-all instead.",
             ),
         );
@@ -1653,6 +1711,7 @@ EXAMPLES:
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Adding Eve' --cc eve@example.com
   gws gmail +reply-all --message-id 18f1a2b3c4d --body '<i>Noted</i>' --html
   gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Notes attached' -a notes.pdf
+  gws gmail +reply-all --message-id 18f1a2b3c4d --body 'Draft reply' --draft
 
 TIPS:
   Replies to the sender and all original To/CC recipients.
@@ -1664,7 +1723,8 @@ TIPS:
   Use -a/--attach to add file attachments. Can be specified multiple times.
   With --html, the quoted block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
 Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
-  With --html, inline images in the quoted message are preserved via cid: references.",
+  With --html, inline images in the quoted message are preserved via cid: references.
+  Use --draft to save the reply as a draft instead of sending it immediately.",
                 ),
         );
 
@@ -1714,6 +1774,7 @@ EXAMPLES:
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com -a notes.pdf
   gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --no-original-attachments
+  gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --draft
 
 TIPS:
   Includes the original message with sender, date, subject, and recipients.
@@ -1724,7 +1785,8 @@ TIPS:
   Use -a/--attach to add extra file attachments. Can be specified multiple times.
   Combined size of original and user attachments is limited to 25MB.
   With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. \
-Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.",
+Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+  Use --draft to save the forward as a draft instead of sending it immediately.",
                 ),
         );
 
@@ -2273,14 +2335,29 @@ mod tests {
 
     #[test]
     fn test_build_send_metadata_with_thread_id() {
-        let metadata = build_send_metadata(Some("thread-123")).unwrap();
+        let metadata = build_send_metadata(Some("thread-123"), false).unwrap();
         let parsed: Value = serde_json::from_str(&metadata).unwrap();
         assert_eq!(parsed["threadId"], "thread-123");
     }
 
     #[test]
     fn test_build_send_metadata_without_thread_id() {
-        assert!(build_send_metadata(None).is_none());
+        assert!(build_send_metadata(None, false).is_none());
+    }
+
+    #[test]
+    fn test_build_send_metadata_draft_with_thread_id() {
+        let metadata = build_send_metadata(Some("thread-123"), true).unwrap();
+        let parsed: Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(parsed["message"]["threadId"], "thread-123");
+    }
+
+    #[test]
+    fn test_build_send_metadata_draft_without_thread_id() {
+        let metadata = build_send_metadata(None, true).unwrap();
+        let parsed: Value = serde_json::from_str(&metadata).unwrap();
+        assert!(parsed["message"].is_object());
+        assert!(parsed["message"].get("threadId").is_none());
     }
 
     #[test]
@@ -2404,6 +2481,29 @@ mod tests {
 
         assert_eq!(resolved.http_method, "POST");
         assert_eq!(resolved.path, "gmail/v1/users/{userId}/messages/send");
+    }
+
+    #[test]
+    fn test_resolve_draft_method_finds_gmail_drafts_create_method() {
+        let mut doc = crate::discovery::RestDescription::default();
+        let create_method = crate::discovery::RestMethod {
+            http_method: "POST".to_string(),
+            path: "gmail/v1/users/{userId}/drafts".to_string(),
+            ..Default::default()
+        };
+
+        let mut drafts = crate::discovery::RestResource::default();
+        drafts.methods.insert("create".to_string(), create_method);
+
+        let mut users = crate::discovery::RestResource::default();
+        users.resources.insert("drafts".to_string(), drafts);
+
+        doc.resources = HashMap::from([("users".to_string(), users)]);
+
+        let resolved = resolve_draft_method(&doc).unwrap();
+
+        assert_eq!(resolved.http_method, "POST");
+        assert_eq!(resolved.path, "gmail/v1/users/{userId}/drafts");
     }
 
     #[test]

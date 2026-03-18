@@ -84,7 +84,7 @@ pub(super) async fn handle_forward(
 
     let raw = create_forward_raw_message(&envelope, &original, &all_attachments)?;
 
-    super::send_raw_email(
+    super::dispatch_raw_email(
         doc,
         matches,
         &raw,
@@ -510,7 +510,8 @@ mod tests {
                 Arg::new("no-original-attachments")
                     .long("no-original-attachments")
                     .action(ArgAction::SetTrue),
-            );
+            )
+            .arg(Arg::new("draft").long("draft").action(ArgAction::SetTrue));
         cmd.try_get_matches_from(args).unwrap()
     }
 

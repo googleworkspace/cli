@@ -37,6 +37,7 @@ gws gmail +forward --message-id <ID> --to <EMAILS>
 | `--bcc` | — | — | BCC email address(es), comma-separated |
 | `--html` | — | — | Treat --body as HTML content (default is plain text) |
 | `--dry-run` | — | — | Show the request that would be sent without executing it |
+| `--draft` | — | — | Save as draft instead of sending |
 
 ## Examples
 
@@ -47,6 +48,7 @@ gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --cc eve@examp
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --body '<p>FYI</p>' --html
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com -a notes.pdf
 gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --no-original-attachments
+gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --draft
 ```
 
 ## Tips
@@ -59,6 +61,7 @@ gws gmail +forward --message-id 18f1a2b3c4d --to dave@example.com --no-original-
 - Use -a/--attach to add extra file attachments. Can be specified multiple times.
 - Combined size of original and user attachments is limited to 25MB.
 - With --html, the forwarded block uses Gmail's gmail_quote CSS classes and preserves HTML formatting. Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
+- Use --draft to save the forward as a draft instead of sending it immediately.
 
 ## See Also
 
