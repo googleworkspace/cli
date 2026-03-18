@@ -345,16 +345,15 @@ pub(super) async fn fetch_message_metadata(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let err = resp
+        let body = resp
             .text()
             .await
             .unwrap_or_else(|_| "(error body unreadable)".to_string());
-        return Err(GwsError::Api {
-            code: status,
-            message: format!("Failed to fetch message {message_id}: {err}"),
-            reason: "fetchFailed".to_string(),
-            enable_url: None,
-        });
+        return Err(build_api_error(
+            status,
+            &body,
+            &format!("Failed to fetch message {message_id}"),
+        ));
     }
 
     let msg: Value = resp
@@ -363,6 +362,282 @@ pub(super) async fn fetch_message_metadata(
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
 
     parse_original_message(&msg)
+}
+
+/// Build a `GwsError::Api` from an HTTP error response body, parsing the
+/// Google JSON error format when possible. Modeled after the executor's
+/// `handle_error_response`, extracting message, reason, and enable URL.
+pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsError {
+    let err_json: Option<Value> = serde_json::from_str(body).ok();
+    let err_obj = err_json.as_ref().and_then(|v| v.get("error"));
+    let message = err_obj
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .unwrap_or(body)
+        .to_string();
+    let reason = err_obj
+        .and_then(|e| e.get("errors"))
+        .and_then(|e| e.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|e| e.get("reason"))
+        .and_then(|r| r.as_str())
+        .or_else(|| {
+            err_obj
+                .and_then(|e| e.get("reason"))
+                .and_then(|r| r.as_str())
+        })
+        .unwrap_or("unknown")
+        .to_string();
+    let enable_url = if reason == "accessNotConfigured" {
+        crate::executor::extract_enable_url(&message)
+    } else {
+        None
+    };
+    GwsError::Api {
+        code: status,
+        message: format!("{context}: {message}"),
+        reason,
+        enable_url,
+    }
+}
+
+#[derive(Debug)]
+struct SendAsIdentity {
+    mailbox: Mailbox,
+    is_default: bool,
+}
+
+/// Fetch all send-as identities from the Gmail settings API.
+async fn fetch_send_as_identities(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Vec<SendAsIdentity>, GwsError> {
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get("https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs")
+            .bearer_auth(token)
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch sendAs settings: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "(error body unreadable)".to_string());
+        return Err(build_api_error(
+            status,
+            &body,
+            "Failed to fetch sendAs settings",
+        ));
+    }
+
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse sendAs response: {e}")))?;
+
+    Ok(parse_send_as_response(&body))
+}
+
+/// Parse the JSON response from the sendAs.list endpoint into identities.
+fn parse_send_as_response(body: &Value) -> Vec<SendAsIdentity> {
+    let empty = vec![];
+    let entries = body
+        .get("sendAs")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let email = entry.get("sendAsEmail")?.as_str()?;
+            let display_name = entry
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            // Build a formatted address string so Mailbox::parse applies
+            // sanitize_control_chars, consistent with all other Mailbox creation paths.
+            let raw = match display_name {
+                Some(name) => format!("{name} <{email}>"),
+                None => email.to_string(),
+            };
+            let is_default = entry
+                .get("isDefault")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(SendAsIdentity {
+                mailbox: Mailbox::parse(&raw),
+                is_default,
+            })
+        })
+        .collect()
+}
+
+/// Given pre-fetched send-as identities, resolve the `From` address.
+///
+/// - `from` is `None` → returns the default send-as identity
+/// - `from` has bare emails (no display name) → enriches with send-as display names
+/// - `from` already has display names → returns as-is
+fn resolve_sender_from_identities(
+    from: Option<&[Mailbox]>,
+    identities: &[SendAsIdentity],
+) -> Option<Vec<Mailbox>> {
+    match from {
+        // No from provided → use default identity.
+        None => identities
+            .iter()
+            .find(|id| id.is_default)
+            .map(|id| vec![id.mailbox.clone()]),
+        // Enrich bare emails (no display name) from the send-as list.
+        // Mailboxes that already have a display name pass through unchanged.
+        Some(addrs) => {
+            let enriched: Vec<Mailbox> = addrs
+                .iter()
+                .map(|m| {
+                    if m.name.is_some() {
+                        return m.clone();
+                    }
+                    identities
+                        .iter()
+                        .find(|id| id.mailbox.email.eq_ignore_ascii_case(&m.email))
+                        .map(|id| id.mailbox.clone())
+                        .unwrap_or_else(|| m.clone())
+                })
+                .collect();
+            Some(enriched)
+        }
+    }
+}
+
+/// Resolve the `From` address using Gmail send-as identities.
+///
+/// Fetches send-as settings and enriches the From address with the display name.
+/// Degrades gracefully if the API call fails — returns the original `from`
+/// addresses unchanged (without display name enrichment), or `Ok(None)` if
+/// `from` was not provided.
+///
+/// Note: this resolves the *sender identity* for the From header only. Callers
+/// that need the authenticated user's *primary* email (e.g. reply-all self-dedup)
+/// should fetch it separately via `/users/me/profile`, since the default send-as
+/// alias may differ from the primary address.
+pub(super) async fn resolve_sender(
+    client: &reqwest::Client,
+    token: &str,
+    from: Option<&[Mailbox]>,
+) -> Result<Option<Vec<Mailbox>>, GwsError> {
+    // All provided mailboxes already have display names — skip API call.
+    if let Some(addrs) = from {
+        if addrs.iter().all(|m| m.name.is_some()) {
+            return Ok(Some(addrs.to_vec()));
+        }
+    }
+
+    let identities = match fetch_send_as_identities(client, token).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            let hint = if from.is_some() {
+                "proceeding with email-only From header"
+            } else {
+                "Gmail will use your default address"
+            };
+            eprintln!(
+                "Note: could not fetch send-as settings ({}); {hint}",
+                sanitize_for_terminal(&e.to_string())
+            );
+            return Ok(from.map(|addrs| addrs.to_vec()));
+        }
+    };
+
+    let mut result = resolve_sender_from_identities(from, &identities);
+
+    // When the resolved identity has no display name (common for Workspace accounts
+    // where the primary address inherits its name from the organization directory),
+    // try the People API as a fallback. This requires the `profile` scope, which
+    // may not be granted — if so, degrade gracefully with a hint.
+    if let Some(ref addrs) = result {
+        // Only attempt People API for a single address — the API returns one
+        // profile name, so it can't meaningfully enrich multiple From addresses.
+        if addrs.len() == 1 && addrs[0].name.is_none() {
+            let profile_token =
+                auth::get_token(&["https://www.googleapis.com/auth/userinfo.profile"]).await;
+            match profile_token {
+                Err(e) => {
+                    // Token acquisition failed — scope likely not granted.
+                    eprintln!(
+                        "Tip: run `gws auth login` and grant the \"profile\" scope \
+                         to include your display name in the From header ({})",
+                        sanitize_for_terminal(&e.to_string())
+                    );
+                }
+                Ok(t) => match fetch_profile_display_name(client, &t).await {
+                    Ok(Some(name)) => {
+                        let raw = format!("{name} <{}>", addrs[0].email);
+                        result = Some(vec![Mailbox::parse(&raw)]);
+                    }
+                    Ok(None) => {}
+                    Err(e) if matches!(&e, GwsError::Api { code: 403, .. }) => {
+                        // Token exists but doesn't carry the scope.
+                        eprintln!(
+                            "Tip: run `gws auth login` and grant the \"profile\" scope \
+                             to include your display name in the From header"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Note: could not fetch display name from People API ({})",
+                            sanitize_for_terminal(&e.to_string())
+                        );
+                    }
+                },
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Fetch the authenticated user's display name from the People API.
+/// Requires a token with the `profile` scope.
+async fn fetch_profile_display_name(
+    client: &reqwest::Client,
+    token: &str,
+) -> Result<Option<String>, GwsError> {
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get("https://people.googleapis.com/v1/people/me")
+            .query(&[("personFields", "names")])
+            .bearer_auth(token)
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("People API request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "(error body unreadable)".to_string());
+        return Err(build_api_error(status, &body, "People API request failed"));
+    }
+
+    let body: Value = resp.json().await.map_err(|e| {
+        GwsError::Other(anyhow::anyhow!("Failed to parse People API response: {e}"))
+    })?;
+
+    Ok(parse_profile_display_name(&body))
+}
+
+/// Extract the display name from a People API `people.get` response.
+fn parse_profile_display_name(body: &Value) -> Option<String> {
+    body.get("names")
+        .and_then(|v| v.as_array())
+        .and_then(|names| names.first())
+        .and_then(|n| n.get("displayName"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(sanitize_control_chars)
 }
 
 fn extract_body_by_mime(payload: &Value, target_mime: &str) -> Option<String> {
@@ -2423,5 +2698,302 @@ mod tests {
             "error should mention empty file: {}",
             err
         );
+    }
+
+    // --- resolve_sender_from_identities tests ---
+
+    #[test]
+    fn test_parse_send_as_response() {
+        let body = serde_json::json!({
+            "sendAs": [
+                {
+                    "sendAsEmail": "malo@intelligence.org",
+                    "displayName": "Malo Bourgon",
+                    "replyToAddress": "",
+                    "signature": "",
+                    "isPrimary": true,
+                    "isDefault": true,
+                    "treatAsAlias": false,
+                    "verificationStatus": "accepted"
+                },
+                {
+                    "sendAsEmail": "malo@work.com",
+                    "displayName": "Malo (Work)",
+                    "replyToAddress": "",
+                    "signature": "",
+                    "isPrimary": false,
+                    "isDefault": false,
+                    "treatAsAlias": true,
+                    "verificationStatus": "accepted"
+                },
+                {
+                    "sendAsEmail": "noreply@example.com",
+                    "displayName": "",
+                    "isPrimary": false,
+                    "isDefault": false,
+                    "verificationStatus": "accepted"
+                }
+            ]
+        });
+
+        let ids = parse_send_as_response(&body);
+        assert_eq!(ids.len(), 3);
+
+        assert_eq!(ids[0].mailbox.email, "malo@intelligence.org");
+        assert_eq!(ids[0].mailbox.name.as_deref(), Some("Malo Bourgon"));
+        assert!(ids[0].is_default);
+
+        assert_eq!(ids[1].mailbox.email, "malo@work.com");
+        assert_eq!(ids[1].mailbox.name.as_deref(), Some("Malo (Work)"));
+        assert!(!ids[1].is_default);
+
+        // Empty displayName becomes None
+        assert_eq!(ids[2].mailbox.email, "noreply@example.com");
+        assert!(ids[2].mailbox.name.is_none());
+        assert!(!ids[2].is_default);
+    }
+
+    #[test]
+    fn test_parse_send_as_response_empty() {
+        let body = serde_json::json!({});
+        let ids = parse_send_as_response(&body);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_parse_send_as_response_skips_missing_email() {
+        let body = serde_json::json!({
+            "sendAs": [
+                { "displayName": "No Email", "isDefault": true },
+                { "sendAsEmail": "valid@example.com", "isDefault": false }
+            ]
+        });
+        let ids = parse_send_as_response(&body);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].mailbox.email, "valid@example.com");
+    }
+
+    fn make_identities() -> Vec<SendAsIdentity> {
+        vec![
+            SendAsIdentity {
+                mailbox: Mailbox {
+                    name: Some("Malo Bourgon".to_string()),
+                    email: "malo@intelligence.org".to_string(),
+                },
+                is_default: true,
+            },
+            SendAsIdentity {
+                mailbox: Mailbox {
+                    name: Some("Malo (Work)".to_string()),
+                    email: "malo@work.com".to_string(),
+                },
+                is_default: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_resolve_sender_no_from_returns_default() {
+        let ids = make_identities();
+        let result = resolve_sender_from_identities(None, &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0].email, "malo@intelligence.org");
+        assert_eq!(addrs[0].name.as_deref(), Some("Malo Bourgon"));
+    }
+
+    #[test]
+    fn test_resolve_sender_bare_email_enriched() {
+        let ids = make_identities();
+        let from = [Mailbox::parse("malo@work.com")];
+        let result = resolve_sender_from_identities(Some(&from), &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs[0].email, "malo@work.com");
+        assert_eq!(addrs[0].name.as_deref(), Some("Malo (Work)"));
+    }
+
+    #[test]
+    fn test_resolve_sender_bare_email_case_insensitive() {
+        let ids = make_identities();
+        let from = [Mailbox::parse("Malo@Work.Com")];
+        let result = resolve_sender_from_identities(Some(&from), &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs[0].name.as_deref(), Some("Malo (Work)"));
+    }
+
+    #[test]
+    fn test_resolve_sender_bare_email_not_in_list_passes_through() {
+        let ids = make_identities();
+        let from = [Mailbox::parse("unknown@example.com")];
+        let result = resolve_sender_from_identities(Some(&from), &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs[0].email, "unknown@example.com");
+        assert!(addrs[0].name.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sender_with_display_name_returns_as_is() {
+        let ids = make_identities();
+        let from = [Mailbox::parse("Custom Name <malo@work.com>")];
+        let result = resolve_sender_from_identities(Some(&from), &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs[0].email, "malo@work.com");
+        assert_eq!(addrs[0].name.as_deref(), Some("Custom Name"));
+    }
+
+    #[test]
+    fn test_resolve_sender_mixed_enriches_only_bare() {
+        let ids = make_identities();
+        let from = [
+            Mailbox::parse("Custom <malo@intelligence.org>"),
+            Mailbox::parse("malo@work.com"),
+        ];
+        let result = resolve_sender_from_identities(Some(&from), &ids);
+        let addrs = result.unwrap();
+        // First has explicit name — kept as-is
+        assert_eq!(addrs[0].name.as_deref(), Some("Custom"));
+        // Second was bare — enriched from send-as list
+        assert_eq!(addrs[1].name.as_deref(), Some("Malo (Work)"));
+    }
+
+    #[test]
+    fn test_resolve_sender_no_default_in_list() {
+        let ids = vec![SendAsIdentity {
+            mailbox: Mailbox {
+                name: Some("Alias".to_string()),
+                email: "alias@example.com".to_string(),
+            },
+            is_default: false,
+        }];
+        let result = resolve_sender_from_identities(None, &ids);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sender_empty_display_name_treated_as_none() {
+        let ids = vec![SendAsIdentity {
+            mailbox: Mailbox {
+                name: None,
+                email: "bare@example.com".to_string(),
+            },
+            is_default: true,
+        }];
+        let result = resolve_sender_from_identities(None, &ids);
+        let addrs = result.unwrap();
+        assert_eq!(addrs[0].email, "bare@example.com");
+        assert!(addrs[0].name.is_none());
+    }
+
+    // --- parse_profile_display_name tests ---
+
+    #[test]
+    fn test_parse_profile_display_name() {
+        let body = serde_json::json!({
+            "resourceName": "people/112118466613566642951",
+            "etag": "%EgUBAi43PRoEAQIFByIMR0xCc0FMcVBJQmc9",
+            "names": [{
+                "metadata": {
+                    "primary": true,
+                    "source": { "type": "DOMAIN_PROFILE", "id": "112118466613566642951" }
+                },
+                "displayName": "Malo Bourgon",
+                "familyName": "Bourgon",
+                "givenName": "Malo",
+                "displayNameLastFirst": "Bourgon, Malo"
+            }]
+        });
+        assert_eq!(
+            parse_profile_display_name(&body).as_deref(),
+            Some("Malo Bourgon")
+        );
+    }
+
+    #[test]
+    fn test_parse_profile_display_name_empty() {
+        let body = serde_json::json!({});
+        assert!(parse_profile_display_name(&body).is_none());
+    }
+
+    #[test]
+    fn test_parse_profile_display_name_empty_name() {
+        let body = serde_json::json!({
+            "names": [{ "displayName": "" }]
+        });
+        assert!(parse_profile_display_name(&body).is_none());
+    }
+
+    #[test]
+    fn test_parse_profile_display_name_no_names_array() {
+        let body = serde_json::json!({ "names": "not-an-array" });
+        assert!(parse_profile_display_name(&body).is_none());
+    }
+
+    // --- build_api_error tests ---
+
+    #[test]
+    fn test_build_api_error_parses_google_json_format() {
+        let body = r#"{"error":{"code":403,"message":"Insufficient Permission","errors":[{"reason":"insufficientPermissions","domain":"global","message":"Insufficient Permission"}]}}"#;
+        let err = build_api_error(403, body, "Test context");
+        match err {
+            GwsError::Api {
+                code,
+                message,
+                reason,
+                enable_url,
+            } => {
+                assert_eq!(code, 403);
+                assert!(message.contains("Test context"));
+                assert!(message.contains("Insufficient Permission"));
+                assert_eq!(reason, "insufficientPermissions");
+                assert!(enable_url.is_none());
+            }
+            _ => panic!("Expected GwsError::Api"),
+        }
+    }
+
+    #[test]
+    fn test_build_api_error_falls_back_to_raw_body() {
+        let err = build_api_error(500, "Internal Server Error", "Test context");
+        match err {
+            GwsError::Api {
+                code,
+                message,
+                reason,
+                ..
+            } => {
+                assert_eq!(code, 500);
+                assert!(message.contains("Internal Server Error"));
+                assert_eq!(reason, "unknown");
+            }
+            _ => panic!("Expected GwsError::Api"),
+        }
+    }
+
+    #[test]
+    fn test_build_api_error_extracts_top_level_reason() {
+        let body = r#"{"error":{"code":404,"message":"Not Found","reason":"notFound"}}"#;
+        let err = build_api_error(404, body, "ctx");
+        match err {
+            GwsError::Api { reason, .. } => assert_eq!(reason, "notFound"),
+            _ => panic!("Expected GwsError::Api"),
+        }
+    }
+
+    #[test]
+    fn test_build_api_error_access_not_configured_extracts_url() {
+        let body = r#"{"error":{"code":403,"message":"People API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/people.googleapis.com/overview?project=123 then retry.","errors":[{"reason":"accessNotConfigured"}]}}"#;
+        let err = build_api_error(403, body, "ctx");
+        match err {
+            GwsError::Api {
+                reason, enable_url, ..
+            } => {
+                assert_eq!(reason, "accessNotConfigured");
+                assert!(enable_url.is_some());
+                assert!(enable_url
+                    .unwrap()
+                    .contains("console.developers.google.com"));
+            }
+            _ => panic!("Expected GwsError::Api"),
+        }
     }
 }

@@ -20,12 +20,13 @@ pub(super) async fn handle_reply(
     matches: &ArgMatches,
     reply_all: bool,
 ) -> Result<(), GwsError> {
-    let config = parse_reply_args(matches)?;
+    let mut config = parse_reply_args(matches)?;
     let dry_run = matches.get_flag("dry-run");
 
-    let (original, token) = if dry_run {
+    let (original, token, self_email) = if dry_run {
         (
             OriginalMessage::dry_run_placeholder(&config.message_id),
+            None,
             None,
         )
     } else {
@@ -34,15 +35,21 @@ pub(super) async fn handle_reply(
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
         let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
-        let self_email = if reply_all {
+        config.from = resolve_sender(&client, &t, config.from.as_deref()).await?;
+        // For reply-all, always fetch the primary email for self-dedup and
+        // self-reply detection. The resolved sender may be an alias that differs from the primary
+        // address — both must be excluded from recipients. from_alias_email
+        // (extracted from config.from below) handles the alias; self_email
+        // handles the primary.
+        let self_addr = if reply_all {
             Some(fetch_user_email(&client, &t).await?)
         } else {
             None
         };
-        (orig, Some((t, self_email)))
+        (orig, Some(t), self_addr)
     };
 
-    let self_email = token.as_ref().and_then(|(_, e)| e.as_deref());
+    let self_email = self_email.as_deref();
 
     // Determine reply recipients
     let from_alias_email = config
@@ -100,13 +107,12 @@ pub(super) async fn handle_reply(
 
     let raw = create_reply_raw_message(&envelope, &original, &config.attachments)?;
 
-    let auth_token = token.as_ref().map(|(t, _)| t.as_str());
     super::send_raw_email(
         doc,
         matches,
         &raw,
         original.thread_id.as_deref(),
-        auth_token,
+        token.as_deref(),
     )
     .await
 }
@@ -142,6 +148,9 @@ pub(super) struct ReplyConfig {
     pub attachments: Vec<Attachment>,
 }
 
+/// Fetch the authenticated user's primary email from the Gmail profile API.
+/// Used in reply-all for self-dedup (excluding the user from recipients) and
+/// self-reply detection (switching to original-To-based addressing).
 async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<String, GwsError> {
     let resp = crate::client::send_with_retry(|| {
         client
@@ -153,16 +162,15 @@ async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<Strin
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let err = resp
+        let body = resp
             .text()
             .await
             .unwrap_or_else(|_| "(error body unreadable)".to_string());
-        return Err(GwsError::Api {
-            code: status,
-            message: format!("Failed to fetch user profile: {err}"),
-            reason: "profileFetchFailed".to_string(),
-            enable_url: None,
-        });
+        return Err(super::build_api_error(
+            status,
+            &body,
+            "Failed to fetch user profile",
+        ));
     }
 
     let profile: Value = resp

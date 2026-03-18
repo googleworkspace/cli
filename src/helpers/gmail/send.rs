@@ -19,11 +19,29 @@ pub(super) async fn handle_send(
     doc: &crate::discovery::RestDescription,
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
-    let config = parse_send_args(matches)?;
+    let mut config = parse_send_args(matches)?;
+    let dry_run = matches.get_flag("dry-run");
+
+    let token = if dry_run {
+        None
+    } else {
+        // Use the discovery doc scopes (e.g. gmail.send) rather than hardcoding
+        // gmail.modify, so credentials limited to narrower send-only scopes still
+        // work. resolve_sender gracefully degrades if the token doesn't cover the
+        // sendAs.list endpoint.
+        let send_method = super::resolve_send_method(doc)?;
+        let scopes: Vec<&str> = send_method.scopes.iter().map(|s| s.as_str()).collect();
+        let t = auth::get_token(&scopes)
+            .await
+            .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
+        let client = crate::client::build_client()?;
+        config.from = resolve_sender(&client, &t, config.from.as_deref()).await?;
+        Some(t)
+    };
 
     let raw = create_send_raw_message(&config)?;
 
-    super::send_raw_email(doc, matches, &raw, None, None).await
+    super::send_raw_email(doc, matches, &raw, None, token.as_deref()).await
 }
 
 pub(super) struct SendConfig {

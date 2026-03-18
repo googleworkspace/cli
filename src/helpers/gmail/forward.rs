@@ -19,7 +19,7 @@ pub(super) async fn handle_forward(
     doc: &crate::discovery::RestDescription,
     matches: &ArgMatches,
 ) -> Result<(), GwsError> {
-    let config = parse_forward_args(matches)?;
+    let mut config = parse_forward_args(matches)?;
 
     let dry_run = matches.get_flag("dry-run");
 
@@ -34,6 +34,7 @@ pub(super) async fn handle_forward(
             .map_err(|e| GwsError::Auth(format!("Gmail auth failed: {e}")))?;
         let client = crate::client::build_client()?;
         let orig = fetch_message_metadata(&client, &t, &config.message_id).await?;
+        config.from = resolve_sender(&client, &t, config.from.as_deref()).await?;
         (orig, Some(t))
     };
 

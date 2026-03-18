@@ -275,9 +275,15 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         ..Default::default()
     };
 
-    // Ensure openid + email scopes are always present so we can identify the user
-    // via the userinfo endpoint after login.
-    let identity_scopes = ["openid", "https://www.googleapis.com/auth/userinfo.email"];
+    // Ensure openid + email + profile scopes are always present so we can
+    // identify the user via the userinfo endpoint after login, and so the
+    // Gmail helpers can fall back to the People API to populate the From
+    // display name when the send-as identity lacks one (Workspace accounts).
+    let identity_scopes = [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+    ];
     for s in &identity_scopes {
         if !scopes.iter().any(|existing| existing == s) {
             scopes.push(s.to_string());
