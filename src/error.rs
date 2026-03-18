@@ -75,21 +75,18 @@ pub const EXIT_CODE_TABLE: &[(i32, &str, &str)] = &[
 /// Human-readable exit code table derived from [`EXIT_CODE_TABLE`]: (code, meaning).
 ///
 /// Used by `print_usage()` so the help text stays in sync without manual updates.
-/// Defined as a macro-generated array so it remains a `const` while still being
-/// derived programmatically from `EXIT_CODE_TABLE`.
-macro_rules! exit_code_documentation {
-    () => {{
-        let mut out = [(0i32, ""); EXIT_CODE_TABLE.len()];
-        let mut i = 0;
-        while i < EXIT_CODE_TABLE.len() {
-            out[i] = (EXIT_CODE_TABLE[i].0, EXIT_CODE_TABLE[i].2);
-            i += 1;
-        }
-        out
-    }};
-}
 pub const EXIT_CODE_DOCUMENTATION: [(i32, &str); EXIT_CODE_TABLE.len()] =
-    exit_code_documentation!();
+    build_exit_code_documentation();
+
+const fn build_exit_code_documentation() -> [(i32, &'static str); EXIT_CODE_TABLE.len()] {
+    let mut out = [(0i32, ""); EXIT_CODE_TABLE.len()];
+    let mut i = 0;
+    while i < EXIT_CODE_TABLE.len() {
+        out[i] = (EXIT_CODE_TABLE[i].0, EXIT_CODE_TABLE[i].2);
+        i += 1;
+    }
+    out
+}
 
 impl GwsError {
     /// Exit code for [`GwsError::Api`] variants.

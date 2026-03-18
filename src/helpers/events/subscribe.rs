@@ -322,8 +322,7 @@ async fn pull_loop(
     let mut file_counter: u64 = 0;
 
     #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("failed to register SIGTERM handler")?;
+    let mut sigterm = super::super::register_sigterm()?;
 
     loop {
         let token = token_provider

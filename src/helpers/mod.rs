@@ -27,6 +27,18 @@ pub mod script;
 pub mod sheets;
 pub mod workflows;
 
+/// Register a SIGTERM signal handler.
+///
+/// Shared by `gmail::watch` and `events::subscribe` so the registration
+/// pattern is defined once. Returns an error if the OS rejects the handler.
+#[cfg(unix)]
+pub(crate) fn register_sigterm() -> Result<tokio::signal::unix::Signal, GwsError> {
+    use anyhow::Context as _;
+    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("failed to register SIGTERM handler")
+        .map_err(Into::into)
+}
+
 /// Base URL for the Google Cloud Pub/Sub v1 API.
 ///
 /// Shared across `events::subscribe` and `gmail::watch` so the constant

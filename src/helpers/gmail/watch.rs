@@ -264,8 +264,7 @@ async fn watch_pull_loop(
     config: WatchConfig,
 ) -> Result<(), GwsError> {
     #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .context("failed to register SIGTERM handler")?;
+    let mut sigterm = super::super::register_sigterm()?;
 
     loop {
         let pubsub_token = runtime
