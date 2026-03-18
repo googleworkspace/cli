@@ -288,8 +288,8 @@ async fn watch_pull_loop(
                     Err(e) => return Err(GwsError::Other(anyhow::anyhow!("Pub/Sub pull failed: {e}"))),
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nReceived interrupt, stopping...");
+            _ = super::super::shutdown_signal() => {
+                eprintln!("\nReceived shutdown signal, stopping...");
                 return Ok(());
             }
         };
@@ -348,8 +348,8 @@ async fn watch_pull_loop(
 
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(config.poll_interval)) => {},
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nReceived interrupt, stopping...");
+            _ = super::super::shutdown_signal() => {
+                eprintln!("\nReceived shutdown signal, stopping...");
                 break;
             }
         }

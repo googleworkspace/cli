@@ -345,8 +345,8 @@ async fn pull_loop(
                     Err(e) => return Err(anyhow::anyhow!("Pub/Sub pull failed: {e}").into()),
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nReceived interrupt, stopping...");
+            _ = super::super::shutdown_signal() => {
+                eprintln!("\nReceived shutdown signal, stopping...");
                 return Ok(());
             }
         };
@@ -411,11 +411,11 @@ async fn pull_loop(
             break;
         }
 
-        // Check for SIGINT between polls
+        // Check for SIGINT/SIGTERM between polls
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(config.poll_interval)) => {},
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nReceived interrupt, stopping...");
+            _ = super::super::shutdown_signal() => {
+                eprintln!("\nReceived shutdown signal, stopping...");
                 break;
             }
         }

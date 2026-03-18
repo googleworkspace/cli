@@ -33,6 +33,29 @@ pub mod workflows;
 /// is defined in a single place.
 pub(crate) const PUBSUB_API_BASE: &str = "https://pubsub.googleapis.com/v1";
 
+/// Returns a future that completes when a shutdown signal is received.
+///
+/// On Unix this listens for both SIGINT (Ctrl+C) and SIGTERM; on other
+/// platforms only SIGINT is handled. Used by long-running pull loops
+/// (`gmail::watch`, `events::subscribe`) to exit cleanly under container
+/// orchestrators (Kubernetes, Docker, systemd) that send SIGTERM.
+pub(crate) async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.ok();
+    }
+}
+
 /// A trait for service-specific CLI helpers that inject custom commands.
 pub trait Helper: Send + Sync {
     /// Injects subcommands into the service command.
