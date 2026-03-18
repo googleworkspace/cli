@@ -59,7 +59,9 @@ pub(crate) async fn shutdown_signal() {
                 match signal(SignalKind::terminate()) {
                     Ok(mut sigterm) => {
                         tokio::select! {
-                            Ok(_) = tokio::signal::ctrl_c() => {}
+                            res = tokio::signal::ctrl_c() => {
+                                res.expect("failed to listen for SIGINT");
+                            }
                             Some(_) = sigterm.recv() => {}
                         }
                     }
