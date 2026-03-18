@@ -59,8 +59,8 @@ pub(crate) async fn shutdown_signal() {
                 match signal(SignalKind::terminate()) {
                     Ok(mut sigterm) => {
                         tokio::select! {
-                            _ = tokio::signal::ctrl_c() => {}
-                            _ = sigterm.recv() => {}
+                            Ok(_) = tokio::signal::ctrl_c() => {}
+                            Some(_) = sigterm.recv() => {}
                         }
                     }
                     Err(e) => {
@@ -68,13 +68,17 @@ pub(crate) async fn shutdown_signal() {
                             "warning: could not register SIGTERM handler: {e}. \
                              Listening for Ctrl+C only."
                         );
-                        tokio::signal::ctrl_c().await.ok();
+                        tokio::signal::ctrl_c()
+                            .await
+                            .expect("failed to listen for SIGINT");
                     }
                 }
             }
             #[cfg(not(unix))]
             {
-                tokio::signal::ctrl_c().await.ok();
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to listen for SIGINT");
             }
             n2.notify_waiters();
         });
