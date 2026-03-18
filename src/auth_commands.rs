@@ -139,6 +139,9 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         "           --scopes         Comma-separated custom scopes\n",
         "           -s, --services   Comma-separated service names to limit scope picker\n",
         "                            (e.g. -s drive,gmail,sheets)\n",
+        "           --port <PORT>    Use a fixed port for the OAuth redirect server\n",
+        "                            (use with Web Application type OAuth clients for orgs\n",
+        "                            that block Desktop OAuth via admin_policy_enforced)\n",
         "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
         "           --project        Use a specific GCP project\n",
         "           --login          Run `gws auth login` after successful setup\n",
@@ -211,8 +214,9 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
 }
 
 async fn handle_login(args: &[String]) -> Result<(), GwsError> {
-    // Extract -s/--services from args
+    // Extract -s/--services and --port from args
     let mut services_filter: Option<HashSet<String>> = None;
+    let mut fixed_port: Option<u16> = None;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for i in 0..args.len() {
@@ -220,6 +224,21 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
             skip_next = false;
             continue;
         }
+
+        // Parse --port <PORT> or --port=<PORT>
+        let port_str = if args[i] == "--port" && i + 1 < args.len() {
+            skip_next = true;
+            Some(args[i + 1].as_str())
+        } else {
+            args[i].strip_prefix("--port=")
+        };
+        if let Some(value) = port_str {
+            fixed_port = Some(value.parse::<u16>().map_err(|_| {
+                GwsError::Validation(format!("Invalid port number: {value}"))
+            })?);
+            continue;
+        }
+
         let services_str = if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
             skip_next = true;
             Some(args[i + 1].as_str())
@@ -271,7 +290,10 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
         client_secret: client_secret.clone(),
         auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
         token_uri: "https://oauth2.googleapis.com/token".to_string(),
-        redirect_uris: vec!["http://localhost".to_string()],
+        redirect_uris: vec![match fixed_port {
+            Some(p) => format!("http://localhost:{p}"),
+            None => "http://localhost".to_string(),
+        }],
         ..Default::default()
     };
 
@@ -304,7 +326,10 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
 
     let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
         secret,
-        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+        match fixed_port {
+            Some(p) => yup_oauth2::InstalledFlowReturnMethod::HTTPPortRedirect(p),
+            None => yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+        },
     )
     .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
         temp_path.clone(),
