@@ -39,29 +39,50 @@ pub enum GwsError {
     Other(#[from] anyhow::Error),
 }
 
-/// Human-readable exit code table, keyed by (code, description).
+/// Single source of truth for the exit code taxonomy: (code, reason, meaning).
 ///
-/// Used by `print_usage()` so the help text stays in sync with the
-/// constants defined below without requiring manual updates in two places.
-pub const EXIT_CODE_DOCUMENTATION: &[(i32, &str)] = &[
-    (0, "Success"),
+/// Consumed by both [`exit_codes_json()`] (machine-readable) and
+/// [`EXIT_CODE_DOCUMENTATION`] (human-readable help text).
+pub const EXIT_CODE_TABLE: &[(i32, &str, &str)] = &[
+    (0, "success", "Command completed successfully"),
     (
         GwsError::EXIT_CODE_API,
-        "API error  — Google returned an error response",
+        "apiError",
+        "Remote API returned an error response",
     ),
     (
         GwsError::EXIT_CODE_AUTH,
-        "Auth error — credentials missing or invalid",
+        "authError",
+        "Missing or invalid credentials",
     ),
     (
         GwsError::EXIT_CODE_VALIDATION,
-        "Validation — bad arguments or input",
+        "validationError",
+        "Bad input or wrong arguments",
     ),
     (
         GwsError::EXIT_CODE_DISCOVERY,
-        "Discovery  — could not fetch API schema",
+        "discoveryError",
+        "Could not load API Discovery document",
     ),
-    (GwsError::EXIT_CODE_OTHER, "Internal   — unexpected failure"),
+    (
+        GwsError::EXIT_CODE_OTHER,
+        "internalError",
+        "Unexpected or transient failure",
+    ),
+];
+
+/// Human-readable exit code table, keyed by (code, description).
+///
+/// Used by `print_usage()` so the help text stays in sync with the
+/// constants defined above without requiring manual updates in two places.
+pub const EXIT_CODE_DOCUMENTATION: &[(i32, &str)] = &[
+    (EXIT_CODE_TABLE[0].0, EXIT_CODE_TABLE[0].2),
+    (EXIT_CODE_TABLE[1].0, EXIT_CODE_TABLE[1].2),
+    (EXIT_CODE_TABLE[2].0, EXIT_CODE_TABLE[2].2),
+    (EXIT_CODE_TABLE[3].0, EXIT_CODE_TABLE[3].2),
+    (EXIT_CODE_TABLE[4].0, EXIT_CODE_TABLE[4].2),
+    (EXIT_CODE_TABLE[5].0, EXIT_CODE_TABLE[5].2),
 ];
 
 impl GwsError {
@@ -191,17 +212,16 @@ fn error_label(err: &GwsError) -> String {
 }
 
 /// Returns the exit code taxonomy as a JSON value for `gws exit-codes` and schema output.
+///
+/// Derived from [`EXIT_CODE_TABLE`] — no duplication with the constants.
 pub fn exit_codes_json() -> serde_json::Value {
-    serde_json::json!({
-        "exit_codes": [
-            { "code": 0, "reason": "success",         "meaning": "Command completed successfully" },
-            { "code": GwsError::EXIT_CODE_API,         "reason": "apiError",        "meaning": "Remote API returned an error response" },
-            { "code": GwsError::EXIT_CODE_AUTH,        "reason": "authError",       "meaning": "Missing or invalid credentials" },
-            { "code": GwsError::EXIT_CODE_VALIDATION,  "reason": "validationError", "meaning": "Bad input or wrong arguments" },
-            { "code": GwsError::EXIT_CODE_DISCOVERY,   "reason": "discoveryError",  "meaning": "Could not load API Discovery document" },
-            { "code": GwsError::EXIT_CODE_OTHER,       "reason": "internalError",   "meaning": "Unexpected or transient failure" },
-        ]
-    })
+    let codes: Vec<serde_json::Value> = EXIT_CODE_TABLE
+        .iter()
+        .map(|(code, reason, meaning)| {
+            serde_json::json!({ "code": code, "reason": reason, "meaning": meaning })
+        })
+        .collect();
+    serde_json::json!({ "exit_codes": codes })
 }
 
 /// Formats any error as a JSON object and prints to stdout.

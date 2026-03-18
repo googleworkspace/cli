@@ -127,10 +127,9 @@ async fn run() -> Result<(), GwsError> {
 
     // Handle the `exit-codes` command
     if first_arg == "exit-codes" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&exit_codes_json()).unwrap_or_default()
-        );
+        let json = serde_json::to_string_pretty(&exit_codes_json())
+            .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to serialize exit codes: {e}")))?;
+        println!("{json}");
         return Ok(());
     }
 
