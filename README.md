@@ -85,7 +85,7 @@ gws drive files list --params '{"pageSize": 5}'
 
 **For humans** — stop writing `curl` calls against REST docs. `gws` gives you `--help` on every resource, `--dry-run` to preview requests, and auto‑pagination.
 
-**For AI agents** — every response is structured JSON. Pair it with the included agent skills and your LLM can manage Workspace without custom tooling. Exit codes are semantic (1 = bad input, 2 = auth, 3 = API error, 4 = discovery, 5 = internal) so agents can branch on retry vs. abort without parsing stderr. Every schema includes `timeout_ms` and the full `exit_codes` table. Use `--idempotency-key` on mutating commands for safe retries.
+**For AI agents** — every response is structured JSON. Pair it with the included agent skills and your LLM can manage Workspace without custom tooling. Exit codes are semantic (1 = API error, 2 = auth, 3 = bad input, 4 = discovery, 5 = internal) so agents can branch on retry vs. abort without parsing stderr. Every schema includes `timeout_ms` and the full `exit_codes` table. Use `--idempotency-key` on mutating commands for safe retries.
 
 ```bash
 # List the 10 most recent files

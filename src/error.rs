@@ -72,18 +72,24 @@ pub const EXIT_CODE_TABLE: &[(i32, &str, &str)] = &[
     ),
 ];
 
-/// Human-readable exit code table, keyed by (code, description).
+/// Human-readable exit code table derived from [`EXIT_CODE_TABLE`]: (code, meaning).
 ///
-/// Used by `print_usage()` so the help text stays in sync with the
-/// constants defined above without requiring manual updates in two places.
-pub const EXIT_CODE_DOCUMENTATION: &[(i32, &str)] = &[
-    (EXIT_CODE_TABLE[0].0, EXIT_CODE_TABLE[0].2),
-    (EXIT_CODE_TABLE[1].0, EXIT_CODE_TABLE[1].2),
-    (EXIT_CODE_TABLE[2].0, EXIT_CODE_TABLE[2].2),
-    (EXIT_CODE_TABLE[3].0, EXIT_CODE_TABLE[3].2),
-    (EXIT_CODE_TABLE[4].0, EXIT_CODE_TABLE[4].2),
-    (EXIT_CODE_TABLE[5].0, EXIT_CODE_TABLE[5].2),
-];
+/// Used by `print_usage()` so the help text stays in sync without manual updates.
+/// Defined as a macro-generated array so it remains a `const` while still being
+/// derived programmatically from `EXIT_CODE_TABLE`.
+macro_rules! exit_code_documentation {
+    () => {{
+        let mut out = [(0i32, ""); EXIT_CODE_TABLE.len()];
+        let mut i = 0;
+        while i < EXIT_CODE_TABLE.len() {
+            out[i] = (EXIT_CODE_TABLE[i].0, EXIT_CODE_TABLE[i].2);
+            i += 1;
+        }
+        out
+    }};
+}
+pub const EXIT_CODE_DOCUMENTATION: [(i32, &str); EXIT_CODE_TABLE.len()] =
+    exit_code_documentation!();
 
 impl GwsError {
     /// Exit code for [`GwsError::Api`] variants.
@@ -392,8 +398,11 @@ mod tests {
             .iter()
             .map(|e| e["code"].as_i64().unwrap())
             .collect();
-        for expected in 0..=5 {
-            assert!(codes.contains(&expected), "missing code {expected}");
+        for (expected, _, _) in EXIT_CODE_TABLE {
+            assert!(
+                codes.contains(&(*expected as i64)),
+                "missing code {expected}"
+            );
         }
     }
 
