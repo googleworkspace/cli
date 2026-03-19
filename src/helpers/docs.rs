@@ -106,7 +106,12 @@ TIPS:
                 let (token, auth_method) = match auth::get_token(&scope_strs).await {
                     Ok(t) => (Some(t), executor::AuthMethod::OAuth),
                     Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
-                    Err(e) => return Err(GwsError::Auth(format!("Docs auth failed: {e}"))),
+                    Err(e) => {
+                        return Err(GwsError::Auth(format!(
+                            "Docs auth failed: {}",
+                            crate::output::sanitize_for_terminal(&e.to_string())
+                        )))
+                    }
                 };
 
                 // Method: documents.batchUpdate
@@ -160,9 +165,12 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
     let limit = matches.get_one::<u32>("limit").copied().unwrap_or(20);
 
     let scope = "https://www.googleapis.com/auth/drive.readonly";
-    let token = auth::get_token(&[scope])
-        .await
-        .map_err(|e| GwsError::Auth(format!("Docs auth failed: {e}")))?;
+    let token = auth::get_token(&[scope]).await.map_err(|e| {
+        GwsError::Auth(format!(
+            "Docs auth failed: {}",
+            crate::output::sanitize_for_terminal(&e.to_string())
+        ))
+    })?;
 
     let client = crate::client::build_client()?;
     let limit_str = limit.to_string();
