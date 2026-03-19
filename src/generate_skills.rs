@@ -474,6 +474,40 @@ metadata:
         }
     }
 
+    // Gmail-specific: explain how to create properly formatted drafts
+    if alias == "gmail" {
+        out.push_str("## Creating Drafts\n\n");
+        out.push_str("**Always use HTML when creating drafts** to prevent email clients from wrapping long lines. Build the raw RFC 2822 message with `Content-Type: text/html` and convert the plain text body to HTML:\n\n");
+        out.push_str("- Double newlines → paragraph breaks (`<div>...</div>` separated by `<div><br></div>`)\n");
+        out.push_str("- Single newlines → `<br>`\n");
+        out.push_str("- Wrap in `<div dir=\"ltr\">...</div>`\n\n");
+        out.push_str("```bash\n");
+        out.push_str("python3 - <<'PYEOF'\n");
+        out.push_str("import base64\n\n");
+        out.push_str("to = \"recipient@example.com\"\n");
+        out.push_str("subject = \"Your Subject\"\n");
+        out.push_str("body = \"\"\"Paragraph one line one.\\nStill paragraph one.\\n\\nParagraph two.\"\"\"\n\n");
+        out.push_str("paragraphs = body.split('\\n\\n')\n");
+        out.push_str("html_parts = ['<div>' + p.replace('\\n', '<br>').strip() + '</div>' for p in paragraphs]\n");
+        out.push_str("html_body = '<div dir=\"ltr\">' + '<div><br></div>'.join(html_parts) + '</div>'\n\n");
+        out.push_str("raw = '\\r\\n'.join([\n");
+        out.push_str("    f'To: {to}',\n");
+        out.push_str("    f'Subject: {subject}',\n");
+        out.push_str("    'MIME-Version: 1.0',\n");
+        out.push_str("    'Content-Type: text/html; charset=utf-8',\n");
+        out.push_str("    '',\n");
+        out.push_str("    html_body,\n");
+        out.push_str("])\n");
+        out.push_str("encoded = base64.urlsafe_b64encode(raw.encode('utf-8')).decode('ascii').rstrip('=')\n");
+        out.push_str("print(encoded)\n");
+        out.push_str("PYEOF\n");
+        out.push_str("```\n\n");
+        out.push_str("Then create the draft:\n\n");
+        out.push_str("```bash\n");
+        out.push_str("gws gmail users drafts create --json '{\"message\":{\"raw\":\"ENCODED_OUTPUT_FROM_ABOVE\"}}'\n");
+        out.push_str("```\n\n");
+        out.push_str("To reply in-thread, add `\"threadId\"` to the message object and include `In-Reply-To` / `References` headers.\n\n");
+    }
     // Discovering commands section
     out.push_str("## Discovering Commands\n\n");
     out.push_str("Before calling any API method, inspect it:\n\n");
