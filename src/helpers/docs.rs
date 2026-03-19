@@ -17,7 +17,7 @@ use crate::auth;
 use crate::error::GwsError;
 use crate::executor;
 use clap::{Arg, ArgMatches, Command};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -54,6 +54,39 @@ EXAMPLES:
 TIPS:
   Text is inserted at the end of the document body.
   For rich formatting, use the raw batchUpdate API instead.",
+                ),
+        );
+        cmd = cmd.subcommand(
+            Command::new("+revisions")
+                .about("[Helper] List revision history of a document")
+                .arg(
+                    Arg::new("document")
+                        .long("document")
+                        .help("Document ID")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .help("Maximum number of revisions to return (default: 20)")
+                        .value_name("N")
+                        .value_parser(clap::value_parser!(u32)),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws docs +revisions --document DOC_ID
+  gws docs +revisions --document DOC_ID --limit 5
+  gws docs +revisions --document DOC_ID --format table
+
+TIPS:
+  The document ID is the long string in the Google Docs URL.
+  Returns metadata for each revision: ID, modified time, author, and
+  whether the revision is kept forever.
+  Note: the full content of past revisions is not accessible via the
+  Google API for native Docs files. Use the Google Docs UI (File →
+  Version history) to view or restore specific versions.",
                 ),
         );
         cmd
@@ -111,9 +144,68 @@ TIPS:
 
                 return Ok(true);
             }
+
+            if let Some(matches) = matches.subcommand_matches("+revisions") {
+                handle_revisions(matches).await?;
+                return Ok(true);
+            }
+
             Ok(false)
         })
     }
+}
+
+async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
+    let document_id = matches.get_one::<String>("document").unwrap();
+    let limit = matches.get_one::<u32>("limit").copied().unwrap_or(20);
+
+    let scope = "https://www.googleapis.com/auth/drive.readonly";
+    let token = auth::get_token(&[scope])
+        .await
+        .map_err(|e| GwsError::Auth(format!("Docs auth failed: {e}")))?;
+
+    let client = crate::client::build_client()?;
+    let limit_str = limit.to_string();
+
+    let resp = client
+        .get(format!(
+            "https://www.googleapis.com/drive/v3/files/{}/revisions",
+            document_id
+        ))
+        .query(&[
+            (
+                "fields",
+                "revisions(id,modifiedTime,lastModifyingUser/displayName,keepForever,size)",
+            ),
+            ("pageSize", limit_str.as_str()),
+        ])
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("HTTP request failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(GwsError::Api {
+            code: status.as_u16(),
+            message: body,
+            reason: "revisions_request_failed".to_string(),
+            enable_url: None,
+        });
+    }
+
+    let value: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("JSON parse failed: {e}")))?;
+
+    let fmt = matches
+        .get_one::<String>("format")
+        .map(|s| crate::formatter::OutputFormat::from_str(s))
+        .unwrap_or_default();
+    println!("{}", crate::formatter::format_value(&value, &fmt));
+    Ok(())
 }
 
 fn build_write_request(
@@ -202,5 +294,36 @@ mod tests {
         assert!(body.contains("hello world"));
         assert!(body.contains("endOfSegmentLocation"));
         assert_eq!(scopes[0], "https://scope");
+    }
+
+    #[test]
+    fn test_revisions_command_registered() {
+        let helper = DocsHelper;
+        let base = Command::new("docs");
+        let doc = RestDescription::default();
+        let cmd = helper.inject_commands(base, &doc);
+        let subcommands: Vec<&str> = cmd
+            .get_subcommands()
+            .map(|c| c.get_name())
+            .collect();
+        assert!(subcommands.contains(&"+revisions"));
+        assert!(subcommands.contains(&"+write"));
+    }
+
+    #[test]
+    fn test_revisions_requires_document() {
+        let helper = DocsHelper;
+        let base = Command::new("docs");
+        let doc = RestDescription::default();
+        let cmd = helper.inject_commands(base, &doc);
+        let revisions_cmd = cmd
+            .get_subcommands()
+            .find(|c| c.get_name() == "+revisions")
+            .unwrap();
+        let doc_arg = revisions_cmd
+            .get_arguments()
+            .find(|a| a.get_id() == "document")
+            .unwrap();
+        assert!(doc_arg.is_required_set());
     }
 }

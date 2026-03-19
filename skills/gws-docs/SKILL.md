@@ -23,6 +23,7 @@ gws docs <resource> <method> [flags]
 | Command | Description |
 |---------|-------------|
 | [`+write`](../gws-docs-write/SKILL.md) | Append text to a document |
+| [`+revisions`](../gws-docs-revisions/SKILL.md) | List revision history for a document |
 
 ## API Resources
 
