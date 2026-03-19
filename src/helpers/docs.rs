@@ -302,10 +302,7 @@ mod tests {
         let base = Command::new("docs");
         let doc = RestDescription::default();
         let cmd = helper.inject_commands(base, &doc);
-        let subcommands: Vec<&str> = cmd
-            .get_subcommands()
-            .map(|c| c.get_name())
-            .collect();
+        let subcommands: Vec<&str> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(subcommands.contains(&"+revisions"));
         assert!(subcommands.contains(&"+write"));
     }
