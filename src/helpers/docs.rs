@@ -160,10 +160,28 @@ TIPS:
     }
 }
 
-async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
-    const REVISION_FIELDS: &str =
-        "revisions(id,modifiedTime,lastModifyingUser/displayName,keepForever,size)";
+const REVISION_FIELDS: &str =
+    "revisions(id,modifiedTime,lastModifyingUser/displayName,keepForever,size)";
 
+struct RevisionsRequest {
+    url: String,
+    limit_str: String,
+}
+
+fn build_revisions_request(document_id: &str, limit: u32) -> RevisionsRequest {
+    let encoded_id =
+        percent_encoding::utf8_percent_encode(document_id, percent_encoding::NON_ALPHANUMERIC);
+    let url = format!(
+        "https://www.googleapis.com/drive/v3/files/{}/revisions",
+        encoded_id
+    );
+    RevisionsRequest {
+        url,
+        limit_str: limit.to_string(),
+    }
+}
+
+async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
     let document_id = matches.get_one::<String>("document").unwrap();
     let limit = matches.get_one::<u32>("limit").copied().unwrap_or(20);
     let dry_run = matches.get_flag("dry-run");
@@ -180,13 +198,9 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
         })?)
     };
 
-    let limit_str = limit.to_string();
-    let encoded_id =
-        percent_encoding::utf8_percent_encode(document_id, percent_encoding::NON_ALPHANUMERIC);
-    let url = format!(
-        "https://www.googleapis.com/drive/v3/files/{}/revisions",
-        encoded_id
-    );
+    let req = build_revisions_request(document_id, limit);
+    let url = req.url;
+    let limit_str = req.limit_str;
 
     if dry_run {
         let dry_run_info = json!({
@@ -355,5 +369,60 @@ mod tests {
             .find(|a| a.get_id() == "document")
             .unwrap();
         assert!(doc_arg.is_required_set());
+    }
+
+    #[test]
+    fn test_build_revisions_request_url() {
+        let req = build_revisions_request("abc123", 20);
+        assert_eq!(
+            req.url,
+            "https://www.googleapis.com/drive/v3/files/abc123/revisions"
+        );
+        assert_eq!(req.limit_str, "20");
+    }
+
+    #[test]
+    fn test_build_revisions_request_percent_encodes_document_id() {
+        let req = build_revisions_request("abc/def 123", 5);
+        // slash and space in document ID must be percent-encoded
+        assert!(
+            req.url.contains("abc%2Fdef%20123"),
+            "document id should be percent-encoded in URL: {}",
+            req.url
+        );
+        // the raw unencoded document ID must not appear
+        assert!(
+            !req.url.contains("abc/def 123"),
+            "raw document id must not appear unencoded in URL: {}",
+            req.url
+        );
+    }
+
+    #[test]
+    fn test_build_revisions_request_limit_str() {
+        let req = build_revisions_request("docid", 42);
+        assert_eq!(req.limit_str, "42");
+    }
+
+    #[test]
+    fn test_revisions_dry_run_output_structure() {
+        let req = build_revisions_request("testdoc", 10);
+        let dry_run_info = serde_json::json!({
+            "dry_run": true,
+            "url": req.url,
+            "method": "GET",
+            "query_params": {
+                "fields": REVISION_FIELDS,
+                "pageSize": req.limit_str,
+            },
+        });
+        assert_eq!(dry_run_info["dry_run"], true);
+        assert!(dry_run_info["url"].as_str().unwrap().contains("testdoc"));
+        assert_eq!(dry_run_info["method"], "GET");
+        assert!(dry_run_info["query_params"]["fields"]
+            .as_str()
+            .unwrap()
+            .contains("revisions"));
+        assert_eq!(dry_run_info["query_params"]["pageSize"], "10");
     }
 }
