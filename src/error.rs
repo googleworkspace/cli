@@ -96,14 +96,19 @@ impl GwsError {
         }
     }
 
-    /// Build a [] by parsing a Google API error response body.
+    /// Build a [`GwsError::Api`] by parsing a Google API error response body.
     ///
-    /// Extracts , , and (for  errors) the
+    /// Extracts `code`, `message`, `reason`, and (for `accessNotConfigured` errors) the
     /// GCP console URL to enable the API. Falls back to the raw body when the
     /// response is not well-formed Google JSON.
     pub fn from_api_response(status: u16, body: &str) -> Self {
         let err_json: Option<serde_json::Value> = serde_json::from_str(body).ok();
         let err_obj = err_json.as_ref().and_then(|v| v.get("error"));
+        let code = err_obj
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_u64())
+            .map(|c| c as u16)
+            .unwrap_or(status);
         let message = err_obj
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
@@ -128,7 +133,7 @@ impl GwsError {
             None
         };
         GwsError::Api {
-            code: status,
+            code,
             message,
             reason,
             enable_url,
