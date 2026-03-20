@@ -96,6 +96,45 @@ impl GwsError {
         }
     }
 
+    /// Build a [] by parsing a Google API error response body.
+    ///
+    /// Extracts , , and (for  errors) the
+    /// GCP console URL to enable the API. Falls back to the raw body when the
+    /// response is not well-formed Google JSON.
+    pub fn from_api_response(status: u16, body: &str) -> Self {
+        let err_json: Option<serde_json::Value> = serde_json::from_str(body).ok();
+        let err_obj = err_json.as_ref().and_then(|v| v.get("error"));
+        let message = err_obj
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or(body)
+            .to_string();
+        let reason = err_obj
+            .and_then(|e| e.get("errors"))
+            .and_then(|e| e.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|e| e.get("reason"))
+            .and_then(|r| r.as_str())
+            .or_else(|| {
+                err_obj
+                    .and_then(|e| e.get("reason"))
+                    .and_then(|r| r.as_str())
+            })
+            .unwrap_or("unknown")
+            .to_string();
+        let enable_url = if reason == "accessNotConfigured" {
+            crate::executor::extract_enable_url(&message)
+        } else {
+            None
+        };
+        GwsError::Api {
+            code: status,
+            message,
+            reason,
+            enable_url,
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         match self {
             GwsError::Api {
