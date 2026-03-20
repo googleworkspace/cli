@@ -166,30 +166,53 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let document_id = matches.get_one::<String>("document").unwrap();
     let limit = matches.get_one::<u32>("limit").copied().unwrap_or(20);
+    let dry_run = matches.get_flag("dry-run");
 
     let scope = "https://www.googleapis.com/auth/drive.readonly";
-    let token = auth::get_token(&[scope]).await.map_err(|e| {
-        GwsError::Auth(format!(
-            "Docs auth failed: {}",
-            crate::output::sanitize_for_terminal(&e.to_string())
-        ))
-    })?;
+    let token = if dry_run {
+        None
+    } else {
+        Some(auth::get_token(&[scope]).await.map_err(|e| {
+            GwsError::Auth(format!(
+                "Docs auth failed: {}",
+                crate::output::sanitize_for_terminal(&e.to_string())
+            ))
+        })?)
+    };
 
-    let client = crate::client::build_client()?;
     let limit_str = limit.to_string();
     let encoded_id =
         percent_encoding::utf8_percent_encode(document_id, percent_encoding::NON_ALPHANUMERIC);
+    let url = format!(
+        "https://www.googleapis.com/drive/v3/files/{}/revisions",
+        encoded_id
+    );
 
+    if dry_run {
+        let dry_run_info = json!({
+            "dry_run": true,
+            "url": url,
+            "method": "GET",
+            "query_params": {
+                "fields": REVISION_FIELDS,
+                "pageSize": limit_str,
+            },
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&dry_run_info).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    let client = crate::client::build_client()?;
     let resp = client
-        .get(format!(
-            "https://www.googleapis.com/drive/v3/files/{}/revisions",
-            encoded_id
-        ))
+        .get(url)
         .query(&[
             ("fields", REVISION_FIELDS),
             ("pageSize", limit_str.as_str()),
         ])
-        .bearer_auth(&token)
+        .bearer_auth(token.unwrap()) // safe: dry_run path already returned above
         .send()
         .await
         .map_err(|e| GwsError::Other(anyhow::anyhow!("HTTP request failed: {e}")))?;
