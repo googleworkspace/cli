@@ -71,7 +71,7 @@ TIPS:
                         .long("limit")
                         .help("Maximum number of revisions to return (default: 20)")
                         .value_name("N")
-                        .value_parser(clap::value_parser!(u32)),
+                        .value_parser(clap::value_parser!(u32).range(1..=1000)),
                 )
                 .after_help(
                     "\
@@ -161,6 +161,9 @@ TIPS:
 }
 
 async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
+    const REVISION_FIELDS: &str =
+        "revisions(id,modifiedTime,lastModifyingUser/displayName,keepForever,size)";
+
     let document_id = matches.get_one::<String>("document").unwrap();
     let limit = matches.get_one::<u32>("limit").copied().unwrap_or(20);
 
@@ -174,17 +177,16 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let client = crate::client::build_client()?;
     let limit_str = limit.to_string();
+    let encoded_id =
+        percent_encoding::utf8_percent_encode(document_id, percent_encoding::NON_ALPHANUMERIC);
 
     let resp = client
         .get(format!(
             "https://www.googleapis.com/drive/v3/files/{}/revisions",
-            document_id
+            encoded_id
         ))
         .query(&[
-            (
-                "fields",
-                "revisions(id,modifiedTime,lastModifyingUser/displayName,keepForever,size)",
-            ),
+            ("fields", REVISION_FIELDS),
             ("pageSize", limit_str.as_str()),
         ])
         .bearer_auth(&token)
@@ -194,7 +196,10 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("Failed to read error response body: {e}"));
         return Err(GwsError::Api {
             code: status.as_u16(),
             message: body,
