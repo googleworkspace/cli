@@ -205,17 +205,19 @@ async fn handle_revisions(matches: &ArgMatches) -> Result<(), GwsError> {
         return Ok(());
     }
 
+    let token = token.unwrap(); // safe: dry_run path already returned above
     let client = crate::client::build_client()?;
-    let resp = client
-        .get(url)
-        .query(&[
-            ("fields", REVISION_FIELDS),
-            ("pageSize", limit_str.as_str()),
-        ])
-        .bearer_auth(token.unwrap()) // safe: dry_run path already returned above
-        .send()
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("HTTP request failed: {e}")))?;
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get(url.clone())
+            .query(&[
+                ("fields", REVISION_FIELDS),
+                ("pageSize", limit_str.as_str()),
+            ])
+            .bearer_auth(token.clone())
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("HTTP request failed: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
