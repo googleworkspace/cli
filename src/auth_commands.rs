@@ -224,28 +224,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
 
     match matches.subcommand() {
         Some(("login", sub_m)) => {
-            let scope_mode = if let Some(scopes_str) = sub_m.get_one::<String>("scopes") {
-                ScopeMode::Custom(
-                    scopes_str
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect(),
-                )
-            } else if sub_m.get_flag("readonly") {
-                ScopeMode::Readonly
-            } else if sub_m.get_flag("full") {
-                ScopeMode::Full
-            } else {
-                ScopeMode::Default
-            };
-
-            let services_filter: Option<HashSet<String>> =
-                sub_m.get_one::<String>("services").map(|v| {
-                    v.split(',')
-                        .map(|s| s.trim().to_lowercase())
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                });
+            let (scope_mode, services_filter) = parse_login_args(sub_m);
 
             handle_login_inner(scope_mode, services_filter).await
         }
@@ -284,27 +263,8 @@ fn login_command() -> clap::Command {
         .expect("login subcommand must exist")
 }
 
-/// Run the `auth login` flow.
-///
-/// Exposed for internal orchestration (e.g. `auth setup --login`).
-/// Accepts raw args for backward compat with setup.rs calling `run_login(&[])`.
-pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
-    let matches = match login_command()
-        .try_get_matches_from(std::iter::once("login".to_string()).chain(args.iter().cloned()))
-    {
-        Ok(m) => m,
-        Err(e)
-            if e.kind() == clap::error::ErrorKind::DisplayHelp
-                || e.kind() == clap::error::ErrorKind::DisplayVersion =>
-        {
-            e.print().map_err(|io_err| {
-                GwsError::Validation(format!("Failed to print help: {io_err}"))
-            })?;
-            return Ok(());
-        }
-        Err(e) => return Err(GwsError::Validation(e.to_string())),
-    };
-
+/// Extract `ScopeMode` and optional services filter from parsed login args.
+fn parse_login_args(matches: &clap::ArgMatches) -> (ScopeMode, Option<HashSet<String>>) {
     let scope_mode = if let Some(scopes_str) = matches.get_one::<String>("scopes") {
         ScopeMode::Custom(
             scopes_str
@@ -326,6 +286,32 @@ pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
             .filter(|s| !s.is_empty())
             .collect()
     });
+
+    (scope_mode, services_filter)
+}
+
+/// Run the `auth login` flow.
+///
+/// Exposed for internal orchestration (e.g. `auth setup --login`).
+/// Accepts raw args for backward compat with setup.rs calling `run_login(&[])`.
+pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
+    let matches = match login_command()
+        .try_get_matches_from(std::iter::once("login".to_string()).chain(args.iter().cloned()))
+    {
+        Ok(m) => m,
+        Err(e)
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion =>
+        {
+            e.print().map_err(|io_err| {
+                GwsError::Validation(format!("Failed to print help: {io_err}"))
+            })?;
+            return Ok(());
+        }
+        Err(e) => return Err(GwsError::Validation(e.to_string())),
+    };
+
+    let (scope_mode, services_filter) = parse_login_args(&matches);
 
     handle_login_inner(scope_mode, services_filter).await
 }
