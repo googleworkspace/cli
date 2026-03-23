@@ -1240,6 +1240,24 @@ TIPS:
                         .help("Include label names in output")
                         .action(ArgAction::SetTrue),
                 )
+                .arg(
+                    Arg::new("thread-id")
+                        .long("thread-id")
+                        .help("Include threadId in output")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("delivered-to")
+                        .long("delivered-to")
+                        .help("Include Delivered-To header in output (useful for shared/alias inboxes)")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("sent-last")
+                        .long("sent-last")
+                        .help("Include sentLast boolean: true when the SENT label is present, indicating you sent the most recent message in the thread")
+                        .action(ArgAction::SetTrue),
+                )
                 .after_help(
                     "\
 EXAMPLES:
@@ -1247,10 +1265,13 @@ EXAMPLES:
   gws gmail +triage --max 5 --query 'from:boss'
   gws gmail +triage --format json | jq '.[].subject'
   gws gmail +triage --labels
+  gws gmail +triage --format json --thread-id --delivered-to --sent-last
 
 TIPS:
   Read-only — never modifies your mailbox.
-  Defaults to table output format.",
+  Defaults to table output format.
+  --thread-id, --delivered-to, and --sent-last add fields from data already
+  fetched in the metadata request — no extra API calls.",
                 ),
         );
 
