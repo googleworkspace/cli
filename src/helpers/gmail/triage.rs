@@ -15,8 +15,9 @@
 //! Gmail `+triage` helper — lists unread messages with sender, subject, date.
 //!
 //! Read-only: fetches unread message metadata (From, Subject, Date) and
-//! optionally includes label IDs. Supports custom Gmail search queries
-//! via `--query` and configurable result limits via `--max`.
+//! optionally includes label IDs, thread ID, Delivered-To header, and a
+//! `sentLast` flag. Supports custom Gmail search queries via `--query` and
+//! configurable result limits via `--max`.
 
 use super::*;
 
@@ -31,6 +32,9 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|s| s.as_str())
         .unwrap_or("is:unread");
     let show_labels = matches.get_flag("labels");
+    let show_thread_id = matches.get_flag("thread-id");
+    let show_delivered_to = matches.get_flag("delivered-to");
+    let show_sent_last = matches.get_flag("sent-last");
     let output_format = matches
         .get_one::<String>("format")
         .map(|s| crate::formatter::OutputFormat::from_str(s))
@@ -100,8 +104,10 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
             let client = &client;
             let token = &token;
             async move {
+                // Always request Delivered-To in metadataHeaders — it costs nothing
+                // extra and avoids a second fetch when --delivered-to is toggled.
                 let get_url = format!(
-                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=Delivered-To",
                     msg_id
                 );
 
@@ -125,6 +131,7 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
                 let mut from = String::new();
                 let mut subject = String::new();
                 let mut date = String::new();
+                let mut delivered_to = String::new();
 
                 if let Some(headers) = headers {
                     for h in headers {
@@ -134,10 +141,16 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
                             "From" => from = value.to_string(),
                             "Subject" => subject = value.to_string(),
                             "Date" => date = value.to_string(),
+                            "Delivered-To" => delivered_to = value.to_string(),
                             _ => {}
                         }
                     }
                 }
+
+                let label_ids = msg_json
+                    .get("labelIds")
+                    .cloned()
+                    .unwrap_or(Value::Array(vec![]));
 
                 let mut entry = json!({
                     "id": msg_id,
@@ -146,12 +159,27 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
                     "date": date,
                 });
 
-                if show_labels {
-                    let labels = msg_json
-                        .get("labelIds")
+                if show_thread_id {
+                    entry["threadId"] = msg_json
+                        .get("threadId")
                         .cloned()
-                        .unwrap_or(Value::Array(vec![]));
-                    entry["labels"] = labels;
+                        .unwrap_or(json!(""));
+                }
+
+                if show_delivered_to {
+                    entry["deliveredTo"] = json!(delivered_to);
+                }
+
+                if show_labels {
+                    entry["labels"] = label_ids.clone();
+                }
+
+                if show_sent_last {
+                    let sent_last = label_ids
+                        .as_array()
+                        .map(|l| l.iter().any(|v| v.as_str() == Some("SENT")))
+                        .unwrap_or(false);
+                    entry["sentLast"] = json!(sent_last);
                 }
 
                 Some(entry)
@@ -204,6 +232,21 @@ mod tests {
             )
             .arg(Arg::new("query").long("query").value_name("QUERY"))
             .arg(Arg::new("labels").long("labels").action(ArgAction::SetTrue))
+            .arg(
+                Arg::new("thread-id")
+                    .long("thread-id")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delivered-to")
+                    .long("delivered-to")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("sent-last")
+                    .long("sent-last")
+                    .action(ArgAction::SetTrue),
+            )
             .arg(Arg::new("format").long("format").value_name("FMT"))
     }
 
@@ -301,5 +344,64 @@ mod tests {
         // pipe workflows like `gws gmail +triage | jq`.
         let msg = no_messages_msg("label:inbox");
         assert!(serde_json::from_str::<serde_json::Value>(&msg).is_err());
+    }
+
+    #[test]
+    fn thread_id_flag_defaults_to_false() {
+        let m = triage_cmd().try_get_matches_from(["triage"]).unwrap();
+        assert!(!m.get_flag("thread-id"));
+    }
+
+    #[test]
+    fn thread_id_flag_set_when_passed() {
+        let m = triage_cmd()
+            .try_get_matches_from(["triage", "--thread-id"])
+            .unwrap();
+        assert!(m.get_flag("thread-id"));
+    }
+
+    #[test]
+    fn delivered_to_flag_defaults_to_false() {
+        let m = triage_cmd().try_get_matches_from(["triage"]).unwrap();
+        assert!(!m.get_flag("delivered-to"));
+    }
+
+    #[test]
+    fn delivered_to_flag_set_when_passed() {
+        let m = triage_cmd()
+            .try_get_matches_from(["triage", "--delivered-to"])
+            .unwrap();
+        assert!(m.get_flag("delivered-to"));
+    }
+
+    #[test]
+    fn sent_last_flag_defaults_to_false() {
+        let m = triage_cmd().try_get_matches_from(["triage"]).unwrap();
+        assert!(!m.get_flag("sent-last"));
+    }
+
+    #[test]
+    fn sent_last_flag_set_when_passed() {
+        let m = triage_cmd()
+            .try_get_matches_from(["triage", "--sent-last"])
+            .unwrap();
+        assert!(m.get_flag("sent-last"));
+    }
+
+    #[test]
+    fn all_opt_in_flags_can_be_combined() {
+        let m = triage_cmd()
+            .try_get_matches_from([
+                "triage",
+                "--thread-id",
+                "--delivered-to",
+                "--sent-last",
+                "--labels",
+            ])
+            .unwrap();
+        assert!(m.get_flag("thread-id"));
+        assert!(m.get_flag("delivered-to"));
+        assert!(m.get_flag("sent-last"));
+        assert!(m.get_flag("labels"));
     }
 }
