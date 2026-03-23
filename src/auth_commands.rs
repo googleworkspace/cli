@@ -22,17 +22,19 @@ use crate::error::GwsError;
 
 /// Mask a secret string by showing only the first 4 and last 4 characters.
 /// Strings with 8 or fewer characters are fully replaced with "***".
+///
+/// Uses char-based indexing (not byte offsets) so multi-byte UTF-8 secrets
+/// never cause a panic.
 fn mask_secret(s: &str) -> String {
     const MASK_PREFIX_LEN: usize = 4;
     const MASK_SUFFIX_LEN: usize = 4;
     const MIN_LEN_FOR_PARTIAL_MASK: usize = MASK_PREFIX_LEN + MASK_SUFFIX_LEN;
 
-    if s.len() > MIN_LEN_FOR_PARTIAL_MASK {
-        format!(
-            "{}...{}",
-            &s[..MASK_PREFIX_LEN],
-            &s[s.len() - MASK_SUFFIX_LEN..]
-        )
+    let char_count = s.chars().count();
+    if char_count > MIN_LEN_FOR_PARTIAL_MASK {
+        let prefix: String = s.chars().take(MASK_PREFIX_LEN).collect();
+        let suffix: String = s.chars().skip(char_count - MASK_SUFFIX_LEN).collect();
+        format!("{prefix}...{suffix}")
     } else {
         "***".to_string()
     }
@@ -2122,6 +2124,16 @@ mod tests {
     fn mask_secret_boundary() {
         // Exactly 9 chars — first 4 + last 4 with "..." in between
         assert_eq!(mask_secret("123456789"), "1234...6789");
+    }
+
+    #[test]
+    fn mask_secret_multibyte_utf8() {
+        // Multi-byte chars must not panic (previously used byte slicing)
+        assert_eq!(mask_secret("áéíóúñüÁÉÍÓÚ"), "áéíó...ÉÍÓÚ");
+        // Short multi-byte — should fully mask
+        assert_eq!(mask_secret("café"), "***");
+        // Exactly at boundary with multi-byte (9 Greek chars)
+        assert_eq!(mask_secret("αβγδεζηθι"), "αβγδ...ζηθι");
     }
 
     #[test]
