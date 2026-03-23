@@ -1,5 +1,37 @@
 # @googleworkspace/cli
 
+## 0.19.0
+
+### Minor Changes
+
+- a078945: Refactor all `gws auth` subcommands to use clap for argument parsing
+
+  Replace manual argument parsing in `handle_auth_command`, `handle_login`, `resolve_scopes`, and `handle_export` with structured `clap::Command` definitions. Introduces `ScopeMode` enum for type-safe scope selection and adds proper `--help` support for all auth subcommands.
+
+### Patch Changes
+
+- 8a749c2: feat(helpers): add --dry-run support to events helper commands
+
+  Add dry-run mode to `gws events +renew` and `gws events +subscribe` commands.
+  When --dry-run is specified, the commands will print what actions would be
+  taken without making any API calls. This allows agents to simulate requests
+  and learn without reaching the server.
+
+- d679401: Fix `mask_secret` panic on multi-byte UTF-8 secrets by using char-based indexing instead of byte-offset slicing
+- d341de2: Handle --help/-h in `gws auth setup` before launching the setup wizard, preventing accidental project creation when users just want usage info
+- f157208: fix: use block-style YAML sequences in generated SKILL.md frontmatter
+
+  Replace flow sequences (`bins: ["gws"]`, `skills: [...]`) with block-style
+  sequences (`bins:\n  - gws`) in all generated SKILL.md frontmatter templates.
+
+  Flow sequences are valid YAML but rejected by `strictyaml`, which the
+  Agent Skills reference implementation (`agentskills validate`) uses to parse
+  frontmatter. This caused all 93 generated skills to fail validation.
+
+  Fixes #521
+
+- b4d5e26: Fix auth error propagation: properly propagate errors when token directory creation or permission setting fails, instead of silently ignoring them
+
 ## 0.18.1
 
 ### Patch Changes
