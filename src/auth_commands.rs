@@ -130,51 +130,204 @@ fn token_cache_path() -> PathBuf {
     config_dir().join("token_cache.json")
 }
 
+/// Which scope set to use for login.
+enum ScopeMode {
+    /// Use the default scopes (MINIMAL_SCOPES).
+    Default,
+    /// Use readonly scopes.
+    Readonly,
+    /// Use full scopes (incl. pubsub + cloud-platform).
+    Full,
+    /// Use explicitly provided custom scopes.
+    Custom(Vec<String>),
+}
+
+/// Build the clap Command for `gws auth`.
+fn auth_command() -> clap::Command {
+    clap::Command::new("auth")
+        .about("Manage authentication for Google Workspace APIs")
+        .subcommand_required(false)
+        .subcommand(
+            clap::Command::new("login")
+                .about("Authenticate via OAuth2 (opens browser)")
+                .arg(
+                    clap::Arg::new("readonly")
+                        .long("readonly")
+                        .help("Request read-only scopes")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("full")
+                        .long("full")
+                        .help("Request all scopes incl. pubsub + cloud-platform")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("scopes")
+                        .long("scopes")
+                        .help("Comma-separated custom scopes")
+                        .value_name("scopes"),
+                )
+                .arg(
+                    clap::Arg::new("services")
+                        .short('s')
+                        .long("services")
+                        .help("Comma-separated service names to limit scope picker (e.g. drive,gmail,sheets)")
+                        .value_name("services"),
+                ),
+        )
+        .subcommand(
+            clap::Command::new("setup")
+                .about("Configure GCP project + OAuth client (requires gcloud)")
+                .disable_help_flag(true)
+                // setup has its own clap-based arg parsing in setup.rs,
+                // so we pass remaining args through.
+                .arg(
+                    clap::Arg::new("args")
+                        .trailing_var_arg(true)
+                        .allow_hyphen_values(true)
+                        .num_args(0..)
+                        .value_name("ARGS"),
+                ),
+        )
+        .subcommand(clap::Command::new("status").about("Show current authentication state"))
+        .subcommand(
+            clap::Command::new("export")
+                .about("Print decrypted credentials to stdout")
+                .arg(
+                    clap::Arg::new("unmasked")
+                        .long("unmasked")
+                        .help("Show secrets without masking")
+                        .action(clap::ArgAction::SetTrue),
+                ),
+        )
+        .subcommand(clap::Command::new("logout").about("Clear saved credentials and token cache"))
+}
+
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
-    const USAGE: &str = concat!(
-        "Usage: gws auth <login|setup|status|export|logout> [options]\n\n",
-        "  login    Authenticate via OAuth2 (opens browser)\n",
-        "           --readonly       Request read-only scopes\n",
-        "           --full           Request all scopes incl. pubsub + cloud-platform\n",
-        "                            (may trigger restricted_client for unverified apps)\n",
-        "           --scopes         Comma-separated custom scopes\n",
-        "           -s, --services   Comma-separated service names to limit scope picker\n",
-        "                            (e.g. -s drive,gmail,sheets)\n",
-        "  setup    Configure GCP project + OAuth client (requires gcloud)\n",
-        "           --project        Use a specific GCP project\n",
-        "           --login          Run `gws auth login` after successful setup\n",
-        "  status   Show current authentication state\n",
-        "  export   Print decrypted credentials to stdout\n",
-        "  logout   Clear saved credentials and token cache",
-    );
+    let matches = match auth_command()
+        .try_get_matches_from(std::iter::once("auth".to_string()).chain(args.iter().cloned()))
+    {
+        Ok(m) => m,
+        Err(e)
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion =>
+        {
+            e.print().map_err(|io_err| {
+                GwsError::Validation(format!("Failed to print help: {io_err}"))
+            })?;
+            return Ok(());
+        }
+        Err(e) => return Err(GwsError::Validation(e.to_string())),
+    };
 
-    // Honour --help / -h before treating the first arg as a subcommand.
-    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        println!("{USAGE}");
-        return Ok(());
-    }
+    match matches.subcommand() {
+        Some(("login", sub_m)) => {
+            let scope_mode = if let Some(scopes_str) = sub_m.get_one::<String>("scopes") {
+                ScopeMode::Custom(
+                    scopes_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .collect(),
+                )
+            } else if sub_m.get_flag("readonly") {
+                ScopeMode::Readonly
+            } else if sub_m.get_flag("full") {
+                ScopeMode::Full
+            } else {
+                ScopeMode::Default
+            };
 
-    match args[0].as_str() {
-        "login" => run_login(&args[1..]).await,
-        "setup" => crate::setup::run_setup(&args[1..]).await,
-        "status" => handle_status().await,
-        "export" => {
-            let unmasked = args.len() > 1 && args[1] == "--unmasked";
+            let services_filter: Option<HashSet<String>> =
+                sub_m.get_one::<String>("services").map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                });
+
+            handle_login_inner(scope_mode, services_filter).await
+        }
+        Some(("setup", sub_m)) => {
+            // Collect remaining args and delegate to setup's own clap parser.
+            let setup_args: Vec<String> = sub_m
+                .get_many::<String>("args")
+                .map(|vals| vals.cloned().collect())
+                .unwrap_or_default();
+            crate::setup::run_setup(&setup_args).await
+        }
+        Some(("status", _)) => handle_status().await,
+        Some(("export", sub_m)) => {
+            let unmasked = sub_m.get_flag("unmasked");
             handle_export(unmasked).await
         }
-        "logout" => handle_logout(),
-        other => Err(GwsError::Validation(format!(
-            "Unknown auth subcommand: '{other}'. Use: login, setup, status, export, logout"
-        ))),
+        Some(("logout", _)) => handle_logout(),
+        _ => {
+            // No subcommand → print help
+            auth_command()
+                .print_help()
+                .map_err(|e| GwsError::Validation(format!("Failed to print help: {e}")))?;
+            Ok(())
+        }
     }
+}
+
+/// Build the clap Command for `gws auth login` (used by `run_login` for
+/// standalone parsing when called from setup.rs).
+fn login_command() -> clap::Command {
+    // Reuse the same definition from auth_command's login subcommand
+    auth_command()
+        .get_subcommands()
+        .find(|c| c.get_name() == "login")
+        .cloned()
+        .expect("login subcommand must exist")
 }
 
 /// Run the `auth login` flow.
 ///
 /// Exposed for internal orchestration (e.g. `auth setup --login`).
+/// Accepts raw args for backward compat with setup.rs calling `run_login(&[])`.
 pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
-    handle_login(args).await
+    let matches = match login_command()
+        .try_get_matches_from(std::iter::once("login".to_string()).chain(args.iter().cloned()))
+    {
+        Ok(m) => m,
+        Err(e)
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion =>
+        {
+            e.print().map_err(|io_err| {
+                GwsError::Validation(format!("Failed to print help: {io_err}"))
+            })?;
+            return Ok(());
+        }
+        Err(e) => return Err(GwsError::Validation(e.to_string())),
+    };
+
+    let scope_mode = if let Some(scopes_str) = matches.get_one::<String>("scopes") {
+        ScopeMode::Custom(
+            scopes_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
+        )
+    } else if matches.get_flag("readonly") {
+        ScopeMode::Readonly
+    } else if matches.get_flag("full") {
+        ScopeMode::Full
+    } else {
+        ScopeMode::Default
+    };
+
+    let services_filter: Option<HashSet<String>> = matches.get_one::<String>("services").map(|v| {
+        v.split(',')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+
+    handle_login_inner(scope_mode, services_filter).await
 }
 /// Custom delegate that prints the OAuth URL on its own line for easy copying.
 /// Optionally includes `login_hint` in the URL for account pre-selection.
@@ -212,36 +365,11 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     }
 }
 
-async fn handle_login(args: &[String]) -> Result<(), GwsError> {
-    // Extract -s/--services from args
-    let mut services_filter: Option<HashSet<String>> = None;
-    let mut filtered_args: Vec<String> = Vec::new();
-    let mut skip_next = false;
-    for i in 0..args.len() {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        let services_str = if (args[i] == "-s" || args[i] == "--services") && i + 1 < args.len() {
-            skip_next = true;
-            Some(args[i + 1].as_str())
-        } else {
-            args[i].strip_prefix("--services=")
-        };
-
-        if let Some(value) = services_str {
-            services_filter = Some(
-                value
-                    .split(',')
-                    .map(|s| s.trim().to_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
-            );
-            continue;
-        }
-        filtered_args.push(args[i].clone());
-    }
-
+/// Inner login implementation that takes already-parsed options.
+async fn handle_login_inner(
+    scope_mode: ScopeMode,
+    services_filter: Option<HashSet<String>>,
+) -> Result<(), GwsError> {
     // Resolve client_id and client_secret:
     // 1. Env vars (highest priority)
     // 2. Saved client_secret.json from `gws auth setup` or manual download
@@ -258,12 +386,7 @@ async fn handle_login(args: &[String]) -> Result<(), GwsError> {
     }
 
     // Determine scopes: explicit flags > interactive TUI > defaults
-    let scopes = resolve_scopes(
-        &filtered_args,
-        project_id.as_deref(),
-        services_filter.as_ref(),
-    )
-    .await;
+    let scopes = resolve_scopes(scope_mode, project_id.as_deref(), services_filter.as_ref()).await;
 
     // Remove restrictive scopes when broader alternatives are present.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
@@ -479,32 +602,25 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
 /// When `services_filter` is `Some`, only scopes belonging to the specified
 /// services are shown in the picker (or returned in non-interactive mode).
 async fn resolve_scopes(
-    args: &[String],
+    scope_mode: ScopeMode,
     project_id: Option<&str>,
     services_filter: Option<&HashSet<String>>,
 ) -> Vec<String> {
-    // Explicit --scopes flag takes priority (bypasses services filter)
-    for i in 0..args.len() {
-        if args[i] == "--scopes" && i + 1 < args.len() {
-            return args[i + 1]
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect();
+    match scope_mode {
+        ScopeMode::Custom(scopes) => return scopes,
+        ScopeMode::Readonly => {
+            let scopes: Vec<String> = READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
+            let mut result = filter_scopes_by_services(scopes, services_filter);
+            augment_with_dynamic_scopes(&mut result, services_filter, true).await;
+            return result;
         }
-    }
-    let readonly_only = args.iter().any(|a| a == "--readonly");
-
-    if readonly_only {
-        let scopes: Vec<String> = READONLY_SCOPES.iter().map(|s| s.to_string()).collect();
-        let mut result = filter_scopes_by_services(scopes, services_filter);
-        augment_with_dynamic_scopes(&mut result, services_filter, true).await;
-        return result;
-    }
-    if args.iter().any(|a| a == "--full") {
-        let scopes: Vec<String> = FULL_SCOPES.iter().map(|s| s.to_string()).collect();
-        let mut result = filter_scopes_by_services(scopes, services_filter);
-        augment_with_dynamic_scopes(&mut result, services_filter, false).await;
-        return result;
+        ScopeMode::Full => {
+            let scopes: Vec<String> = FULL_SCOPES.iter().map(|s| s.to_string()).collect();
+            let mut result = filter_scopes_by_services(scopes, services_filter);
+            augment_with_dynamic_scopes(&mut result, services_filter, false).await;
+            return result;
+        }
+        ScopeMode::Default => {} // fall through to interactive picker / defaults
     }
 
     // Interactive scope picker when running in a TTY
@@ -1453,66 +1569,58 @@ mod tests {
     use super::*;
 
     /// Helper to run resolve_scopes in tests (async).
-    fn run_resolve_scopes(args: &[String], project_id: Option<&str>) -> Vec<String> {
+    fn run_resolve_scopes(scope_mode: ScopeMode, project_id: Option<&str>) -> Vec<String> {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(resolve_scopes(args, project_id, None))
+        rt.block_on(resolve_scopes(scope_mode, project_id, None))
     }
 
     /// Helper to run resolve_scopes with a services filter.
     fn run_resolve_scopes_with_services(
-        args: &[String],
+        scope_mode: ScopeMode,
         project_id: Option<&str>,
         services: &[&str],
     ) -> Vec<String> {
         let filter: HashSet<String> = services.iter().map(|s| s.to_string()).collect();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(resolve_scopes(args, project_id, Some(&filter)))
+        rt.block_on(resolve_scopes(scope_mode, project_id, Some(&filter)))
     }
 
     #[test]
     fn resolve_scopes_returns_defaults_when_no_flag() {
-        let args: Vec<String> = vec![];
-        let scopes = run_resolve_scopes(&args, None);
+        let scopes = run_resolve_scopes(ScopeMode::Default, None);
         assert_eq!(scopes.len(), DEFAULT_SCOPES.len());
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
     }
 
     #[test]
     fn resolve_scopes_returns_custom_scopes() {
-        let args: Vec<String> = vec![
-            "--scopes".to_string(),
-            "https://www.googleapis.com/auth/drive.readonly".to_string(),
-        ];
-        let scopes = run_resolve_scopes(&args, None);
+        let scopes = run_resolve_scopes(
+            ScopeMode::Custom(vec![
+                "https://www.googleapis.com/auth/drive.readonly".to_string()
+            ]),
+            None,
+        );
         assert_eq!(scopes.len(), 1);
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive.readonly");
     }
 
     #[test]
-    fn resolve_scopes_handles_multiple_comma_separated() {
-        let args: Vec<String> = vec![
-            "--scopes".to_string(),
-            "https://www.googleapis.com/auth/drive, https://www.googleapis.com/auth/gmail.readonly"
-                .to_string(),
-        ];
-        let scopes = run_resolve_scopes(&args, None);
+    fn resolve_scopes_handles_multiple_custom() {
+        let scopes = run_resolve_scopes(
+            ScopeMode::Custom(vec![
+                "https://www.googleapis.com/auth/drive".to_string(),
+                "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+            ]),
+            None,
+        );
         assert_eq!(scopes.len(), 2);
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
         assert_eq!(scopes[1], "https://www.googleapis.com/auth/gmail.readonly");
     }
 
     #[test]
-    fn resolve_scopes_ignores_trailing_flag() {
-        // --scopes with no value should use defaults
-        let args: Vec<String> = vec!["--scopes".to_string()];
-        let scopes = run_resolve_scopes(&args, None);
-        assert_eq!(scopes.len(), DEFAULT_SCOPES.len());
-    }
-
-    #[test]
     fn resolve_scopes_readonly_returns_readonly_scopes() {
-        let args = vec!["--readonly".to_string()];
-        let scopes = run_resolve_scopes(&args, None);
+        let scopes = run_resolve_scopes(ScopeMode::Readonly, None);
         assert_eq!(scopes.len(), READONLY_SCOPES.len());
         for scope in &scopes {
             assert!(
@@ -1523,16 +1631,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_scopes_custom_overrides_readonly() {
-        // --scopes takes priority over --readonly
-        let args = vec![
-            "--scopes".to_string(),
-            "https://www.googleapis.com/auth/drive".to_string(),
-            "--readonly".to_string(),
-        ];
-        let scopes = run_resolve_scopes(&args, None);
-        assert_eq!(scopes.len(), 1);
-        assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
+    fn resolve_scopes_full_returns_full_scopes() {
+        let scopes = run_resolve_scopes(ScopeMode::Full, None);
+        assert_eq!(scopes.len(), FULL_SCOPES.len());
     }
 
     #[test]
@@ -1984,8 +2085,8 @@ mod tests {
 
     #[test]
     fn resolve_scopes_with_services_filter() {
-        let args: Vec<String> = vec![];
-        let scopes = run_resolve_scopes_with_services(&args, None, &["drive", "gmail"]);
+        let scopes =
+            run_resolve_scopes_with_services(ScopeMode::Default, None, &["drive", "gmail"]);
         assert!(!scopes.is_empty());
         for scope in &scopes {
             let short = scope
@@ -2002,8 +2103,8 @@ mod tests {
 
     #[test]
     fn resolve_scopes_services_filter_unknown_service_ignored() {
-        let args: Vec<String> = vec![];
-        let scopes = run_resolve_scopes_with_services(&args, None, &["drive", "nonexistent"]);
+        let scopes =
+            run_resolve_scopes_with_services(ScopeMode::Default, None, &["drive", "nonexistent"]);
         assert!(!scopes.is_empty());
         // Should contain drive scope but not be affected by nonexistent
         assert!(scopes.iter().any(|s| s.contains("/auth/drive")));
@@ -2011,8 +2112,7 @@ mod tests {
 
     #[test]
     fn resolve_scopes_services_takes_priority_with_readonly() {
-        let args = vec!["--readonly".to_string()];
-        let scopes = run_resolve_scopes_with_services(&args, None, &["drive"]);
+        let scopes = run_resolve_scopes_with_services(ScopeMode::Readonly, None, &["drive"]);
         assert!(!scopes.is_empty());
         for scope in &scopes {
             let short = scope
@@ -2027,8 +2127,7 @@ mod tests {
 
     #[test]
     fn resolve_scopes_services_takes_priority_with_full() {
-        let args = vec!["--full".to_string()];
-        let scopes = run_resolve_scopes_with_services(&args, None, &["gmail"]);
+        let scopes = run_resolve_scopes_with_services(ScopeMode::Full, None, &["gmail"]);
         assert!(!scopes.is_empty());
         for scope in &scopes {
             let short = scope
@@ -2043,12 +2142,12 @@ mod tests {
 
     #[test]
     fn resolve_scopes_explicit_scopes_bypass_services_filter() {
-        // --scopes should take priority over -s
-        let args = vec![
-            "--scopes".to_string(),
-            "https://www.googleapis.com/auth/calendar".to_string(),
-        ];
-        let scopes = run_resolve_scopes_with_services(&args, None, &["drive"]);
+        // Custom scopes take priority over services filter
+        let scopes = run_resolve_scopes_with_services(
+            ScopeMode::Custom(vec!["https://www.googleapis.com/auth/calendar".to_string()]),
+            None,
+            &["drive"],
+        );
         assert_eq!(scopes.len(), 1);
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/calendar");
     }
