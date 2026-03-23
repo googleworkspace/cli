@@ -33,3 +33,7 @@ Examples of scope creep to avoid:
 ## Severity Calibration
 
 Mark issues as **critical** only when they cause data loss, security vulnerabilities, or incorrect behavior under normal conditions. Theoretical failures in infallible system APIs (e.g., `tokio::signal::ctrl_c()` registration) are **low** severity — do not label them critical. Contradicting a prior review suggestion (e.g., suggesting `expect()` then flagging `expect()` as wrong) erodes trust; verify consistency with earlier comments before posting.
+
+## Helper Commands (`+verb`)
+
+Helpers are handwritten commands that provide value Discovery-based commands cannot: multi-step orchestration, format translation, or multi-API composition. **Do not accept helpers that wrap a single API call, add flags to expose data already in the API response, or re-implement Discovery parameters as custom flags.** See [`src/helpers/README.md`](../src/helpers/README.md) for full guidelines and anti-patterns.

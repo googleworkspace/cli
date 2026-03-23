@@ -137,7 +137,7 @@ When a user-supplied string is used as a GCP resource identifier (project ID, to
 
 ```rust
 // Validates the string does not contain path traversal segments (`..`), control characters, or URL-breaking characters like `?` and `#`.
-let project = crate::helpers::validate_resource_name(&project_id)?;
+let project = crate::validate::validate_resource_name(&project_id)?;
 let url = format!("https://pubsub.googleapis.com/v1/projects/{}/topics/my-topic", project);
 ```
 
@@ -165,6 +165,15 @@ Use these labels to categorize pull requests and issues:
 - `area: distribution` — Nix flake, cargo-dist, npm packaging, install methods
 - `area: auth` — OAuth, credentials, multi-account, ADC
 - `area: skills` — AI skill generation and management
+
+## Helper Commands (`+verb`)
+
+Helpers are handwritten commands prefixed with `+` that provide value the schema-driven Discovery commands cannot: multi-step orchestration, format translation (e.g., Markdown → Docs JSON), or multi-API composition.
+
+> [!IMPORTANT]
+> **Do NOT add a helper that** wraps a single API call already available via Discovery, adds flags to expose data already in the API response, or re-implements Discovery parameters as custom flags. Helper flags must control orchestration logic — use `--params` and `--format`/`jq` for API parameters and output filtering.
+
+See [`src/helpers/README.md`](src/helpers/README.md) for full guidelines, anti-patterns, and a checklist for new helpers.
 
 ## Environment Variables
 
