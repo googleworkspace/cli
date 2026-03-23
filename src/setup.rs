@@ -1599,6 +1599,18 @@ fn prompt_login_after_setup() -> Result<bool, GwsError> {
 
 /// Run the full setup flow. Orchestrates all steps and outputs JSON summary.
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
+    // Handle --help / -h before any setup work (which requires gcloud).
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "Usage: gws auth setup [options]\n\n\
+             Options:\n  \
+               --project <id>  Use a specific GCP project\n  \
+               --login         Run `gws auth login` after successful setup\n  \
+               --dry-run       Preview changes without making them"
+        );
+        return Ok(());
+    }
+
     let opts = parse_setup_args(args);
     let dry_run = opts.dry_run;
     let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin()) && !dry_run;
