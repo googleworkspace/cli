@@ -417,7 +417,9 @@ pub fn parse_setup_args(args: &[String]) -> Result<Option<SetupOptions>, GwsErro
             if e.kind() == clap::error::ErrorKind::DisplayHelp
                 || e.kind() == clap::error::ErrorKind::DisplayVersion =>
         {
-            let _ = e.print();
+            e.print().map_err(|io_err| {
+                GwsError::Validation(format!("Failed to print help: {io_err}"))
+            })?;
             Ok(None)
         }
         Err(e) => Err(GwsError::Validation(e.to_string())),
