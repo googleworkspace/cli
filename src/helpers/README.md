@@ -82,7 +82,7 @@ Helpers are implemented using the `Helper` trait defined in `mod.rs`.
 3. **Uses shared infrastructure:**
    - `crate::client::build_client()` for HTTP
    - `crate::validate::validate_resource_name()` for user-supplied resource IDs
-   - `crate::helpers::encode_path_segment()` for URL path segments
+   - `crate::validate::encode_path_segment()` for URL path segments
    - `crate::output::sanitize_for_terminal()` for error messages
 4. **Has tests** — at minimum: command registration, required args, happy path
 5. **Supports `--dry-run`** where the helper creates or mutates resources
