@@ -272,7 +272,9 @@ fn parse_login_args(matches: &clap::ArgMatches) -> (ScopeMode, Option<HashSet<St
         ScopeMode::Custom(
             scopes_str
                 .split(',')
-                .map(|s| s.trim().to_string())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
                 .collect(),
         )
     } else if matches.get_flag("readonly") {
