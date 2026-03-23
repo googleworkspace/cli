@@ -154,19 +154,22 @@ fn auth_command() -> clap::Command {
                     clap::Arg::new("readonly")
                         .long("readonly")
                         .help("Request read-only scopes")
-                        .action(clap::ArgAction::SetTrue),
+                        .action(clap::ArgAction::SetTrue)
+                        .conflicts_with_all(["full", "scopes"]),
                 )
                 .arg(
                     clap::Arg::new("full")
                         .long("full")
                         .help("Request all scopes incl. pubsub + cloud-platform")
-                        .action(clap::ArgAction::SetTrue),
+                        .action(clap::ArgAction::SetTrue)
+                        .conflicts_with_all(["readonly", "scopes"]),
                 )
                 .arg(
                     clap::Arg::new("scopes")
                         .long("scopes")
                         .help("Comma-separated custom scopes")
-                        .value_name("scopes"),
+                        .value_name("scopes")
+                        .conflicts_with_all(["readonly", "full"]),
                 )
                 .arg(
                     clap::Arg::new("services")
