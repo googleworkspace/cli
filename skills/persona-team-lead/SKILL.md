@@ -6,8 +6,14 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-calendar", "gws-gmail", "gws-chat", "gws-drive", "gws-sheets"]
+      bins:
+        - gws
+      skills:
+        - gws-calendar
+        - gws-gmail
+        - gws-chat
+        - gws-drive
+        - gws-sheets
 ---
 
 # Team Lead

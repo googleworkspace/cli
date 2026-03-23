@@ -6,8 +6,14 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-docs", "gws-drive", "gws-gmail", "gws-chat", "gws-slides"]
+      bins:
+        - gws
+      skills:
+        - gws-docs
+        - gws-drive
+        - gws-gmail
+        - gws-chat
+        - gws-slides
 ---
 
 # Content Creator

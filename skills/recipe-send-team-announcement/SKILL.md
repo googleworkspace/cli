@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "communication"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-chat"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-chat
 ---
 
 # Announce via Gmail and Google Chat

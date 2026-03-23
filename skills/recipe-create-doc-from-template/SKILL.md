@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-docs"]
+      bins:
+        - gws
+      skills:
+        - gws-drive
+        - gws-docs
 ---
 
 # Create a Google Doc from a Template

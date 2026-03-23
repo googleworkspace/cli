@@ -6,8 +6,13 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-calendar", "gws-drive", "gws-chat"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-calendar
+        - gws-drive
+        - gws-chat
 ---
 
 # Executive Assistant

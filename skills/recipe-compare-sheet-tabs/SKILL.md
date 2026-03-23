@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
 ---
 
 # Compare Two Google Sheets Tabs

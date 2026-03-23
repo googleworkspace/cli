@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "education"
     requires:
-      bins: ["gws"]
-      skills: ["gws-classroom"]
+      bins:
+        - gws
+      skills:
+        - gws-classroom
 ---
 
 # Create a Google Classroom Course

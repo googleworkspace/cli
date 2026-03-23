@@ -7,8 +7,12 @@ metadata:
     category: "recipe"
     domain: "engineering"
     requires:
-      bins: ["gws"]
-      skills: ["gws-docs", "gws-calendar", "gws-chat"]
+      bins:
+        - gws
+      skills:
+        - gws-docs
+        - gws-calendar
+        - gws-chat
 ---
 
 # Set Up Post-Mortem

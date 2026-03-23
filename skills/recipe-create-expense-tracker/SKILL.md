@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
+        - gws-drive
 ---
 
 # Create a Google Sheets Expense Tracker

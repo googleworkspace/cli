@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-forms"]
+      bins:
+        - gws
+      skills:
+        - gws-forms
 ---
 
 # Check Form Responses

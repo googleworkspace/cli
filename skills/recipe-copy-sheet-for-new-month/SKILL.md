@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
 ---
 
 # Copy a Google Sheet for a New Month

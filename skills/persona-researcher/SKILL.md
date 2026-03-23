@@ -6,8 +6,13 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-docs", "gws-sheets", "gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-drive
+        - gws-docs
+        - gws-sheets
+        - gws-gmail
 ---
 
 # Researcher

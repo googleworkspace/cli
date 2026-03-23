@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-people", "gws-sheets"]
+      bins:
+        - gws
+      skills:
+        - gws-people
+        - gws-sheets
 ---
 
 # Export Google Contacts to Sheets

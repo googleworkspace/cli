@@ -6,7 +6,8 @@ metadata:
   openclaw:
     category: "security"
     requires:
-      bins: ["gws"]
+      bins:
+        - gws
     cliHelp: "gws modelarmor +create-template --help"
 ---
 

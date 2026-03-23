@@ -6,8 +6,13 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-calendar", "gws-sheets", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-calendar
+        - gws-sheets
+        - gws-drive
 ---
 
 # Sales Operations

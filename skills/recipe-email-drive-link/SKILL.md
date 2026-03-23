@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-drive
+        - gws-gmail
 ---
 
 # Email a Google Drive File Link

@@ -7,8 +7,12 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-docs", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
+        - gws-docs
+        - gws-drive
 ---
 
 # Generate a Google Docs Report from Sheet Data

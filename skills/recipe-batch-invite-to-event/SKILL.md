@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "scheduling"
     requires:
-      bins: ["gws"]
-      skills: ["gws-calendar"]
+      bins:
+        - gws
+      skills:
+        - gws-calendar
 ---
 
 # Add Multiple Attendees to a Calendar Event

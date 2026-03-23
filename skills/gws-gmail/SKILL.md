@@ -6,7 +6,8 @@ metadata:
   openclaw:
     category: "productivity"
     requires:
-      bins: ["gws"]
+      bins:
+        - gws
     cliHelp: "gws gmail --help"
 ---
 

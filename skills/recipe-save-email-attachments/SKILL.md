@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-drive
 ---
 
 # Save Gmail Attachments to Google Drive

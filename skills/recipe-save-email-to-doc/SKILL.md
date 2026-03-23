@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-docs"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-docs
 ---
 
 # Save a Gmail Message to Google Docs

@@ -6,8 +6,14 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-calendar", "gws-gmail", "gws-drive", "gws-chat", "gws-sheets"]
+      bins:
+        - gws
+      skills:
+        - gws-calendar
+        - gws-gmail
+        - gws-drive
+        - gws-chat
+        - gws-sheets
 ---
 
 # Event Coordinator

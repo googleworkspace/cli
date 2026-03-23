@@ -6,8 +6,13 @@ metadata:
   openclaw:
     category: "persona"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail", "gws-sheets", "gws-chat", "gws-calendar"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
+        - gws-sheets
+        - gws-chat
+        - gws-calendar
 ---
 
 # Customer Support Agent

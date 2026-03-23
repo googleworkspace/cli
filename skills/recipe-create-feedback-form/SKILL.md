@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-forms", "gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-forms
+        - gws-gmail
 ---
 
 # Create and Share a Google Form

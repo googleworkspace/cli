@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-calendar"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
+        - gws-calendar
 ---
 
 # Create Google Calendar Events from a Sheet

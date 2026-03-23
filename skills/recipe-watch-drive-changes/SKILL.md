@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "engineering"
     requires:
-      bins: ["gws"]
-      skills: ["gws-events"]
+      bins:
+        - gws
+      skills:
+        - gws-events
 ---
 
 # Watch for Drive Changes

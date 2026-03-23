@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-drive
 ---
 
 # Find Largest Files in Drive

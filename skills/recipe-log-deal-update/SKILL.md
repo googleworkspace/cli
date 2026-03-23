@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "sales"
     requires:
-      bins: ["gws"]
-      skills: ["gws-sheets", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-sheets
+        - gws-drive
 ---
 
 # Log Deal Update to Sheet

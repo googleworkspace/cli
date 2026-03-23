@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-gmail
 ---
 
 # Label and Archive Gmail Threads

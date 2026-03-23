@@ -7,8 +7,12 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-drive", "gws-docs", "gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-drive
+        - gws-docs
+        - gws-gmail
 ---
 
 # Share a Google Doc and Notify Collaborators

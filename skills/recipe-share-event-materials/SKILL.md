@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-calendar", "gws-drive"]
+      bins:
+        - gws
+      skills:
+        - gws-calendar
+        - gws-drive
 ---
 
 # Share Files with Meeting Attendees

@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "scheduling"
     requires:
-      bins: ["gws"]
-      skills: ["gws-calendar"]
+      bins:
+        - gws
+      skills:
+        - gws-calendar
 ---
 
 # Plan Your Weekly Google Calendar Schedule

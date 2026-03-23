@@ -7,8 +7,11 @@ metadata:
     category: "recipe"
     domain: "scheduling"
     requires:
-      bins: ["gws"]
-      skills: ["gws-meet", "gws-gmail"]
+      bins:
+        - gws
+      skills:
+        - gws-meet
+        - gws-gmail
 ---
 
 # Create a Google Meet Conference

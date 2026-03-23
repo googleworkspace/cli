@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-tasks"]
+      bins:
+        - gws
+      skills:
+        - gws-tasks
 ---
 
 # Review Overdue Tasks

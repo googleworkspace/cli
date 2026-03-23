@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-meet"]
+      bins:
+        - gws
+      skills:
+        - gws-meet
 ---
 
 # Review Google Meet Attendance

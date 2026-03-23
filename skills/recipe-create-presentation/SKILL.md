@@ -7,8 +7,10 @@ metadata:
     category: "recipe"
     domain: "productivity"
     requires:
-      bins: ["gws"]
-      skills: ["gws-slides"]
+      bins:
+        - gws
+      skills:
+        - gws-slides
 ---
 
 # Create a Google Slides Presentation
