@@ -1601,13 +1601,12 @@ fn prompt_login_after_setup() -> Result<bool, GwsError> {
 pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
     // Handle --help / -h before any setup work (which requires gcloud).
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!(
-            "Usage: gws auth setup [options]\n\n\
+        const SETUP_USAGE: &str = "Usage: gws auth setup [options]\n\n\
              Options:\n  \
                --project <id>  Use a specific GCP project\n  \
                --login         Run `gws auth login` after successful setup\n  \
-               --dry-run       Preview changes without making them"
-        );
+               --dry-run       Preview changes without making them";
+        println!("{SETUP_USAGE}");
         return Ok(());
     }
 
