@@ -142,43 +142,49 @@ enum ScopeMode {
     Custom(Vec<String>),
 }
 
+/// Build the clap Command for the `login` subcommand.
+/// Used by both `auth_command()` and `login_command()` as single source of truth.
+fn build_login_subcommand() -> clap::Command {
+    clap::Command::new("login")
+        .about("Authenticate via OAuth2 (opens browser)")
+        .arg(
+            clap::Arg::new("readonly")
+                .long("readonly")
+                .help("Request read-only scopes")
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with_all(["full", "scopes"]),
+        )
+        .arg(
+            clap::Arg::new("full")
+                .long("full")
+                .help("Request all scopes incl. pubsub + cloud-platform")
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with_all(["readonly", "scopes"]),
+        )
+        .arg(
+            clap::Arg::new("scopes")
+                .long("scopes")
+                .help("Comma-separated custom scopes")
+                .value_name("scopes")
+                .conflicts_with_all(["readonly", "full"]),
+        )
+        .arg(
+            clap::Arg::new("services")
+                .short('s')
+                .long("services")
+                .help(
+                    "Comma-separated service names to limit scope picker (e.g. drive,gmail,sheets)",
+                )
+                .value_name("services"),
+        )
+}
+
 /// Build the clap Command for `gws auth`.
 fn auth_command() -> clap::Command {
     clap::Command::new("auth")
         .about("Manage authentication for Google Workspace APIs")
         .subcommand_required(false)
-        .subcommand(
-            clap::Command::new("login")
-                .about("Authenticate via OAuth2 (opens browser)")
-                .arg(
-                    clap::Arg::new("readonly")
-                        .long("readonly")
-                        .help("Request read-only scopes")
-                        .action(clap::ArgAction::SetTrue)
-                        .conflicts_with_all(["full", "scopes"]),
-                )
-                .arg(
-                    clap::Arg::new("full")
-                        .long("full")
-                        .help("Request all scopes incl. pubsub + cloud-platform")
-                        .action(clap::ArgAction::SetTrue)
-                        .conflicts_with_all(["readonly", "scopes"]),
-                )
-                .arg(
-                    clap::Arg::new("scopes")
-                        .long("scopes")
-                        .help("Comma-separated custom scopes")
-                        .value_name("scopes")
-                        .conflicts_with_all(["readonly", "full"]),
-                )
-                .arg(
-                    clap::Arg::new("services")
-                        .short('s')
-                        .long("services")
-                        .help("Comma-separated service names to limit scope picker (e.g. drive,gmail,sheets)")
-                        .value_name("services"),
-                ),
-        )
+        .subcommand(build_login_subcommand())
         .subcommand(
             clap::Command::new("setup")
                 .about("Configure GCP project + OAuth client (requires gcloud)")
@@ -258,12 +264,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
 /// Build the clap Command for `gws auth login` (used by `run_login` for
 /// standalone parsing when called from setup.rs).
 fn login_command() -> clap::Command {
-    // Reuse the same definition from auth_command's login subcommand
-    auth_command()
-        .get_subcommands()
-        .find(|c| c.get_name() == "login")
-        .cloned()
-        .expect("login subcommand must exist")
+    build_login_subcommand()
 }
 
 /// Extract `ScopeMode` and optional services filter from parsed login args.
