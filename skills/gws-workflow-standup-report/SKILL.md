@@ -2,7 +2,7 @@
 name: gws-workflow-standup-report
 description: "Google Workflow: Today's meetings + open tasks as a standup summary."
 metadata:
-  version: 0.20.0
+  version: 0.20.1
   openclaw:
     category: "productivity"
     requires:

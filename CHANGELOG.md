@@ -1,5 +1,14 @@
 # @googleworkspace/cli
 
+## 0.20.1
+
+### Patch Changes
+
+- b8fd3d9: fix(client): add 10s connect timeout to prevent hangs on initial connection
+- 2bfcca9: Move version from top-level SKILL.md frontmatter to metadata and track CLI version
+- 2ddb46e: test(gmail): add regression tests for RFC 2822 display name quoting
+- 75a7121: Sync generated skills with latest Google Discovery API specs
+
 ## 0.20.0
 
 ### Minor Changes

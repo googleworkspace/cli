@@ -2,7 +2,7 @@
 name: gws-calendar-insert
 description: "Google Calendar: Create a new event."
 metadata:
-  version: 0.20.0
+  version: 0.20.1
   openclaw:
     category: "productivity"
     requires:

@@ -2,7 +2,7 @@
 name: recipe-label-and-archive-emails
 description: "Apply Gmail labels to matching messages and archive them to keep your inbox clean."
 metadata:
-  version: 0.20.0
+  version: 0.20.1
   openclaw:
     category: "recipe"
     domain: "productivity"
