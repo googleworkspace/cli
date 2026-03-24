@@ -21,6 +21,8 @@ concurrency:
 
 jobs:
   publish:
+    # Skip fork PRs — secrets (CLAWHUB_TOKEN) are not available
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
