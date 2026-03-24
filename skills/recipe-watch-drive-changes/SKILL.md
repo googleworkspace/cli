@@ -2,7 +2,7 @@
 name: recipe-watch-drive-changes
 description: "Subscribe to change notifications on a Google Drive file or folder."
 metadata:
-  version: 0.20.1
+  version: 0.21.1
   openclaw:
     category: "recipe"
     domain: "engineering"

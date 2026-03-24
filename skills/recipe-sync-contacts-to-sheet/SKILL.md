@@ -2,7 +2,7 @@
 name: recipe-sync-contacts-to-sheet
 description: "Export Google Contacts directory to a Google Sheets spreadsheet."
 metadata:
-  version: 0.20.1
+  version: 0.21.1
   openclaw:
     category: "recipe"
     domain: "productivity"

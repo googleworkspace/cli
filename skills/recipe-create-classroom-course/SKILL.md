@@ -2,7 +2,7 @@
 name: recipe-create-classroom-course
 description: "Create a Google Classroom course and invite students."
 metadata:
-  version: 0.20.1
+  version: 0.21.1
   openclaw:
     category: "recipe"
     domain: "education"
