@@ -1,5 +1,13 @@
 # @googleworkspace/cli
 
+## 0.21.2
+
+### Patch Changes
+
+- c4448b9: Add crates.io publishing to release workflow
+
+  Publishes both `google-workspace` and `google-workspace-cli` to crates.io on each release. The library crate is published first (as a dependency), followed by the CLI crate.
+
 ## 0.21.1
 
 ### Patch Changes

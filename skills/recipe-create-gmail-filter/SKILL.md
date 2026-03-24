@@ -2,7 +2,7 @@
 name: recipe-create-gmail-filter
 description: "Create a Gmail filter to automatically label, star, or categorize incoming messages."
 metadata:
-  version: 0.21.1
+  version: 0.21.2
   openclaw:
     category: "recipe"
     domain: "productivity"

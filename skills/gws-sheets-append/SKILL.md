@@ -2,7 +2,7 @@
 name: gws-sheets-append
 description: "Google Sheets: Append a row to a spreadsheet."
 metadata:
-  version: 0.21.1
+  version: 0.21.2
   openclaw:
     category: "productivity"
     requires:

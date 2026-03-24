@@ -2,7 +2,7 @@
 name: recipe-create-events-from-sheet
 description: "Read event data from a Google Sheets spreadsheet and create Google Calendar entries for each row."
 metadata:
-  version: 0.21.1
+  version: 0.21.2
   openclaw:
     category: "recipe"
     domain: "productivity"

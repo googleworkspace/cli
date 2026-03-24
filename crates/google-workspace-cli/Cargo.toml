@@ -14,7 +14,7 @@
 
 [package]
 name = "google-workspace-cli"
-version = "0.21.1"
+version = "0.21.2"
 edition = "2021"
 description = "Google Workspace CLI — dynamic command surface from Discovery Service"
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ name = "gws"
 path = "src/main.rs"
 
 [dependencies]
-google-workspace = { version = "0.21.1", path = "../google-workspace" }
+google-workspace = { version = "0.21.2", path = "../google-workspace" }
 tempfile = "3"
 aes-gcm = "0.10"
 anyhow = "1"

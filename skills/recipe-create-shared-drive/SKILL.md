@@ -2,7 +2,7 @@
 name: recipe-create-shared-drive
 description: "Create a Google Shared Drive and add members with appropriate roles."
 metadata:
-  version: 0.21.1
+  version: 0.21.2
   openclaw:
     category: "recipe"
     domain: "productivity"

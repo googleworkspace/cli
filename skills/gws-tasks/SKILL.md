@@ -2,7 +2,7 @@
 name: gws-tasks
 description: "Google Tasks: Manage task lists and tasks."
 metadata:
-  version: 0.21.1
+  version: 0.21.2
   openclaw:
     category: "productivity"
     requires:
