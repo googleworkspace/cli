@@ -184,9 +184,13 @@ pub struct JsonSchemaProperty {
 }
 
 /// Fetches and caches a Google Discovery Document.
+///
+/// When `cache_dir` is `Some`, the document is cached on disk with a 24-hour
+/// TTL. Pass `None` to skip caching entirely.
 pub async fn fetch_discovery_document(
     service: &str,
     version: &str,
+    cache_dir: Option<&std::path::Path>,
 ) -> anyhow::Result<RestDescription> {
     // Validate service and version to prevent path traversal in cache filenames
     // and injection in discovery URLs.
@@ -195,20 +199,22 @@ pub async fn fetch_discovery_document(
     let version =
         crate::validate::validate_api_identifier(version).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let cache_dir = crate::auth_commands::config_dir().join("cache");
-    std::fs::create_dir_all(&cache_dir)?;
-
-    let cache_file = cache_dir.join(format!("{service}_{version}.json"));
-
     // Check cache (24hr TTL)
-    if cache_file.exists() {
-        if let Ok(metadata) = std::fs::metadata(&cache_file) {
-            if let Ok(modified) = metadata.modified() {
-                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
-                    let data = std::fs::read_to_string(&cache_file)?;
-                    let doc: RestDescription = serde_json::from_str(&data)?;
-                    tracing::debug!(service = %service, version = %version, "Discovery cache hit");
-                    return Ok(doc);
+    if let Some(dir) = cache_dir {
+        std::fs::create_dir_all(dir)?;
+        let cache_file = dir.join(format!("{service}_{version}.json"));
+
+        if cache_file.exists() {
+            if let Ok(metadata) = std::fs::metadata(&cache_file) {
+                if let Ok(modified) = metadata.modified() {
+                    if modified.elapsed().unwrap_or_default()
+                        < std::time::Duration::from_secs(86400)
+                    {
+                        let data = std::fs::read_to_string(&cache_file)?;
+                        let doc: RestDescription = serde_json::from_str(&data)?;
+                        tracing::debug!(service = %service, version = %version, "Discovery cache hit");
+                        return Ok(doc);
+                    }
                 }
             }
         }
@@ -244,9 +250,11 @@ pub async fn fetch_discovery_document(
     };
 
     // Write to cache
-    if let Err(e) = std::fs::write(&cache_file, &body) {
-        // Non-fatal: just warn via stderr-safe approach
-        let _ = e;
+    if let Some(dir) = cache_dir {
+        let cache_file = dir.join(format!("{service}_{version}.json"));
+        if let Err(e) = std::fs::write(&cache_file, &body) {
+            let _ = e;
+        }
     }
 
     let doc: RestDescription = serde_json::from_str(&body)?;

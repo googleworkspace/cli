@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Google Workspace service registry.
+//!
+//! Maps service aliases (e.g. "drive", "gmail") to Discovery API names and versions.
+
 use crate::error::GwsError;
 
 /// A known service with its alias, API name, version, and description.

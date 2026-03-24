@@ -1,0 +1,80 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[package]
+name = "google-workspace-cli"
+version = "0.20.0"
+edition = "2021"
+description = "Google Workspace CLI — dynamic command surface from Discovery Service"
+license = "Apache-2.0"
+repository = "https://github.com/googleworkspace/cli"
+homepage = "https://github.com/googleworkspace/cli"
+readme = "../../README.md"
+authors = ["Justin Poehnelt"]
+keywords = ["cli", "google-workspace", "google", "drive", "gmail"]
+categories = ["command-line-utilities", "web-programming"]
+
+[[bin]]
+name = "gws"
+path = "src/main.rs"
+
+[dependencies]
+google-workspace = { path = "../google-workspace" }
+tempfile = "3"
+aes-gcm = "0.10"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "string"] }
+dirs = "5"
+dotenvy = "0.15"
+hostname = "0.4"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls-native-roots"], default-features = false }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+yup-oauth2 = "12"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+bytes = "1"
+base64 = "0.22.1"
+derive_builder = "0.20.2"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+chrono = "0.4.44"
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
+mail-builder = "0.4"
+async-trait = "0.1.89"
+serde_yaml = "0.9.34"
+percent-encoding = "2.3.2"
+zeroize = { version = "1.8.2", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+uuid = { version = "1.22.0", features = ["v4", "v5"] }
+mime_guess2 = "2.3.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+keyring = "3.6.3"
+
+[dev-dependencies]
+serial_test = "3.4.0"

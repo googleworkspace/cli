@@ -895,8 +895,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "gws"
-version = "0.20.1"
+name = "google-workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "percent-encoding",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "google-workspace-cli"
+version = "0.20.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -911,6 +927,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "futures-util",
+ "google-workspace",
  "hostname",
  "iana-time-zone",
  "keyring",

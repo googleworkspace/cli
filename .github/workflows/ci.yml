@@ -45,6 +45,7 @@ jobs:
             rust:
               - '**/*.rs'
               - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
               - '.cargo/**'
@@ -87,7 +88,7 @@ jobs:
           key: test-${{ matrix.os }}
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --workspace --verbose
 
   nix:
     name: Nix
@@ -146,7 +147,7 @@ jobs:
           fi
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
 
   skills:

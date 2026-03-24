@@ -14,14 +14,53 @@
 
 //! Shared input validation helpers.
 //!
-//! These functions harden CLI inputs against adversarial or accidentally
+//! These functions harden inputs against adversarial or accidentally
 //! malformed values — especially important when the CLI is invoked by an
 //! LLM agent rather than a human operator.
 
 use crate::error::GwsError;
 use std::path::{Path, PathBuf};
 
-use crate::output::reject_dangerous_chars as reject_control_chars;
+// ── Dangerous character detection ─────────────────────────────────────
+
+/// Returns `true` for Unicode characters that are dangerous in terminal
+/// output but not caught by `char::is_control()`: zero-width chars, bidi
+/// overrides, Unicode line/paragraph separators, and directional isolates.
+pub fn is_dangerous_unicode(c: char) -> bool {
+    matches!(c,
+        // zero-width: ZWSP, ZWNJ, ZWJ, BOM/ZWNBSP
+        '\u{200B}'..='\u{200D}' | '\u{FEFF}' |
+        // bidi: LRE, RLE, PDF, LRO, RLO
+        '\u{202A}'..='\u{202E}' |
+        // line / paragraph separators
+        '\u{2028}'..='\u{2029}' |
+        // directional isolates: LRI, RLI, FSI, PDI
+        '\u{2066}'..='\u{2069}'
+    )
+}
+
+/// Rejects strings containing control characters (C0: U+0000–U+001F,
+/// C1: U+0080–U+009F, and DEL: U+007F) or dangerous Unicode characters
+/// such as zero-width chars, bidi overrides, and line/paragraph separators.
+///
+/// Used for validating argument values at the parse boundary.
+pub fn reject_dangerous_chars(value: &str, flag_name: &str) -> Result<(), GwsError> {
+    for c in value.chars() {
+        if c.is_control() {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid control characters"
+            )));
+        }
+        if is_dangerous_unicode(c) {
+            return Err(GwsError::Validation(format!(
+                "{flag_name} contains invalid Unicode characters"
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ── Path validators ───────────────────────────────────────────────────
 
 /// Validates that `dir` is a safe output directory.
 ///
@@ -31,7 +70,7 @@ use crate::output::reject_dangerous_chars as reject_control_chars;
 ///
 /// Returns the canonicalized path on success.
 pub fn validate_safe_output_dir(dir: &str) -> Result<PathBuf, GwsError> {
-    reject_control_chars(dir, "--output-dir")?;
+    reject_dangerous_chars(dir, "--output-dir")?;
 
     let path = Path::new(dir);
 
@@ -79,7 +118,7 @@ pub fn validate_safe_output_dir(dir: &str) -> Result<PathBuf, GwsError> {
 /// Similar to [`validate_safe_output_dir`] but also follows symlinks
 /// safely and ensures the resolved path stays under CWD.
 pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
-    reject_control_chars(dir, "--dir")?;
+    reject_dangerous_chars(dir, "--dir")?;
 
     let path = Path::new(dir);
 
@@ -136,7 +175,7 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
 /// TOCTOU would require `openat(O_NOFOLLOW)` on each path component,
 /// which is tracked as a follow-up for Unix platforms.
 pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
-    reject_control_chars(path_str, flag_name)?;
+    reject_dangerous_chars(path_str, flag_name)?;
 
     let path = Path::new(path_str);
     let cwd = std::env::current_dir()
@@ -193,8 +232,6 @@ fn normalize_dotdot(path: &Path) -> PathBuf {
     out
 }
 
-// reject_control_chars is now a re-export from crate::output (see top of file)
-
 /// Resolves a path that may not exist yet by canonicalizing the existing
 /// prefix and appending remaining components.
 fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
@@ -233,6 +270,8 @@ fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
     Ok(resolved)
 }
 
+// ── URL encoding ──────────────────────────────────────────────────────
+
 /// Percent-encode a value for use as a single URL path segment (e.g., file ID,
 /// calendar ID, message ID). All non-alphanumeric characters are encoded.
 pub fn encode_path_segment(s: &str) -> String {
@@ -253,6 +292,8 @@ pub fn encode_path_preserving_slashes(s: &str) -> String {
         .join("/")
 }
 
+// ── Resource / API validators ─────────────────────────────────────────
+
 /// Validate a multi-segment resource name (e.g., `spaces/ABC`, `subscriptions/123`).
 /// Rejects path traversal, control characters, and URL-special characters including `%`
 /// to prevent URL-encoded bypasses. Returns the validated name or an error.
@@ -268,7 +309,7 @@ pub fn validate_resource_name(s: &str) -> Result<&str, GwsError> {
         )));
     }
     if s.chars()
-        .any(|c| c == '\0' || c.is_control() || crate::output::is_dangerous_unicode(c))
+        .any(|c| c == '\0' || c.is_control() || is_dangerous_unicode(c))
     {
         return Err(GwsError::Validation(format!(
             "Resource name contains invalid characters: {s}"
@@ -321,9 +362,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_output_dir_relative_subdir() {
-        // Create a real temp dir and change into it for the test
         let dir = tempdir().unwrap();
-        // Canonicalize to handle macOS /var -> /private/var symlink
         let canonical_dir = dir.path().canonicalize().unwrap();
         let sub = canonical_dir.join("output");
         fs::create_dir_all(&sub).unwrap();
@@ -343,21 +382,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 
-        // Create a directory inside the tempdir
         let allowed_dir = canonical_dir.join("allowed");
         fs::create_dir(&allowed_dir).unwrap();
 
-        // Create a symlink pointing OUTSIDE the tempdir (e.g. to /tmp)
         let symlink_path = canonical_dir.join("sneaky_link");
         #[cfg(unix)]
         std::os::unix::fs::symlink("/tmp", &symlink_path).unwrap();
         #[cfg(windows)]
-        return; // Skip on Windows due to privilege requirements for symlinks
+        return;
 
         let saved_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&canonical_dir).unwrap();
 
-        // Try to validate the symlink resolving outside CWD
         let result = validate_safe_output_dir("sneaky_link");
         std::env::set_current_dir(&saved_cwd).unwrap();
 
@@ -440,26 +476,26 @@ mod tests {
         assert!(validate_safe_dir_path("/usr/local").is_err());
     }
 
-    // --- reject_control_chars ---
+    // --- reject_dangerous_chars ---
 
     #[test]
-    fn test_reject_control_chars_clean() {
-        assert!(reject_control_chars("hello/world", "test").is_ok());
+    fn test_reject_dangerous_chars_clean() {
+        assert!(reject_dangerous_chars("hello/world", "test").is_ok());
     }
 
     #[test]
-    fn test_reject_control_chars_tab() {
-        assert!(reject_control_chars("hello\tworld", "test").is_err());
+    fn test_reject_dangerous_chars_tab() {
+        assert!(reject_dangerous_chars("hello\tworld", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_newline() {
-        assert!(reject_control_chars("hello\nworld", "test").is_err());
+    fn test_reject_dangerous_chars_newline() {
+        assert!(reject_dangerous_chars("hello\nworld", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_del() {
-        assert!(reject_control_chars("hello\x7Fworld", "test").is_err());
+    fn test_reject_dangerous_chars_del() {
+        assert!(reject_dangerous_chars("hello\x7Fworld", "test").is_err());
     }
 
     // -- encode_path_segment --------------------------------------------------
@@ -471,7 +507,6 @@ mod tests {
 
     #[test]
     fn test_encode_path_segment_email() {
-        // Calendar IDs are often email addresses
         let encoded = encode_path_segment("user@gmail.com");
         assert!(!encoded.contains('@'));
         assert!(!encoded.contains('.'));
@@ -479,7 +514,6 @@ mod tests {
 
     #[test]
     fn test_encode_path_segment_query_injection() {
-        // LLM might include query params in an ID by mistake
         let encoded = encode_path_segment("fileid?fields=name");
         assert!(!encoded.contains('?'));
         assert!(!encoded.contains('='));
@@ -493,7 +527,6 @@ mod tests {
 
     #[test]
     fn test_encode_path_segment_path_traversal() {
-        // Encoding makes traversal segments harmless
         let encoded = encode_path_segment("../../etc/passwd");
         assert!(!encoded.contains('/'));
         assert!(!encoded.contains(".."));
@@ -501,7 +534,6 @@ mod tests {
 
     #[test]
     fn test_encode_path_segment_unicode() {
-        // LLM might pass unicode characters
         let encoded = encode_path_segment("日本語ID");
         assert!(!encoded.contains('日'));
     }
@@ -514,10 +546,7 @@ mod tests {
 
     #[test]
     fn test_encode_path_segment_already_encoded() {
-        // LLM might double-encode by passing pre-encoded values
         let encoded = encode_path_segment("user%40gmail.com");
-        // The % itself gets encoded to %25, so %40 becomes %2540
-        // This prevents double-encoding issues at the HTTP layer
         assert!(encoded.contains("%2540"));
     }
 
@@ -572,7 +601,6 @@ mod tests {
 
     #[test]
     fn test_validate_resource_name_query_injection() {
-        // LLMs might append query strings or fragments to resource names
         assert!(validate_resource_name("spaces/ABC?key=val").is_err());
         assert!(validate_resource_name("spaces/ABC#fragment").is_err());
     }
@@ -591,64 +619,54 @@ mod tests {
 
     #[test]
     fn test_validate_resource_name_percent_bypass() {
-        // %2e%2e is ..
         assert!(validate_resource_name("%2e%2e").is_err());
         assert!(validate_resource_name("spaces/%2e%2e/etc").is_err());
-        // Just % should be rejected too
         assert!(validate_resource_name("spaces/100%").is_err());
     }
 
-    // --- reject_control_chars Unicode ---
+    // --- reject_dangerous_chars Unicode ---
 
     #[test]
-    fn test_reject_control_chars_zero_width_space() {
-        // U+200B zero-width space
-        assert!(reject_control_chars("foo\u{200B}bar", "test").is_err());
+    fn test_reject_dangerous_chars_zero_width_space() {
+        assert!(reject_dangerous_chars("foo\u{200B}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_bom() {
-        // U+FEFF byte-order mark / zero-width no-break space
-        assert!(reject_control_chars("foo\u{FEFF}bar", "test").is_err());
+    fn test_reject_dangerous_chars_bom() {
+        assert!(reject_dangerous_chars("foo\u{FEFF}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_rtl_override() {
-        // U+202E RIGHT-TO-LEFT OVERRIDE
-        assert!(reject_control_chars("foo\u{202E}bar", "test").is_err());
+    fn test_reject_dangerous_chars_rtl_override() {
+        assert!(reject_dangerous_chars("foo\u{202E}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_unicode_line_separator() {
-        // U+2028 LINE SEPARATOR
-        assert!(reject_control_chars("foo\u{2028}bar", "test").is_err());
+    fn test_reject_dangerous_chars_unicode_line_separator() {
+        assert!(reject_dangerous_chars("foo\u{2028}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_paragraph_separator() {
-        // U+2029 PARAGRAPH SEPARATOR
-        assert!(reject_control_chars("foo\u{2029}bar", "test").is_err());
+    fn test_reject_dangerous_chars_paragraph_separator() {
+        assert!(reject_dangerous_chars("foo\u{2029}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_zero_width_joiner() {
-        // U+200D ZERO WIDTH JOINER
-        assert!(reject_control_chars("foo\u{200D}bar", "test").is_err());
+    fn test_reject_dangerous_chars_zero_width_joiner() {
+        assert!(reject_dangerous_chars("foo\u{200D}bar", "test").is_err());
     }
 
     #[test]
-    fn test_reject_control_chars_normal_unicode_ok() {
-        // CJK, accented characters and emoji should pass
-        assert!(reject_control_chars("日本語", "test").is_ok());
-        assert!(reject_control_chars("café", "test").is_ok());
-        assert!(reject_control_chars("αβγ", "test").is_ok());
+    fn test_reject_dangerous_chars_normal_unicode_ok() {
+        assert!(reject_dangerous_chars("日本語", "test").is_ok());
+        assert!(reject_dangerous_chars("café", "test").is_ok());
+        assert!(reject_dangerous_chars("αβγ", "test").is_ok());
     }
 
-    // --- path validator Unicode (via validate_safe_output_dir) ---
+    // --- path validator Unicode ---
 
     #[test]
     fn test_output_dir_rejects_zero_width_chars() {
-        // U+200B in a path segment
         assert!(validate_safe_output_dir("foo\u{200B}bar").is_err());
     }
 
@@ -666,7 +684,6 @@ mod tests {
 
     #[test]
     fn test_validate_resource_name_zero_width_chars() {
-        // U+200B, U+200D, U+FEFF all rejected
         assert!(validate_resource_name("foo\u{200B}bar").is_err());
         assert!(validate_resource_name("foo\u{200D}bar").is_err());
         assert!(validate_resource_name("foo\u{FEFF}bar").is_err());
@@ -685,21 +702,17 @@ mod tests {
 
     #[test]
     fn test_validate_resource_name_bidi_embedding() {
-        // U+202A LEFT-TO-RIGHT EMBEDDING, U+202B RIGHT-TO-LEFT EMBEDDING
         assert!(validate_resource_name("foo\u{202A}bar").is_err());
         assert!(validate_resource_name("foo\u{202B}bar").is_err());
     }
 
     #[test]
     fn test_validate_resource_name_homoglyphs_pass_through() {
-        // Cyrillic lookalikes are intentionally allowed (homoglyph detection
-        // is out of scope for this validator — see validate_resource_name docs).
-        assert!(validate_resource_name("spaces/ΑΒС").is_ok()); // Cyrillic С
+        assert!(validate_resource_name("spaces/ΑΒС").is_ok());
     }
 
     #[test]
     fn test_validate_resource_name_overlong_accepted() {
-        // No length limit — documents current behaviour.
         let long = "a".repeat(10_000);
         assert!(validate_resource_name(&long).is_ok());
     }
@@ -790,7 +803,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 
-        // Create a symlink that points outside the directory
         #[cfg(unix)]
         {
             let link_path = canonical_dir.join("escape");
@@ -809,9 +821,6 @@ mod tests {
     #[test]
     #[serial]
     fn test_file_path_rejects_traversal_via_nonexistent_prefix() {
-        // Regression: non_existent/../../etc/passwd could bypass starts_with
-        // because normalize_non_existing preserves ".." in the non-existent
-        // suffix. The normalize_dotdot fix resolves this.
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 

@@ -34,8 +34,10 @@ jobs:
           fetch-depth: 0
       - name: Enforce AGENTS.md rules
         run: |
-          if grep -qE "^google-[a-zA-Z0-9_-]+[[:space:]]*=" Cargo.toml; then
-            echo "::error file=Cargo.toml::Violates AGENTS.md: Adding generated google-* crates is prohibited. The CLI uses dynamic schema discovery at runtime."
+          # Check CLI crate for prohibited google-* registry crates.
+          # Path dependencies (e.g. google-workspace = { path = ... }) are allowed.
+          if grep -E "^google-[a-zA-Z0-9_-]+[[:space:]]*=" crates/cli/Cargo.toml | grep -v 'path[[:space:]]*='; then
+            echo "::error file=crates/cli/Cargo.toml::Violates AGENTS.md: Adding generated google-* crates is prohibited. The CLI uses dynamic schema discovery at runtime."
             exit 1
           fi
           echo "Policy check passed."
