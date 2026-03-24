@@ -1,8 +1,8 @@
 ---
 name: gws-gmail-watch
-version: 1.0.0
 description: "Gmail: Watch for new emails and stream them as NDJSON."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "productivity"
     requires:

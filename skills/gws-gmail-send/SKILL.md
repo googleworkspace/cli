@@ -1,8 +1,8 @@
 ---
 name: gws-gmail-send
-version: 1.0.0
 description: "Gmail: Send an email."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "productivity"
     requires:

@@ -1,8 +1,8 @@
 ---
 name: gws-gmail-reply-all
-version: 1.0.0
 description: "Gmail: Reply-all to a message (handles threading automatically)."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "productivity"
     requires:

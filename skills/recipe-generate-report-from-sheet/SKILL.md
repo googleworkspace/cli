@@ -1,8 +1,8 @@
 ---
 name: recipe-generate-report-from-sheet
-version: 1.0.0
 description: "Read data from a Google Sheet and create a formatted Google Docs report."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "productivity"

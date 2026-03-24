@@ -1,8 +1,8 @@
 ---
 name: persona-sales-ops
-version: 1.0.0
 description: "Manage sales workflows — track deals, schedule calls, client comms."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "persona"
     requires:

@@ -1,8 +1,8 @@
 ---
 name: recipe-create-feedback-form
-version: 1.0.0
 description: "Create a Google Form for feedback and share it via Gmail."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "productivity"

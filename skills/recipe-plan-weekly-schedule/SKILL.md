@@ -1,8 +1,8 @@
 ---
 name: recipe-plan-weekly-schedule
-version: 1.0.0
 description: "Review your Google Calendar week, identify gaps, and add events to fill them."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "scheduling"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Syncs the version from package.json into Cargo.toml and updates Cargo.lock.
+# Syncs the version from package.json into Cargo.toml, updates Cargo.lock, and regenerates skills.
 # Used by changesets/action as a custom version command.
 set -euo pipefail
 
@@ -26,5 +26,8 @@ if command -v nix > /dev/null 2>&1; then
   nix flake lock --update-input nixpkgs
 fi
 
+# Regenerate skills so metadata.version tracks the CLI version
+cargo run -- generate-skills --output-dir skills
+
 # Stage the changed files so changesets/action commits them
-git add Cargo.toml Cargo.lock flake.nix flake.lock
+git add Cargo.toml Cargo.lock flake.nix flake.lock skills/

@@ -385,9 +385,9 @@ fn render_service_skill(
     out.push_str(&format!(
         r#"---
 name: gws-{alias}
-version: 1.0.0
 description: "{trigger_desc}"
 metadata:
+  version: {version}
   openclaw:
     category: "productivity"
     requires:
@@ -397,6 +397,7 @@ metadata:
 ---
 
 "#,
+        version = env!("CARGO_PKG_VERSION"),
     ));
 
     // Title
@@ -522,9 +523,9 @@ fn render_helper_skill(
     out.push_str(&format!(
         r#"---
 name: gws-{alias}-{short}
-version: 1.0.0
 description: "{trigger_desc}"
 metadata:
+  version: {version}
   openclaw:
     category: "{category}"
     requires:
@@ -534,6 +535,7 @@ metadata:
 ---
 
 "#,
+        version = env!("CARGO_PKG_VERSION"),
     ));
 
     // Title
@@ -670,9 +672,9 @@ metadata:
 fn generate_shared_skill(base: &Path) -> Result<(), GwsError> {
     let content = r#"---
 name: gws-shared
-version: 1.0.0
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 metadata:
+  version: __VERSION__
   openclaw:
     category: "productivity"
     requires:
@@ -750,9 +752,10 @@ gws <service> <resource> [sub-resource] <method> [flags]
 - For bugs or feature requests, direct users to open issues in the repository: `https://github.com/googleworkspace/cli/issues`
 - Before creating a new issue, **always** search existing issues and feature requests first
 - If a matching issue already exists, add context by commenting on the existing thread instead of creating a duplicate
-"#;
+"#
+    .replace("__VERSION__", env!("CARGO_PKG_VERSION"));
 
-    write_skill(base, "gws-shared", content)
+    write_skill(base, "gws-shared", &content)
 }
 
 fn render_persona_skill(persona: &PersonaEntry) -> String {
@@ -771,9 +774,9 @@ fn render_persona_skill(persona: &PersonaEntry) -> String {
     out.push_str(&format!(
         r#"---
 name: persona-{name}
-version: 1.0.0
 description: "{trigger_desc}"
 metadata:
+  version: {version}
   openclaw:
     category: "persona"
     requires:
@@ -804,6 +807,7 @@ metadata:
             .map(|s| format!("`gws-{s}`"))
             .collect::<Vec<_>>()
             .join(", "),
+        version = env!("CARGO_PKG_VERSION"),
         workflows = persona
             .workflows
             .iter()
@@ -843,9 +847,9 @@ fn render_recipe_skill(recipe: &RecipeEntry) -> String {
     out.push_str(&format!(
         r#"---
 name: recipe-{name}
-version: 1.0.0
 description: "{trigger_desc}"
 metadata:
+  version: {version}
   openclaw:
     category: "recipe"
     domain: "{category}"
@@ -867,6 +871,7 @@ metadata:
         description = recipe.description,
         title = recipe.title,
         category = recipe.category,
+        version = env!("CARGO_PKG_VERSION"),
         skills = required_skills,
         skills_list = recipe
             .services
@@ -1261,6 +1266,10 @@ mod tests {
         let fm = extract_frontmatter(&md);
         assert_block_style_sequences(fm);
         assert!(
+            fm.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+            "frontmatter should contain version matching CLI version"
+        );
+        assert!(
             fm.contains("bins:\n"),
             "frontmatter should contain 'bins:' on its own line"
         );
@@ -1277,6 +1286,10 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join("gws-shared/SKILL.md")).unwrap();
         let fm = extract_frontmatter(&content);
         assert_block_style_sequences(fm);
+        assert!(
+            fm.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+            "shared skill frontmatter should contain version matching CLI version"
+        );
         assert!(
             fm.contains("- gws"),
             "shared skill frontmatter should contain '- gws'"
@@ -1297,6 +1310,10 @@ mod tests {
         let md = render_persona_skill(&persona);
         let fm = extract_frontmatter(&md);
         assert_block_style_sequences(fm);
+        assert!(
+            fm.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+            "persona frontmatter should contain version matching CLI version"
+        );
         assert!(
             fm.contains("- gws"),
             "persona frontmatter should contain '- gws'"
@@ -1325,6 +1342,10 @@ mod tests {
         let md = render_recipe_skill(&recipe);
         let fm = extract_frontmatter(&md);
         assert_block_style_sequences(fm);
+        assert!(
+            fm.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+            "recipe frontmatter should contain version matching CLI version"
+        );
         assert!(
             fm.contains("- gws"),
             "recipe frontmatter should contain '- gws'"
@@ -1369,6 +1390,10 @@ mod tests {
         );
         let fm = extract_frontmatter(&md);
         assert_block_style_sequences(fm);
+        assert!(
+            fm.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))),
+            "helper frontmatter should contain version matching CLI version"
+        );
         assert!(
             fm.contains("bins:\n"),
             "frontmatter should contain 'bins:' on its own line"

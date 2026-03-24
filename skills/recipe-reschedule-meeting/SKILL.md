@@ -1,8 +1,8 @@
 ---
 name: recipe-reschedule-meeting
-version: 1.0.0
 description: "Move a Google Calendar event to a new time and automatically notify all attendees."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "scheduling"

@@ -1,8 +1,8 @@
 ---
 name: persona-researcher
-version: 1.0.0
 description: "Organize research — manage references, notes, and collaboration."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "persona"
     requires:

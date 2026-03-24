@@ -1,8 +1,8 @@
 ---
 name: recipe-post-mortem-setup
-version: 1.0.0
 description: "Create a Google Docs post-mortem, schedule a Google Calendar review, and notify via Chat."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "engineering"

@@ -1,8 +1,8 @@
 ---
 name: recipe-draft-email-from-doc
-version: 1.0.0
 description: "Read content from a Google Doc and use it as the body of a Gmail message."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "recipe"
     domain: "productivity"

@@ -1,8 +1,8 @@
 ---
 name: persona-content-creator
-version: 1.0.0
 description: "Create, organize, and distribute content across Workspace."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "persona"
     requires:

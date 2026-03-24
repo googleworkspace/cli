@@ -1,8 +1,8 @@
 ---
 name: persona-project-manager
-version: 1.0.0
 description: "Coordinate projects — track tasks, schedule meetings, and share docs."
 metadata:
+  version: 0.19.0
   openclaw:
     category: "persona"
     requires:
