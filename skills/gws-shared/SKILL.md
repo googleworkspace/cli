@@ -2,7 +2,7 @@
 name: gws-shared
 description: "gws CLI: Shared patterns for authentication, global flags, and output formatting."
 metadata:
-  version: 0.19.0
+  version: 0.20.0
   openclaw:
     category: "productivity"
     requires:

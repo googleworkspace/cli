@@ -2,7 +2,7 @@
 name: recipe-forward-labeled-emails
 description: "Find Gmail messages with a specific label and forward them to another address."
 metadata:
-  version: 0.19.0
+  version: 0.20.0
   openclaw:
     category: "recipe"
     domain: "productivity"

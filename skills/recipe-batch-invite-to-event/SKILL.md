@@ -2,7 +2,7 @@
 name: recipe-batch-invite-to-event
 description: "Add a list of attendees to an existing Google Calendar event and send notifications."
 metadata:
-  version: 0.19.0
+  version: 0.20.0
   openclaw:
     category: "recipe"
     domain: "scheduling"

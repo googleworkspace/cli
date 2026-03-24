@@ -2,7 +2,7 @@
 name: recipe-send-team-announcement
 description: "Send a team announcement via both Gmail and a Google Chat space."
 metadata:
-  version: 0.19.0
+  version: 0.20.0
   openclaw:
     category: "recipe"
     domain: "communication"

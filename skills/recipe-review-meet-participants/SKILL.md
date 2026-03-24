@@ -2,7 +2,7 @@
 name: recipe-review-meet-participants
 description: "Review who attended a Google Meet conference and for how long."
 metadata:
-  version: 0.19.0
+  version: 0.20.0
   openclaw:
     category: "recipe"
     domain: "productivity"
