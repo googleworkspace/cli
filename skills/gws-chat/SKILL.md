@@ -56,6 +56,7 @@ gws chat <resource> <method> [flags]
 
 ### users
 
+  - `sections` — Operations on the 'sections' resource
   - `spaces` — Operations on the 'spaces' resource
 
 ## Discovering Commands
