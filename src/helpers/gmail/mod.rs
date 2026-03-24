@@ -2675,6 +2675,41 @@ mod tests {
         assert_eq!(named.to_string(), "Alice <alice@example.com>");
     }
 
+    /// Regression test for PR #513: display names with RFC 2822 special characters
+    /// (commas, parens, colons, etc.) must be properly quoted in the To: header
+    /// so Gmail does not reject them with "Invalid To header".
+    #[test]
+    fn test_rfc2822_display_name_quoting_via_mail_builder() {
+        let test_cases = [
+            ("Anderson, Rich (CORP)", "rich@example.com", "comma/parens"),
+            ("Dr. Smith: Chief", "smith@example.com", "colon"),
+            ("O'Brien & Co.", "ob@example.com", "dot/ampersand"),
+        ];
+
+        for (name, email, description) in test_cases {
+            let m = Mailbox {
+                name: Some(name.to_string()),
+                email: email.to_string(),
+            };
+            let raw = mail_builder::MessageBuilder::new()
+                .to(to_mb_address(&m))
+                .subject("test")
+                .text_body("body")
+                .write_to_string()
+                .unwrap();
+            let to_line = raw
+                .lines()
+                .find(|l| l.starts_with("To:"))
+                .unwrap_or_else(|| panic!("No To: header for case: {description}"));
+
+            let quoted = format!("\"{name}\"");
+            assert!(
+                to_line.contains(&quoted) || to_line.contains("=?utf-8?"),
+                "Display name with {description} must be quoted: {to_line}"
+            );
+        }
+    }
+
     #[test]
     fn test_strip_angle_brackets() {
         assert_eq!(strip_angle_brackets("<abc@example.com>"), "abc@example.com");
