@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.22.0
+
+### Minor Changes
+
+- 0850c48: Add `--draft` flag to Gmail `+send`, `+reply`, `+reply-all`, and `+forward` helpers to save messages as drafts instead of sending them immediately
+
 ## 0.21.2
 
 ### Patch Changes

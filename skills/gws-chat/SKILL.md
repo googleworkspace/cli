@@ -2,7 +2,7 @@
 name: gws-chat
 description: "Google Chat: Manage Chat spaces and messages."
 metadata:
-  version: 0.21.2
+  version: 0.22.0
   openclaw:
     category: "productivity"
     requires:
