@@ -11,8 +11,8 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Extract version from Cargo.toml
-        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        # Extract version from CLI crate's Cargo.toml
+        cargoToml = builtins.fromTOML (builtins.readFile ./crates/google-workspace-cli/Cargo.toml);
         version = cargoToml.package.version;
 
         # System dependencies
