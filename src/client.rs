@@ -1,5 +1,11 @@
 use reqwest::header::{HeaderMap, HeaderValue};
 
+const MAX_RETRIES: u32 = 3;
+/// Maximum seconds to sleep on a 429 Retry-After header. Prevents a hostile
+/// or misconfigured server from hanging the process indefinitely.
+const MAX_RETRY_DELAY_SECS: u64 = 60;
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+
 pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
     let mut headers = HeaderMap::new();
     let name = env!("CARGO_PKG_NAME");
@@ -13,16 +19,12 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
 
     reqwest::Client::builder()
         .default_headers(headers)
+        .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
         .map_err(|e| {
             crate::error::GwsError::Other(anyhow::anyhow!("Failed to build HTTP client: {e}"))
         })
 }
-
-const MAX_RETRIES: u32 = 3;
-/// Maximum seconds to sleep on a 429 Retry-After header. Prevents a hostile
-/// or misconfigured server from hanging the process indefinitely.
-const MAX_RETRY_DELAY_SECS: u64 = 60;
 
 /// Send an HTTP request with automatic retry on 429 (rate limit) responses.
 /// Respects the `Retry-After` header; falls back to exponential backoff (1s, 2s, 4s).
