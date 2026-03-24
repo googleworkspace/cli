@@ -4,40 +4,43 @@
 "area: auth":
   - changed-files:
       - any-glob-to-any-file:
-          - src/auth.rs
-          - src/auth_commands.rs
-          - src/setup.rs
-          - src/accounts.rs
-          - src/credential_store.rs
-          - src/token_storage.rs
-          - src/oauth_config.rs
+          - crates/google-workspace-cli/src/auth.rs
+          - crates/google-workspace-cli/src/auth_commands.rs
+          - crates/google-workspace-cli/src/setup.rs
+          - crates/google-workspace-cli/src/accounts.rs
+          - crates/google-workspace-cli/src/credential_store.rs
+          - crates/google-workspace-cli/src/token_storage.rs
+          - crates/google-workspace-cli/src/oauth_config.rs
 
 "area: discovery":
   - changed-files:
       - any-glob-to-any-file:
-          - src/discovery.rs
-          - src/services.rs
+          - crates/google-workspace-cli/src/discovery.rs
+          - crates/google-workspace-cli/src/services.rs
+          - crates/google-workspace/src/discovery.rs
+          - crates/google-workspace/src/services.rs
 
 "area: http":
   - changed-files:
       - any-glob-to-any-file:
-          - src/executor.rs
-          - src/client.rs
+          - crates/google-workspace-cli/src/executor.rs
+          - crates/google-workspace-cli/src/client.rs
+          - crates/google-workspace/src/client.rs
 
 "area: tui":
   - changed-files:
       - any-glob-to-any-file:
-          - src/setup_tui.rs
+          - crates/google-workspace-cli/src/setup_tui.rs
 
 "area: mcp":
   - changed-files:
       - any-glob-to-any-file:
-          - src/mcp_server.rs
+          - crates/google-workspace-cli/src/mcp_server.rs
 
 "area: skills":
   - changed-files:
       - any-glob-to-any-file:
-          - src/generate_skills.rs
+          - crates/google-workspace-cli/src/generate_skills.rs
           - skills/**
 
 "area: docs":
@@ -53,16 +56,23 @@
           - .github/workflows/release-changesets.yml
           - dist-workspace.toml
           - Cargo.toml
+          - crates/*/Cargo.toml
 
 "area: core":
   - changed-files:
       - any-glob-to-any-file:
-          - src/main.rs
-          - src/commands.rs
-          - src/error.rs
-          - src/formatter.rs
-          - src/fs_util.rs
-          - src/helpers/**
-          - src/text.rs
-          - src/validate.rs
-          - src/schema.rs
+          - crates/google-workspace-cli/src/main.rs
+          - crates/google-workspace-cli/src/commands.rs
+          - crates/google-workspace-cli/src/error.rs
+          - crates/google-workspace-cli/src/formatter.rs
+          - crates/google-workspace-cli/src/fs_util.rs
+          - crates/google-workspace-cli/src/helpers/**
+          - crates/google-workspace-cli/src/text.rs
+          - crates/google-workspace-cli/src/validate.rs
+          - crates/google-workspace-cli/src/schema.rs
+
+"crate: google-workspace":
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/google-workspace/src/**
+          - crates/google-workspace/Cargo.toml
