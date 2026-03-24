@@ -212,7 +212,12 @@ impl AccessTokenProvider for FakeTokenProvider {
 ///    - Well-known ADC path: `~/.config/gcloud/application_default_credentials.json`
 ///      (populated by `gcloud auth application-default login`)
 pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
-    // 0. Direct token from env var (highest priority, bypasses all credential loading)
+    // 0. Enforce readonly session: reject write scopes if user logged in with --readonly
+    // Note: readonly scope guard is enforced here so it also covers helper commands
+    // that call get_token() directly (e.g. +send, +triage).
+    crate::auth_commands::check_scopes_allowed(scopes).await?;
+
+    // 1. Direct token from env var (highest priority, bypasses all credential loading)
     if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
         if !token.is_empty() {
             return Ok(token);
