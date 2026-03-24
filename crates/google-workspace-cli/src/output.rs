@@ -19,11 +19,8 @@
 //! these helpers to prevent escape-sequence injection, Unicode spoofing,
 //! and to respect `NO_COLOR` / non-TTY environments.
 
-use crate::error::GwsError;
-
 // Import dangerous-char detection from the library crate.
 pub(crate) use google_workspace::validate::is_dangerous_unicode;
-pub(crate) use google_workspace::validate::reject_dangerous_chars;
 
 // ── Sanitization ──────────────────────────────────────────────────────
 
@@ -43,16 +40,6 @@ pub(crate) fn sanitize_for_terminal(text: &str) -> String {
             !is_dangerous_unicode(c)
         })
         .collect()
-}
-
-/// Rejects strings containing control characters or dangerous Unicode characters.
-/// This is a re-export alias for backwards compatibility within the CLI crate.
-#[allow(dead_code)]
-pub(crate) fn reject_dangerous_chars_for_flag(
-    value: &str,
-    flag_name: &str,
-) -> Result<(), GwsError> {
-    reject_dangerous_chars(value, flag_name)
 }
 
 // ── Color ─────────────────────────────────────────────────────────────
@@ -157,70 +144,6 @@ mod tests {
     #[test]
     fn sanitize_preserves_normal_unicode() {
         assert_eq!(sanitize_for_terminal("日本語 café αβγ"), "日本語 café αβγ");
-    }
-
-    // ── reject_dangerous_chars ────────────────────────────────────
-
-    #[test]
-    fn reject_clean_string() {
-        assert!(reject_dangerous_chars("hello/world", "test").is_ok());
-    }
-
-    #[test]
-    fn reject_tab() {
-        assert!(reject_dangerous_chars("hello\tworld", "test").is_err());
-    }
-
-    #[test]
-    fn reject_newline() {
-        assert!(reject_dangerous_chars("hello\nworld", "test").is_err());
-    }
-
-    #[test]
-    fn reject_del() {
-        assert!(reject_dangerous_chars("hello\x7Fworld", "test").is_err());
-    }
-
-    #[test]
-    fn reject_zero_width_space() {
-        assert!(reject_dangerous_chars("foo\u{200B}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_bom() {
-        assert!(reject_dangerous_chars("foo\u{FEFF}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_rtl_override() {
-        assert!(reject_dangerous_chars("foo\u{202E}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_line_separator() {
-        assert!(reject_dangerous_chars("foo\u{2028}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_paragraph_separator() {
-        assert!(reject_dangerous_chars("foo\u{2029}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_zero_width_joiner() {
-        assert!(reject_dangerous_chars("foo\u{200D}bar", "test").is_err());
-    }
-
-    #[test]
-    fn reject_preserves_normal_unicode() {
-        assert!(reject_dangerous_chars("日本語", "test").is_ok());
-        assert!(reject_dangerous_chars("café", "test").is_ok());
-        assert!(reject_dangerous_chars("αβγ", "test").is_ok());
-    }
-
-    #[test]
-    fn reject_c1_control_csi() {
-        assert!(reject_dangerous_chars("foo\u{009B}bar", "test").is_err());
     }
 
     // ── colorize ──────────────────────────────────────────────────
