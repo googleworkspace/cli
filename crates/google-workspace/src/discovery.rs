@@ -201,20 +201,16 @@ pub async fn fetch_discovery_document(
 
     // Check cache (24hr TTL)
     if let Some(dir) = cache_dir {
-        std::fs::create_dir_all(dir)?;
+        tokio::fs::create_dir_all(dir).await?;
         let cache_file = dir.join(format!("{service}_{version}.json"));
 
-        if cache_file.exists() {
-            if let Ok(metadata) = std::fs::metadata(&cache_file) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified.elapsed().unwrap_or_default()
-                        < std::time::Duration::from_secs(86400)
-                    {
-                        let data = std::fs::read_to_string(&cache_file)?;
-                        let doc: RestDescription = serde_json::from_str(&data)?;
-                        tracing::debug!(service = %service, version = %version, "Discovery cache hit");
-                        return Ok(doc);
-                    }
+        if let Ok(metadata) = tokio::fs::metadata(&cache_file).await {
+            if let Ok(modified) = metadata.modified() {
+                if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(86400) {
+                    let data = tokio::fs::read_to_string(&cache_file).await?;
+                    let doc: RestDescription = serde_json::from_str(&data)?;
+                    tracing::debug!(service = %service, version = %version, "Discovery cache hit");
+                    return Ok(doc);
                 }
             }
         }
@@ -252,8 +248,8 @@ pub async fn fetch_discovery_document(
     // Write to cache
     if let Some(dir) = cache_dir {
         let cache_file = dir.join(format!("{service}_{version}.json"));
-        if let Err(e) = std::fs::write(&cache_file, &body) {
-            let _ = e;
+        if let Err(e) = tokio::fs::write(&cache_file, &body).await {
+            tracing::warn!(error = %e, "Failed to write discovery cache");
         }
     }
 
