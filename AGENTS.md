@@ -5,7 +5,7 @@
 `gws` is a Rust CLI tool for interacting with Google Workspace APIs. It dynamically generates its command surface at runtime by parsing Google Discovery Service JSON documents.
 
 > [!IMPORTANT]
-> **Dynamic Discovery**: This project does NOT use generated Rust crates (e.g., `google-drive3`) for API interaction. Instead, it fetches the Discovery JSON at runtime and builds `clap` commands dynamically. When adding a new service, you only need to register it in `src/services.rs` and verify the Discovery URL pattern in `src/discovery.rs`. Do NOT add new crates to `Cargo.toml` for standard Google APIs.
+> **Dynamic Discovery**: This project does NOT use generated Rust crates (e.g., `google-drive3`) for API interaction. Instead, it fetches the Discovery JSON at runtime and builds `clap` commands dynamically. When adding a new service, you only need to register it in `crates/google-workspace/src/services.rs` and verify the Discovery URL pattern in `crates/google-workspace/src/discovery.rs`. Do NOT add new crates to `Cargo.toml` for standard Google APIs.
 
 > [!NOTE]
 > **Package Manager**: Use `pnpm` instead of `npm` for Node.js package management in this repository.
@@ -42,22 +42,38 @@ The CLI uses a **two-phase argument parsing** strategy:
 1. Parse argv to extract the service name (e.g., `drive`)
 2. Fetch the service's Discovery Document, build a dynamic `clap::Command` tree, then re-parse
 
-### Source Layout
+### Workspace Layout
 
-| File                      | Purpose                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| `src/main.rs`             | Entrypoint, two-phase CLI parsing, method resolution                                      |
-| `src/discovery.rs`        | Serde models for Discovery Document + fetch/cache                                         |
-| `src/services.rs`         | Service alias → Discovery API name/version mapping                                        |
-| `src/auth.rs`             | OAuth2 token acquisition via env vars, encrypted credentials, or ADC                      |
-| `src/credential_store.rs` | AES-256-GCM encryption/decryption of credential files                                     |
-| `src/auth_commands.rs`    | `gws auth` subcommands: `login`, `logout`, `setup`, `status`, `export`                    |
-| `src/commands.rs`         | Recursive `clap::Command` builder from Discovery resources                                |
-| `src/executor.rs`         | HTTP request construction, response handling, schema validation                           |
-| `src/schema.rs`           | `gws schema` command — introspect API method schemas                                      |
-| `src/error.rs`            | Structured JSON error output                                                              |
-| `src/logging.rs`          | Opt-in structured logging (stderr + file) via `tracing`                                   |
-| `src/timezone.rs`         | Account timezone resolution: `--timezone` flag, Calendar Settings API, 24h cache           |
+The repository is a Cargo workspace with two crates:
+
+| Crate                          | Package                 | Purpose                                           |
+| ------------------------------ | ----------------------- | ------------------------------------------------- |
+| `crates/google-workspace/`     | `google-workspace`      | Publishable library — core types and helpers       |
+| `crates/google-workspace-cli/` | `google-workspace-cli`  | Binary crate — the `gws` CLI                       |
+
+#### Library (`crates/google-workspace/src/`)
+
+| File             | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `discovery.rs`   | Serde models for Discovery Document + async fetch/cache    |
+| `services.rs`    | Service alias → Discovery API name/version mapping         |
+| `error.rs`       | `GwsError` enum, exit codes, JSON serialization            |
+| `validate.rs`    | Path/URL/resource validators, `encode_path_segment()`      |
+| `client.rs`      | HTTP client with retry logic                               |
+
+#### CLI (`crates/google-workspace-cli/src/`)
+
+| File                | Purpose                                                                  |
+| ------------------- | ------------------------------------------------------------------------ |
+| `main.rs`           | Entrypoint, two-phase CLI parsing, method resolution                     |
+| `auth.rs`           | OAuth2 token acquisition via env vars, encrypted credentials, or ADC     |
+| `credential_store.rs` | AES-256-GCM encryption/decryption of credential files                  |
+| `auth_commands.rs`  | `gws auth` subcommands: `login`, `logout`, `setup`, `status`, `export`   |
+| `commands.rs`       | Recursive `clap::Command` builder from Discovery resources               |
+| `executor.rs`       | HTTP request construction, response handling, schema validation          |
+| `schema.rs`         | `gws schema` command — introspect API method schemas                     |
+| `logging.rs`        | Opt-in structured logging (stderr + file) via `tracing`                  |
+| `timezone.rs`       | Account timezone resolution: `--timezone` flag, Calendar Settings API    |
 
 ## Demo Videos
 
@@ -88,7 +104,7 @@ ASCII art title cards live in `art/`. The `scripts/show-art.sh` helper clears th
 > [!NOTE]
 > **Environment variables are trusted inputs.** The validation rules above apply to **CLI arguments** that may be passed by untrusted AI agents. Environment variables (e.g. `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`) are set by the user themselves — in their shell profile, `.env` file, or deployment config — and are not subject to path traversal validation. This is consistent with standard conventions like `XDG_CONFIG_HOME`, `CARGO_HOME`, etc.
 
-### Path Safety (`src/validate.rs`)
+### Path Safety (`crates/google-workspace/src/validate.rs`)
 
 When adding new helpers or CLI flags that accept file paths, **always validate** using the shared helpers:
 
@@ -106,7 +122,7 @@ if let Some(output_dir) = matches.get_one::<String>("output-dir") {
 }
 ```
 
-### URL Encoding (`src/helpers/mod.rs`)
+### URL Encoding (`crates/google-workspace-cli/src/helpers/mod.rs`)
 
 User-supplied values embedded in URL **path segments** must be percent-encoded. Use the shared helper:
 
@@ -131,7 +147,7 @@ client.get(url).query(&[("q", user_query)]).send().await?;
 let url = format!("{}?q={}", base_url, user_query);
 ```
 
-### Resource Name Validation (`src/helpers/mod.rs`)
+### Resource Name Validation (`crates/google-workspace-cli/src/helpers/mod.rs`)
 
 When a user-supplied string is used as a GCP resource identifier (project ID, topic name, space name, etc.) that gets embedded in a URL path, validate it first:
 
@@ -173,7 +189,7 @@ Helpers are handwritten commands prefixed with `+` that provide value the schema
 > [!IMPORTANT]
 > **Do NOT add a helper that** wraps a single API call already available via Discovery, adds flags to expose data already in the API response, or re-implements Discovery parameters as custom flags. Helper flags must control orchestration logic — use `--params` and `--format`/`jq` for API parameters and output filtering.
 
-See [`src/helpers/README.md`](src/helpers/README.md) for full guidelines, anti-patterns, and a checklist for new helpers.
+See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md) for full guidelines, anti-patterns, and a checklist for new helpers.
 
 ## Environment Variables
 
