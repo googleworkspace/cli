@@ -345,6 +345,129 @@ fn token_cache_path() -> PathBuf {
     config_dir().join("token_cache.json")
 }
 
+fn scopes_path() -> PathBuf {
+    config_dir().join("scopes.json")
+}
+
+/// Save the configured scope set so scope changes can be detected across sessions.
+async fn save_scopes(scopes: &[String]) -> Result<(), GwsError> {
+    let json = serde_json::to_string_pretty(scopes)
+        .map_err(|e| GwsError::Validation(format!("Failed to serialize scopes: {e}")))?;
+    crate::fs_util::atomic_write_async(&scopes_path(), json.as_bytes())
+        .await
+        .map_err(|e| GwsError::Validation(format!("Failed to save scopes file: {e}")))?;
+    Ok(())
+}
+
+/// Load the previously saved scope set, if any.
+///
+/// Returns `Ok(None)` if `scopes.json` does not exist, `Ok(Some(...))` on
+/// success, or `Err` if the file exists but is unreadable or contains invalid
+/// JSON.
+pub async fn load_saved_scopes() -> Result<Option<Vec<String>>, GwsError> {
+    let path = scopes_path();
+    match tokio::fs::read_to_string(&path).await {
+        Ok(data) => {
+            let scopes: Vec<String> = serde_json::from_str(&data).map_err(|e| {
+                GwsError::Validation(format!("Failed to parse {}: {e}", path.display()))
+            })?;
+            Ok(Some(scopes))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(GwsError::Validation(format!(
+            "Failed to read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
+/// Returns true if a scope does not grant write access (identity or .readonly scopes).
+fn is_non_write_scope(scope: &str) -> bool {
+    scope.ends_with(".readonly")
+        || scope == "openid"
+        || scope.starts_with("https://www.googleapis.com/auth/userinfo.")
+        || scope == "email"
+        || scope == "profile"
+}
+
+/// Returns true if the saved scopes are all read-only.
+pub async fn is_readonly_session() -> Result<bool, GwsError> {
+    Ok(load_saved_scopes()
+        .await?
+        .map(|scopes| scopes.iter().all(|s| is_non_write_scope(s)))
+        .unwrap_or(false))
+}
+
+/// Check if the requested scopes are compatible with the current session.
+///
+/// In a readonly session, write-scope requests are rejected with a clear error.
+pub async fn check_scopes_allowed(scopes: &[&str]) -> Result<(), GwsError> {
+    if is_readonly_session().await? {
+        if let Some(scope) = scopes.iter().find(|s| !is_non_write_scope(s)) {
+            return Err(GwsError::Auth(format!(
+                "This operation requires scope '{}' (write access), but the current session \
+                 uses read-only scopes. Run `gws auth login` (without --readonly) to upgrade.",
+                scope
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Attempt to revoke the old refresh token via Google's revocation endpoint.
+///
+/// Best-effort: warns on failure but does not return an error, since the
+/// subsequent credential cleanup and fresh login will proceed regardless.
+async fn attempt_token_revocation() {
+    let creds_str = match credential_store::load_encrypted() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "Warning: could not load credentials ({}). Old token was not revoked.",
+                crate::output::sanitize_for_terminal(&e.to_string())
+            );
+            return;
+        }
+    };
+
+    let creds: serde_json::Value = match serde_json::from_str(&creds_str) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!(
+                "Warning: could not parse credentials ({}). Old token was not revoked.",
+                crate::output::sanitize_for_terminal(&e.to_string())
+            );
+            return;
+        }
+    };
+
+    if let Some(rt) = creds.get("refresh_token").and_then(|v| v.as_str()) {
+        let client = reqwest::Client::new();
+        match client
+            .post("https://oauth2.googleapis.com/revoke")
+            .form(&[("token", rt)])
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {}
+            Ok(resp) => {
+                eprintln!(
+                    "Warning: token revocation returned HTTP {}. \
+                     The old token may still be valid on Google's side.",
+                    resp.status()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not revoke old token ({}). \
+                     The old token may still be valid on Google's side.",
+                    crate::output::sanitize_for_terminal(&e.to_string())
+                );
+            }
+        }
+    }
+}
+
 /// Which scope set to use for login.
 enum ScopeMode {
     /// Use the default scopes (MINIMAL_SCOPES).
@@ -598,6 +721,35 @@ async fn handle_login_inner(
     // Remove restrictive scopes when broader alternatives are present.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
+    // If scopes changed from the previous login, revoke the old refresh token
+    // so Google removes the prior consent grant. Without revocation, Google's
+    // consent screen shows previously-granted scopes pre-checked and the user
+    // may unknowingly re-grant broad access.
+    if let Some(prev_scopes) = load_saved_scopes().await? {
+        let prev_set: HashSet<&str> = prev_scopes.iter().map(|s| s.as_str()).collect();
+        let new_set: HashSet<&str> = scopes.iter().map(|s| s.as_str()).collect();
+        if prev_set != new_set {
+            attempt_token_revocation().await;
+            // Clear local credential and cache files to force a fresh login.
+            let enc_path = credential_store::encrypted_credentials_path();
+            if let Err(e) = tokio::fs::remove_file(&enc_path).await {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(GwsError::Auth(format!(
+                        "Failed to remove old credentials file: {e}. Please remove it manually."
+                    )));
+                }
+            }
+            if let Err(e) = tokio::fs::remove_file(token_cache_path()).await {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(GwsError::Auth(format!(
+                        "Failed to remove old token cache: {e}. Please remove it manually."
+                    )));
+                }
+            }
+            eprintln!("Scopes changed — revoked previous credentials.");
+        }
+    }
+
     // Ensure openid + email + profile scopes are always present so we can
     // identify the user via the userinfo endpoint after login, and so the
     // Gmail helpers can fall back to the People API to populate the From
@@ -643,6 +795,10 @@ async fn handle_login_inner(
     // Save encrypted credentials
     let enc_path = credential_store::save_encrypted(&creds_str)
         .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+
+    // Persist the configured scope set for scope-change detection and
+    // client-side guard enforcement.
+    save_scopes(&scopes).await?;
 
     let output = json!({
         "status": "success",
@@ -1446,6 +1602,17 @@ async fn handle_status() -> Result<(), GwsError> {
         }
     } // end !cfg!(test)
 
+    // Show configured scope mode from scopes.json (independent of network)
+    if let Some(saved_scopes) = load_saved_scopes().await? {
+        let is_readonly = saved_scopes.iter().all(|s| is_non_write_scope(s));
+        output["configured_scopes"] = json!(saved_scopes);
+        output["scope_mode"] = json!(if is_readonly {
+            "readonly"
+        } else {
+            "default"
+        });
+    }
+
     println!(
         "{}",
         serde_json::to_string_pretty(&output).unwrap_or_default()
@@ -1458,10 +1625,11 @@ fn handle_logout() -> Result<(), GwsError> {
     let enc_path = credential_store::encrypted_credentials_path();
     let token_cache = token_cache_path();
     let sa_token_cache = config_dir().join("sa_token_cache.json");
+    let scopes_file = scopes_path();
 
     let mut removed = Vec::new();
 
-    for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
+    for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache, &scopes_file] {
         if path.exists() {
             std::fs::remove_file(path).map_err(|e| {
                 GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
@@ -2531,5 +2699,39 @@ mod tests {
 
         let err = read_refresh_token_from_cache(file.path()).unwrap_err();
         assert!(err.to_string().contains("no refresh token was returned"));
+    }
+
+    // --- Scope persistence and guard tests ---
+
+    #[test]
+    fn test_save_and_load_scopes_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scopes.json");
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+            "openid".to_string(),
+        ];
+        let json = serde_json::to_string_pretty(&scopes).unwrap();
+        crate::fs_util::atomic_write(&path, json.as_bytes()).unwrap();
+        let loaded: Vec<String> =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded, scopes);
+    }
+
+    #[test]
+    fn test_is_non_write_scope() {
+        // Readonly and identity scopes are non-write
+        assert!(is_non_write_scope("https://www.googleapis.com/auth/drive.readonly"));
+        assert!(is_non_write_scope("https://www.googleapis.com/auth/gmail.readonly"));
+        assert!(is_non_write_scope("openid"));
+        assert!(is_non_write_scope("email"));
+        assert!(is_non_write_scope("profile"));
+        assert!(is_non_write_scope("https://www.googleapis.com/auth/userinfo.email"));
+
+        // Write scopes are not non-write
+        assert!(!is_non_write_scope("https://www.googleapis.com/auth/drive"));
+        assert!(!is_non_write_scope("https://www.googleapis.com/auth/gmail.modify"));
+        assert!(!is_non_write_scope("https://www.googleapis.com/auth/calendar"));
+        assert!(!is_non_write_scope("https://www.googleapis.com/auth/pubsub"));
     }
 }
