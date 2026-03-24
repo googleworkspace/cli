@@ -36,8 +36,8 @@ jobs:
         run: |
           # Check CLI crate for prohibited google-* registry crates.
           # Path dependencies (e.g. google-workspace = { path = ... }) are allowed.
-          if grep -E "^google-[a-zA-Z0-9_-]+[[:space:]]*=" crates/cli/Cargo.toml | grep -v 'path[[:space:]]*='; then
-            echo "::error file=crates/cli/Cargo.toml::Violates AGENTS.md: Adding generated google-* crates is prohibited. The CLI uses dynamic schema discovery at runtime."
+          if grep -E "^google-[a-zA-Z0-9_-]+[[:space:]]*=" crates/google-workspace-cli/Cargo.toml | grep -v 'path[[:space:]]*='; then
+            echo "::error file=crates/google-workspace-cli/Cargo.toml::Violates AGENTS.md: Adding generated google-* crates is prohibited. The CLI uses dynamic schema discovery at runtime."
             exit 1
           fi
           echo "Policy check passed."
