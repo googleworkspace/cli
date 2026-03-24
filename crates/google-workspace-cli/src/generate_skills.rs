@@ -24,8 +24,8 @@ use crate::services;
 use clap::Command;
 use std::path::Path;
 
-const PERSONAS_YAML: &str = include_str!("../../../registry/personas.yaml");
-const RECIPES_YAML: &str = include_str!("../../../registry/recipes.yaml");
+const PERSONAS_YAML: &str = include_str!("../registry/personas.yaml");
+const RECIPES_YAML: &str = include_str!("../registry/recipes.yaml");
 
 /// Methods blocked from skill generation.
 /// Format: (service_alias, resource, method).

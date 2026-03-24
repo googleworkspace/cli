@@ -430,7 +430,7 @@ fn load_preset_template(name: &str) -> Result<String, GwsError> {
 
     // Fallback: embedded preset
     eprintln!("Template file not found, using embedded '{}' preset", name);
-    Ok(include_str!("../../../../templates/modelarmor/jailbreak.json").to_string())
+    Ok(include_str!("../../templates/modelarmor/jailbreak.json").to_string())
 }
 
 #[cfg(test)]
