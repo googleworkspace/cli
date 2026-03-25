@@ -3119,7 +3119,8 @@ mod tests {
     #[test]
     fn test_parse_attachments_reads_real_file() {
         use std::io::Write;
-        let dir = tempfile::tempdir_in(".").unwrap();
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = tempfile::tempdir_in(&cwd).unwrap();
         let file_path = dir.path().join("test.txt");
         let mut f = std::fs::File::create(&file_path).unwrap();
         f.write_all(b"hello world").unwrap();
@@ -3149,7 +3150,8 @@ mod tests {
     #[test]
     fn test_parse_attachments_unknown_extension_falls_back_to_octet_stream() {
         use std::io::Write;
-        let dir = tempfile::tempdir_in(".").unwrap();
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = tempfile::tempdir_in(&cwd).unwrap();
         let file_path = dir.path().join("data.zzqqxx");
         let mut f = std::fs::File::create(&file_path).unwrap();
         f.write_all(b"unknown format").unwrap();
@@ -3164,7 +3166,8 @@ mod tests {
 
     #[test]
     fn test_parse_attachments_size_limit_accumulates() {
-        let dir = tempfile::tempdir_in(".").unwrap();
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = tempfile::tempdir_in(&cwd).unwrap();
 
         // Create two files whose combined size exceeds MAX_TOTAL_ATTACHMENT_BYTES
         let file1 = dir.path().join("big1.bin");
@@ -3191,7 +3194,8 @@ mod tests {
 
     #[test]
     fn test_parse_attachments_rejects_empty_file() {
-        let dir = tempfile::tempdir_in(".").unwrap();
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = tempfile::tempdir_in(&cwd).unwrap();
         let file_path = dir.path().join("empty.txt");
         std::fs::write(&file_path, b"").unwrap();
 
