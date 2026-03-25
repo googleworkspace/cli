@@ -14,6 +14,8 @@
 
 //! HTTP client with retry logic for Google API requests.
 
+use std::sync::OnceLock;
+
 use reqwest::header::{HeaderMap, HeaderValue};
 
 const MAX_RETRIES: u32 = 3;
@@ -22,7 +24,7 @@ const MAX_RETRIES: u32 = 3;
 const MAX_RETRY_DELAY_SECS: u64 = 60;
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 
-pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
+fn build_client_inner() -> Result<reqwest::Client, String> {
     let mut headers = HeaderMap::new();
     let name = env!("CARGO_PKG_NAME");
     let version = env!("CARGO_PKG_VERSION");
@@ -37,9 +39,26 @@ pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
         .default_headers(headers)
         .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
-        .map_err(|e| {
-            crate::error::GwsError::Other(anyhow::anyhow!("Failed to build HTTP client: {e}"))
-        })
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))
+}
+
+pub fn build_client() -> Result<reqwest::Client, crate::error::GwsError> {
+    build_client_inner().map_err(|message| crate::error::GwsError::Other(anyhow::anyhow!(message)))
+}
+
+/// Returns a shared reqwest client clone backed by a single global connection pool.
+///
+/// `reqwest::Client` is cheap to clone, so callers can take ownership of the
+/// returned value while still sharing pooled connections underneath.
+pub fn shared_client() -> Result<reqwest::Client, crate::error::GwsError> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+
+    match CLIENT.get_or_init(build_client_inner) {
+        Ok(client) => Ok(client.clone()),
+        Err(message) => Err(crate::error::GwsError::Other(anyhow::anyhow!(
+            message.clone()
+        ))),
+    }
 }
 
 /// Send an HTTP request with automatic retry on 429 (rate limit) responses
@@ -98,6 +117,20 @@ mod tests {
     #[test]
     fn build_client_succeeds() {
         assert!(build_client().is_ok());
+    }
+
+    #[test]
+    fn shared_client_succeeds() {
+        assert!(shared_client().is_ok());
+    }
+
+    #[test]
+    fn shared_client_can_be_reused() {
+        let client_a = shared_client().unwrap();
+        let client_b = shared_client().unwrap();
+        let request_a = client_a.get("https://example.com").build().unwrap();
+        let request_b = client_b.get("https://example.com").build().unwrap();
+        assert_eq!(request_a.url(), request_b.url());
     }
 
     #[test]

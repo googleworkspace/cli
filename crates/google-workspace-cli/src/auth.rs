@@ -51,7 +51,7 @@ async fn refresh_token_with_reqwest(
     client_secret: &str,
     refresh_token: &str,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::new();
+    let client = crate::client::shared_client().map_err(anyhow::Error::from)?;
     let params = [
         ("client_id", client_id),
         ("client_secret", client_secret),

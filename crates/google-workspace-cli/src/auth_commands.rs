@@ -41,7 +41,7 @@ async fn exchange_code_with_reqwest(
     code: &str,
     redirect_uri: &str,
 ) -> Result<OAuthTokenResponse, GwsError> {
-    let client = reqwest::Client::new();
+    let client = crate::client::shared_client()?;
     let params = [
         ("client_id", client_id),
         ("client_secret", client_secret),
@@ -1363,68 +1363,71 @@ async fn handle_status() -> Result<(), GwsError> {
                 if let (Some(cid), Some(csec), Some(rt)) = (client_id, client_secret, refresh_token)
                 {
                     // Exchange refresh token for access token
-                    let http_client = reqwest::Client::new();
-                    let token_resp = http_client
-                        .post("https://oauth2.googleapis.com/token")
-                        .form(&[
-                            ("client_id", cid),
-                            ("client_secret", csec),
-                            ("refresh_token", rt),
-                            ("grant_type", "refresh_token"),
-                        ])
-                        .send()
-                        .await;
+                    if let Ok(http_client) = crate::client::shared_client() {
+                        let token_resp = http_client
+                            .post("https://oauth2.googleapis.com/token")
+                            .form(&[
+                                ("client_id", cid),
+                                ("client_secret", csec),
+                                ("refresh_token", rt),
+                                ("grant_type", "refresh_token"),
+                            ])
+                            .send()
+                            .await;
 
-                    if let Ok(resp) = token_resp {
-                        if let Ok(token_json) = resp.json::<serde_json::Value>().await {
-                            if let Some(access_token) =
-                                token_json.get("access_token").and_then(|v| v.as_str())
-                            {
-                                output["token_valid"] = json!(true);
-
-                                // Get user info
-                                if let Ok(user_resp) = http_client
-                                    .get("https://www.googleapis.com/oauth2/v1/userinfo")
-                                    .bearer_auth(access_token)
-                                    .send()
-                                    .await
+                        if let Ok(resp) = token_resp {
+                            if let Ok(token_json) = resp.json::<serde_json::Value>().await {
+                                if let Some(access_token) =
+                                    token_json.get("access_token").and_then(|v| v.as_str())
                                 {
-                                    if let Ok(user_json) =
-                                        user_resp.json::<serde_json::Value>().await
+                                    output["token_valid"] = json!(true);
+
+                                    // Get user info
+                                    if let Ok(user_resp) = http_client
+                                        .get("https://www.googleapis.com/oauth2/v1/userinfo")
+                                        .bearer_auth(access_token)
+                                        .send()
+                                        .await
                                     {
-                                        if let Some(email) =
-                                            user_json.get("email").and_then(|v| v.as_str())
+                                        if let Ok(user_json) =
+                                            user_resp.json::<serde_json::Value>().await
                                         {
-                                            output["user"] = json!(email);
+                                            if let Some(email) =
+                                                user_json.get("email").and_then(|v| v.as_str())
+                                            {
+                                                output["user"] = json!(email);
+                                            }
                                         }
                                     }
-                                }
 
-                                // Get granted scopes via tokeninfo
-                                let tokeninfo_url = format!(
-                                    "https://oauth2.googleapis.com/tokeninfo?access_token={}",
-                                    access_token
-                                );
-                                if let Ok(info_resp) = http_client.get(&tokeninfo_url).send().await
-                                {
-                                    if let Ok(info_json) =
-                                        info_resp.json::<serde_json::Value>().await
+                                    // Get granted scopes via tokeninfo
+                                    let tokeninfo_url = format!(
+                                        "https://oauth2.googleapis.com/tokeninfo?access_token={}",
+                                        access_token
+                                    );
+                                    if let Ok(info_resp) =
+                                        http_client.get(&tokeninfo_url).send().await
                                     {
-                                        if let Some(scope_str) =
-                                            info_json.get("scope").and_then(|v| v.as_str())
+                                        if let Ok(info_json) =
+                                            info_resp.json::<serde_json::Value>().await
                                         {
-                                            let scopes: Vec<&str> = scope_str.split(' ').collect();
-                                            output["scopes"] = json!(scopes);
-                                            output["scope_count"] = json!(scopes.len());
+                                            if let Some(scope_str) =
+                                                info_json.get("scope").and_then(|v| v.as_str())
+                                            {
+                                                let scopes: Vec<&str> =
+                                                    scope_str.split(' ').collect();
+                                                output["scopes"] = json!(scopes);
+                                                output["scope_count"] = json!(scopes.len());
+                                            }
                                         }
                                     }
-                                }
-                            } else {
-                                output["token_valid"] = json!(false);
-                                if let Some(err) =
-                                    token_json.get("error_description").and_then(|v| v.as_str())
-                                {
-                                    output["token_error"] = json!(err);
+                                } else {
+                                    output["token_valid"] = json!(false);
+                                    if let Some(err) =
+                                        token_json.get("error_description").and_then(|v| v.as_str())
+                                    {
+                                        output["token_error"] = json!(err);
+                                    }
                                 }
                             }
                         }
