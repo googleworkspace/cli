@@ -1233,6 +1233,11 @@ async fn handle_status() -> Result<(), GwsError> {
         "token_cache_exists": has_token_cache,
     });
 
+    // Show impersonated user if set (domain-wide delegation)
+    if let Some(user) = crate::auth::get_impersonated_user() {
+        output["impersonated_user"] = json!(user);
+    }
+
     // Show client config (client_secret.json) status
     let config_path = crate::oauth_config::client_config_path();
     let has_config = config_path.exists();

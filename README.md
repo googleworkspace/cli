@@ -199,6 +199,22 @@ export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
 gws drive files list
 ```
 
+#### Domain-Wide Delegation (DWD)
+
+To access user data (Gmail, Calendar, etc.) via a service account with
+[domain-wide delegation](https://developers.google.com/identity/protocols/oauth2/service-account#delegatingauthority),
+set the impersonated user:
+
+```bash
+export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/service-account.json
+export GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER=user@example.com
+gws gmail users messages list --params '{"userId": "me"}'
+```
+
+> **Note:** Without `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER`, service accounts
+> can only access their own resources. User-scoped APIs like Gmail and Calendar
+> require impersonation via DWD.
+
 ### Pre-obtained Access Token
 
 Useful when another tool (e.g. `gcloud`) already mints tokens for your environment.
@@ -382,6 +398,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
+| `GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER` | Email to impersonate via domain-wide delegation (service accounts only) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |

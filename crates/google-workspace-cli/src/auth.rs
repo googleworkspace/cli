@@ -34,6 +34,15 @@ const PROXY_ENV_VARS: &[&str] = &[
     "ALL_PROXY",
 ];
 
+const IMPERSONATED_USER_ENV: &str = "GOOGLE_WORKSPACE_CLI_IMPERSONATED_USER";
+
+/// Returns the impersonated user email for domain-wide delegation, if set.
+pub fn get_impersonated_user() -> Option<String> {
+    std::env::var(IMPERSONATED_USER_ENV)
+        .ok()
+        .filter(|val| !val.trim().is_empty())
+}
+
 /// Response from Google's token endpoint
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -220,13 +229,14 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     }
 
     let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
+    let impersonated_user = get_impersonated_user();
     let config_dir = crate::auth_commands::config_dir();
     let enc_path = credential_store::encrypted_credentials_path();
     let default_path = config_dir.join("credentials.json");
     let token_cache = config_dir.join("token_cache.json");
 
     let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
-    get_token_inner(scopes, creds, &token_cache).await
+    get_token_inner(scopes, creds, &token_cache, impersonated_user.as_deref()).await
 }
 
 /// Check if HTTP proxy environment variables are set
@@ -244,6 +254,7 @@ async fn get_token_inner(
     scopes: &[&str],
     creds: Credential,
     token_cache_path: &std::path::Path,
+    impersonated_user: Option<&str>,
 ) -> anyhow::Result<String> {
     match creds {
         Credential::AuthorizedUser(ref secret) => {
@@ -279,9 +290,14 @@ async fn get_token_inner(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| "token_cache.json".to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
-            let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
+            let mut builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
                 Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
             );
+
+            // Domain-wide delegation: set the impersonated user (sub claim) on the JWT
+            if let Some(user) = impersonated_user {
+                builder = builder.subject(user.to_string());
+            }
 
             let auth = builder
                 .build()
