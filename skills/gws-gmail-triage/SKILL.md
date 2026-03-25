@@ -2,7 +2,7 @@
 name: gws-gmail-triage
 description: "Gmail: Show unread inbox summary (sender, subject, date)."
 metadata:
-  version: 0.22.1
+  version: 0.22.2
   openclaw:
     category: "productivity"
     requires:

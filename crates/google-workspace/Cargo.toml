@@ -14,7 +14,7 @@
 
 [package]
 name = "google-workspace"
-version = "0.22.1"
+version = "0.22.2"
 edition = "2021"
 description = "Google Workspace API client — Discovery Document types, service registry, and HTTP utilities"
 license = "Apache-2.0"

@@ -2,7 +2,7 @@
 name: persona-event-coordinator
 description: "Plan and manage events — scheduling, invitations, and logistics."
 metadata:
-  version: 0.22.1
+  version: 0.22.2
   openclaw:
     category: "persona"
     requires:

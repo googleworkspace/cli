@@ -2,7 +2,7 @@
 name: gws-people
 description: "Google People: Manage contacts and profiles."
 metadata:
-  version: 0.22.1
+  version: 0.22.2
   openclaw:
     category: "productivity"
     requires:

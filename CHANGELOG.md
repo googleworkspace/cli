@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.22.2
+
+### Patch Changes
+
+- a52d297: Improve proxy-aware OAuth flows and clean up review feedback for auth login.
+
 ## 0.22.1
 
 ### Patch Changes
