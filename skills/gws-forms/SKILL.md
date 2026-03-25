@@ -2,7 +2,7 @@
 name: gws-forms
 description: "Read and write Google Forms."
 metadata:
-  version: 0.22.0
+  version: 0.22.1
   openclaw:
     category: "productivity"
     requires:

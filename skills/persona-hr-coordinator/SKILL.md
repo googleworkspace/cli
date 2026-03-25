@@ -2,7 +2,7 @@
 name: persona-hr-coordinator
 description: "Handle HR workflows — onboarding, announcements, and employee comms."
 metadata:
-  version: 0.22.0
+  version: 0.22.1
   openclaw:
     category: "persona"
     requires:
