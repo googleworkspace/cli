@@ -66,8 +66,8 @@ fn save_key_file_exclusive(path: &std::path::Path, b64_key: &str) -> std::io::Re
 
 /// Persist the base64-encoded encryption key to a local file with restrictive
 /// permissions (0600 file, 0700 directory). Overwrites any existing file.
-/// Persist the base64-encoded encryption key to a local file with restrictive
-/// permissions. Uses atomic_write to prevent TOCTOU/symlink race conditions.
+/// Uses atomic_write to prevent TOCTOU/symlink race conditions.
+#[allow(dead_code)]
 fn save_key_file(path: &std::path::Path, b64_key: &str) -> std::io::Result<()> {
     crate::fs_util::atomic_write(path, b64_key.as_bytes())
 }
@@ -202,64 +202,110 @@ fn resolve_key(
 
     // --- 1. Try keyring (only when backend = Keyring) --------------------
     if backend == KeyringBackend::Keyring {
-        match provider.get_password() {
-            Ok(b64_key) => {
-                if let Ok(decoded) = STANDARD.decode(&b64_key) {
-                    if decoded.len() == 32 {
-                        let mut arr = [0u8; 32];
-                        arr.copy_from_slice(&decoded);
-                        // Ensure file backup stays in sync with keyring so
-                        // credentials survive keyring loss (e.g. after OS
-                        // upgrades, container restarts, daemon changes).
-                        if let Err(err) = save_key_file(key_file, &b64_key) {
-                            eprintln!(
-                                "Warning: failed to sync keyring backup file at '{}': {err}",
-                                key_file.display()
-                            );
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            match provider.get_password() {
+                Ok(b64_key) => {
+                    if let Ok(decoded) = STANDARD.decode(&b64_key) {
+                        if decoded.len() == 32 {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&decoded);
+                            // Cleanup insecure file fallback if it still exists
+                            if key_file.exists() {
+                                let _ = std::fs::remove_file(key_file);
+                            }
+                            return Ok(arr);
                         }
-                        return Ok(arr);
                     }
                 }
-                // Keyring contained invalid data — fall through to file.
-            }
-            Err(keyring::Error::NoEntry) => {
-                // Keyring is reachable but empty — check file, then generate.
-                if let Some(key) = read_key_file(key_file) {
-                    // Best-effort: copy file key into keyring for future runs.
-                    let _ = provider.set_password(&STANDARD.encode(key));
+                Err(keyring::Error::NoEntry) => {
+                    let key = generate_random_key();
+                    let b64_key = STANDARD.encode(key);
+                    if let Err(e) = provider.set_password(&b64_key) {
+                        anyhow::bail!("Failed to initialize OS keyring: {e}");
+                    }
+                    if key_file.exists() {
+                        let _ = std::fs::remove_file(key_file);
+                    }
                     return Ok(key);
                 }
-
-                // Generate a new key.
-                let key = generate_random_key();
-                let b64_key = STANDARD.encode(key);
-
-                // Best-effort: store in keyring.
-                let _ = provider.set_password(&b64_key);
-
-                // Atomically create the file; if another process raced us,
-                // use their key instead.
-                match save_key_file_exclusive(key_file, &b64_key) {
-                    Ok(()) => return Ok(key),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        if let Some(winner) = read_key_file(key_file) {
-                            // Sync the winner's key into the keyring so both
-                            // backends stay consistent after the race.
-                            let _ = provider.set_password(&STANDARD.encode(winner));
-                            return Ok(winner);
-                        }
-                        // File exists but is unreadable/corrupt — overwrite.
-                        save_key_file(key_file, &b64_key)?;
-                        return Ok(key);
-                    }
-                    Err(e) => return Err(e.into()),
+                Err(e) => {
+                    anyhow::bail!("OS keyring failed: {e}. Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file to use file storage.");
                 }
             }
-            Err(e) => {
-                eprintln!(
-                    "Warning: keyring access failed, falling back to file storage: {}",
-                    sanitize_for_terminal(&e.to_string())
-                );
+            // If keyring data was invalid length/base64, generate new
+            let key = generate_random_key();
+            let b64_key = STANDARD.encode(key);
+            let _ = provider.set_password(&b64_key);
+            if key_file.exists() {
+                let _ = std::fs::remove_file(key_file);
+            }
+            return Ok(key);
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            // On Linux, keyring uses a mock store by default without C DBus dependencies,
+            // so we continue to use the file fallback for reliability.
+            match provider.get_password() {
+                Ok(b64_key) => {
+                    if let Ok(decoded) = STANDARD.decode(&b64_key) {
+                        if decoded.len() == 32 {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&decoded);
+                            // Ensure file backup stays in sync with keyring so
+                            // credentials survive keyring loss (e.g. after OS
+                            // upgrades, container restarts, daemon changes).
+                            if let Err(err) = save_key_file(key_file, &b64_key) {
+                                eprintln!(
+                                    "Warning: failed to sync keyring backup file at '{}': {err}",
+                                    key_file.display()
+                                );
+                            }
+                            return Ok(arr);
+                        }
+                    }
+                    // Keyring contained invalid data — fall through to file.
+                }
+                Err(keyring::Error::NoEntry) => {
+                    // Keyring is reachable but empty — check file, then generate.
+                    if let Some(key) = read_key_file(key_file) {
+                        // Best-effort: copy file key into keyring for future runs.
+                        let _ = provider.set_password(&STANDARD.encode(key));
+                        return Ok(key);
+                    }
+
+                    // Generate a new key.
+                    let key = generate_random_key();
+                    let b64_key = STANDARD.encode(key);
+
+                    // Best-effort: store in keyring.
+                    let _ = provider.set_password(&b64_key);
+
+                    // Atomically create the file; if another process raced us,
+                    // use their key instead.
+                    match save_key_file_exclusive(key_file, &b64_key) {
+                        Ok(()) => return Ok(key),
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                            if let Some(winner) = read_key_file(key_file) {
+                                // Sync the winner's key into the keyring so both
+                                // backends stay consistent after the race.
+                                let _ = provider.set_password(&STANDARD.encode(winner));
+                                return Ok(winner);
+                            }
+                            // File exists but is unreadable/corrupt — overwrite.
+                            save_key_file(key_file, &b64_key)?;
+                            return Ok(key);
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: keyring access failed, falling back to file storage: {}",
+                        sanitize_for_terminal(&e.to_string())
+                    );
+                }
             }
         }
     }
@@ -293,7 +339,11 @@ fn get_or_create_key() -> anyhow::Result<[u8; 32]> {
         return Ok(*key);
     }
 
+    #[cfg(not(test))]
     let backend = KeyringBackend::from_env();
+    #[cfg(test)]
+    let backend = KeyringBackend::File; // Force file to avoid native keychain prompts during test execution
+
     // Item 5: log which backend was selected
     eprintln!("Using keyring backend: {}", backend.as_str());
 
@@ -407,6 +457,8 @@ pub fn load_encrypted() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
+
     use super::*;
     use std::cell::RefCell;
 
@@ -513,7 +565,73 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    // ---- Backend::Keyring tests (macOS/Windows specific behavior) ----
+
     #[test]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn keyring_backend_cleans_up_legacy_file_on_success() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        // Create a legacy fallback file
+        std::fs::write(&key_file, STANDARD.encode([99u8; 32])).unwrap();
+        assert!(key_file.exists());
+
+        // Keyring has a valid key
+        let expected = [7u8; 32];
+        let mock = MockKeyring::with_password(&STANDARD.encode(expected));
+
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+
+        assert_eq!(result, expected);
+        assert!(
+            !key_file.exists(),
+            "Legacy file must be deleted upon successful keyring read"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn keyring_backend_cleans_up_legacy_file_on_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        std::fs::write(&key_file, "legacy-data").unwrap();
+        assert!(key_file.exists());
+
+        let mock = MockKeyring::no_entry();
+
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+
+        assert_eq!(result.len(), 32);
+        assert!(
+            !key_file.exists(),
+            "Legacy file must be deleted upon successful keyring generation"
+        );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn keyring_backend_returns_error_on_platform_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        let mock = MockKeyring::platform_error();
+
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("OS keyring failed"));
+    }
+
+    // ---- Backend::Keyring tests (Linux fallback behavior) ----
+
+    #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_creates_file_backup_when_missing() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
@@ -535,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_syncs_file_when_keyring_differs() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
@@ -554,6 +673,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_no_entry_reads_file() {
         let dir = tempfile::tempdir().unwrap();
         let (expected, key_file) = write_test_key(dir.path());
@@ -568,6 +688,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_no_entry_no_file_generates_and_saves_both() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
@@ -581,6 +702,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_no_entry_no_file_keyring_set_fails() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
@@ -593,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_platform_error_falls_back_to_file() {
         let dir = tempfile::tempdir().unwrap();
         let (expected, key_file) = write_test_key(dir.path());
@@ -602,6 +725,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_platform_error_no_file_generates() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
@@ -612,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_invalid_keyring_data_uses_file() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
@@ -660,6 +785,7 @@ mod tests {
     // ---- Stability tests ----
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn key_is_stable_across_calls() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
@@ -858,6 +984,7 @@ mod tests {
     // ---- Race condition tests ----
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn race_loser_syncs_winner_key_to_keyring() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
@@ -881,6 +1008,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn race_loser_corrupt_file_overwrites() {
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
