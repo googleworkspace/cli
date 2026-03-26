@@ -2,7 +2,7 @@
 name: recipe-email-drive-link
 description: "Share a Google Drive file and email the link with a message to recipients."
 metadata:
-  version: 0.22.2
+  version: 0.22.3
   openclaw:
     category: "recipe"
     domain: "productivity"

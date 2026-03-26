@@ -2,7 +2,7 @@
 name: recipe-find-free-time
 description: "Query Google Calendar free/busy status for multiple users to find a meeting slot."
 metadata:
-  version: 0.22.2
+  version: 0.22.3
   openclaw:
     category: "recipe"
     domain: "scheduling"

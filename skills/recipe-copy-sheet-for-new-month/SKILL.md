@@ -2,7 +2,7 @@
 name: recipe-copy-sheet-for-new-month
 description: "Duplicate a Google Sheets template tab for a new month of tracking."
 metadata:
-  version: 0.22.2
+  version: 0.22.3
   openclaw:
     category: "recipe"
     domain: "productivity"

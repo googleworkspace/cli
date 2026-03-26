@@ -1,5 +1,18 @@
 # @googleworkspace/cli
 
+## 0.22.3
+
+### Patch Changes
+
+- 674d53a: Fix `Lint Skills` CI job by installing `uv` via `astral-sh/setup-uv` before running `uvx`
+- c7c42f6: fix: register script service and resolve test path validation errors
+- 80bd150: feat(auth): use strict OS keychain integration on macOS and Windows
+
+  Closes #623. The CLI no longer writes a fallback `.encryption_key` text file on macOS and Windows when securely storing credentials. Instead, it strictly uses the native OS keychain (Keychain Access on macOS, Credential Manager on Windows). If an old `.encryption_key` file is found during a successful keychain login, it will be automatically deleted for security.
+  Linux deployments continue to use a seamless file-based fallback by default to ensure maximum compatibility with headless continuous integration (CI) runners, Docker containers, and SSH environments without desktop DBUS services.
+
+- ec7f56b: Sync generated skills with latest Google Discovery API specs
+
 ## 0.22.2
 
 ### Patch Changes

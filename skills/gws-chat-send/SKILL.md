@@ -2,7 +2,7 @@
 name: gws-chat-send
 description: "Google Chat: Send a message to a space."
 metadata:
-  version: 0.22.2
+  version: 0.22.3
   openclaw:
     category: "productivity"
     requires:
