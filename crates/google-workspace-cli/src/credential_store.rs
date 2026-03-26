@@ -212,7 +212,15 @@ fn resolve_key(
                             arr.copy_from_slice(&decoded);
                             // Cleanup insecure file fallback if it still exists.
                             // TOCTOU race condition is a known limitation.
-                            let _ = std::fs::remove_file(key_file);
+                            if let Err(e) = std::fs::remove_file(key_file) {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    eprintln!(
+                                        "Warning: failed to remove legacy key file at '{}': {}",
+                                        key_file.display(),
+                                        e
+                                    );
+                                }
+                            }
                             return Ok(arr);
                         }
                     }
@@ -222,7 +230,7 @@ fn resolve_key(
                     // Keyring is empty — fall through to generate new.
                 }
                 Err(e) => {
-                    anyhow::bail!("OS keyring failed: {e}. Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file to use file storage.");
+                    anyhow::bail!("OS keyring failed: {}. Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file to use file storage.", sanitize_for_terminal(&e.to_string()));
                 }
             }
 
@@ -230,9 +238,20 @@ fn resolve_key(
             let key = generate_random_key();
             let b64_key = STANDARD.encode(key);
             if let Err(e) = provider.set_password(&b64_key) {
-                anyhow::bail!("Failed to set key in OS keyring: {e}");
+                anyhow::bail!(
+                    "Failed to set key in OS keyring: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
             }
-            let _ = std::fs::remove_file(key_file);
+            if let Err(e) = std::fs::remove_file(key_file) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "Warning: failed to remove legacy key file at '{}': {}",
+                        key_file.display(),
+                        e
+                    );
+                }
+            }
             return Ok(key);
         }
 
