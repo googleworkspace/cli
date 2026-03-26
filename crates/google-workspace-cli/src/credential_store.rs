@@ -211,9 +211,7 @@ fn resolve_key(
                             let mut arr = [0u8; 32];
                             arr.copy_from_slice(&decoded);
                             // Cleanup insecure file fallback if it still exists
-                            if key_file.exists() {
-                                let _ = std::fs::remove_file(key_file);
-                            }
+                            let _ = std::fs::remove_file(key_file);
                             return Ok(arr);
                         }
                     }
@@ -224,9 +222,7 @@ fn resolve_key(
                     if let Err(e) = provider.set_password(&b64_key) {
                         anyhow::bail!("Failed to initialize OS keyring: {e}");
                     }
-                    if key_file.exists() {
-                        let _ = std::fs::remove_file(key_file);
-                    }
+                    let _ = std::fs::remove_file(key_file);
                     return Ok(key);
                 }
                 Err(e) => {
@@ -236,10 +232,10 @@ fn resolve_key(
             // If keyring data was invalid length/base64, generate new
             let key = generate_random_key();
             let b64_key = STANDARD.encode(key);
-            let _ = provider.set_password(&b64_key);
-            if key_file.exists() {
-                let _ = std::fs::remove_file(key_file);
+            if let Err(e) = provider.set_password(&b64_key) {
+                anyhow::bail!("Failed to set key in OS keyring after invalid data: {e}");
             }
+            let _ = std::fs::remove_file(key_file);
             return Ok(key);
         }
 
