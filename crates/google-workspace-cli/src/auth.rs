@@ -750,6 +750,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_load_credentials_encrypted_file() {
         // Simulate an encrypted credentials file
         let json = r#"{
