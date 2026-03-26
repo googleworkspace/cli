@@ -26,6 +26,7 @@ Core Google Workspace API skills.
 | [gws-events](../skills/gws-events/SKILL.md) | Subscribe to Google Workspace events. |
 | [gws-modelarmor](../skills/gws-modelarmor/SKILL.md) | Google Model Armor: Filter user-generated content for safety. |
 | [gws-workflow](../skills/gws-workflow/SKILL.md) | Google Workflow: Cross-service productivity workflows. |
+| [gws-script](../skills/gws-script/SKILL.md) | Manage Google Apps Script projects. |
 
 ## Helpers
 
@@ -57,6 +58,7 @@ Shortcut commands for common operations.
 | [gws-workflow-email-to-task](../skills/gws-workflow-email-to-task/SKILL.md) | Google Workflow: Convert a Gmail message into a Google Tasks entry. |
 | [gws-workflow-weekly-digest](../skills/gws-workflow-weekly-digest/SKILL.md) | Google Workflow: Weekly summary: this week's meetings + unread email count. |
 | [gws-workflow-file-announce](../skills/gws-workflow-file-announce/SKILL.md) | Google Workflow: Announce a Drive file in a Chat space. |
+| [gws-script-push](../skills/gws-script-push/SKILL.md) | Google Apps Script: Upload local files to an Apps Script project. |
 
 ## Personas
 
