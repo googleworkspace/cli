@@ -210,30 +210,27 @@ fn resolve_key(
                         if decoded.len() == 32 {
                             let mut arr = [0u8; 32];
                             arr.copy_from_slice(&decoded);
-                            // Cleanup insecure file fallback if it still exists
+                            // Cleanup insecure file fallback if it still exists.
+                            // TOCTOU race condition is a known limitation.
                             let _ = std::fs::remove_file(key_file);
                             return Ok(arr);
                         }
                     }
+                    // Keyring contained invalid data — fall through to generate new.
                 }
                 Err(keyring::Error::NoEntry) => {
-                    let key = generate_random_key();
-                    let b64_key = STANDARD.encode(key);
-                    if let Err(e) = provider.set_password(&b64_key) {
-                        anyhow::bail!("Failed to initialize OS keyring: {e}");
-                    }
-                    let _ = std::fs::remove_file(key_file);
-                    return Ok(key);
+                    // Keyring is empty — fall through to generate new.
                 }
                 Err(e) => {
                     anyhow::bail!("OS keyring failed: {e}. Set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file to use file storage.");
                 }
             }
-            // If keyring data was invalid length/base64, generate new
+
+            // Generate a new key if keyring was empty or contained invalid data.
             let key = generate_random_key();
             let b64_key = STANDARD.encode(key);
             if let Err(e) = provider.set_password(&b64_key) {
-                anyhow::bail!("Failed to set key in OS keyring after invalid data: {e}");
+                anyhow::bail!("Failed to set key in OS keyring: {e}");
             }
             let _ = std::fs::remove_file(key_file);
             return Ok(key);
