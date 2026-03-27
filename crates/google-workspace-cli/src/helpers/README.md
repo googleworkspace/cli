@@ -12,7 +12,7 @@ A `+helper` command should exist only when it provides value that Discovery-base
 |---|---|---|
 | **Multi-step orchestration** | `+subscribe` | Creates Pub/Sub topic → subscription → Workspace Events subscription (3 APIs) |
 | **Format translation** | `+write` | Transforms Markdown → Docs `batchUpdate` JSON |
-| **Multi-API composition** | `+triage` | Lists messages then fetches N metadata payloads concurrently |
+| **Multi-API composition** | `+search` | Lists messages, resolves labels, fetches N metadata payloads concurrently |
 | **Complex body construction** | `+send`, `+reply` | Builds RFC 2822 MIME from simple flags |
 | **Multipart upload** | `+upload` | Handles resumable upload protocol with progress |
 | **Workflow recipes** | `+standup-report` | Chains calls across multiple services |
@@ -31,7 +31,7 @@ If a helper wraps one API call that Discovery already exposes, reject it.
 
 Adding flags to expose data that is already in the API response creates unbounded surface area.
 
-**Real example:** `--thread-id`, `--delivered-to`, `--sent-last` on `+triage` (PR #597) — all three values are already present in the Gmail API response. Agents and users should extract them with `--format` or `jq`, not new flags.
+**Real example:** `--thread-id`, `--delivered-to`, `--sent-last` on `+search` (PR #597) — all three values are already present in the Gmail API response. Agents and users should extract them with `--format` or `jq`, not new flags.
 
 **Why this is harmful:** Every API response contains dozens of fields. If we add a flag for each one, helpers become unbounded maintenance burdens — the exact problem Discovery-driven design solves.
 

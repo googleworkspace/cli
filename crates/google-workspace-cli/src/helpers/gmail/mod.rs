@@ -16,15 +16,15 @@ use super::Helper;
 pub mod forward;
 pub mod read;
 pub mod reply;
+pub mod search;
 pub mod send;
-pub mod triage;
 pub mod watch;
 
 use forward::handle_forward;
 use read::handle_read;
 use reply::handle_reply;
+use search::handle_search;
 use send::handle_send;
-use triage::handle_triage;
 use watch::handle_watch;
 
 pub(super) use crate::auth;
@@ -62,6 +62,7 @@ fn sanitize_control_chars(s: &str) -> String {
 
 /// A parsed RFC 5322 mailbox: optional display name + email address.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct Mailbox {
     pub name: Option<String>,
     pub email: String,
@@ -127,6 +128,30 @@ impl std::fmt::Display for Mailbox {
     }
 }
 
+/// A resolved Gmail label: maps the opaque label ID to its human-readable name.
+///
+/// All labels are resolved via the `labels.list` API. System labels (e.g. `INBOX`,
+/// `CATEGORY_FORUMS`) resolve to their canonical API names. User-created labels
+/// have opaque IDs (e.g. `Label_3066`) that resolve to display names.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Label {
+    pub id: String,
+    pub name: String,
+}
+
+impl Label {
+    /// Resolve a label ID to a `Label` using a pre-fetched ID→name map.
+    /// Falls back to using the raw ID as the display name when the ID is not
+    /// in the map (e.g. the label was created after the map was fetched).
+    pub fn resolve(id: &str, label_map: &std::collections::HashMap<String, String>) -> Self {
+        Self {
+            name: label_map.get(id).cloned().unwrap_or_else(|| id.to_string()),
+            id: id.to_string(),
+        }
+    }
+}
+
 /// Convert a single `Mailbox` to a `mail_builder::Address`.
 pub(super) fn to_mb_address(mailbox: &Mailbox) -> MbAddress<'_> {
     MbAddress::new_address(mailbox.name.as_deref(), &mailbox.email)
@@ -181,6 +206,7 @@ impl OriginalPart {
 /// fields (`cc`, `reply_to`, `date`, `body_html`) use `Option` so the compiler
 /// enforces absence checks.
 #[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct OriginalMessage {
     pub thread_id: Option<String>,
     /// Bare message ID (no angle brackets), e.g. `"abc@example.com"`.
@@ -220,17 +246,18 @@ impl OriginalMessage {
 }
 
 /// Raw header values extracted from the Gmail API payload, before parsing into
-/// structured types. Intermediate step: JSON headers → this → `OriginalMessage`.
+/// structured types. Intermediate step between raw JSON headers and domain-specific
+/// message types (`OriginalMessage`, `SearchResult`).
 #[derive(Default)]
-struct ParsedMessageHeaders {
-    from: String,
-    reply_to: String,
-    to: String,
-    cc: String,
-    subject: String,
-    date: String,
-    message_id: String,
-    references: String,
+pub(super) struct ParsedMessageHeaders {
+    pub from: String,
+    pub reply_to: String,
+    pub to: String,
+    pub cc: String,
+    pub subject: String,
+    pub date: String,
+    pub message_id: String,
+    pub references: String,
 }
 
 fn append_header_value(existing: &mut String, value: &str) {
@@ -251,7 +278,7 @@ fn append_address_list_header_value(existing: &mut String, value: &str) {
     existing.push_str(value);
 }
 
-fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
+pub(super) fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
     let mut parsed = ParsedMessageHeaders::default();
 
     for header in headers {
@@ -1570,7 +1597,7 @@ fn common_reply_args(cmd: Command) -> Command {
 
 impl Helper for GmailHelper {
     /// Register all Gmail helper subcommands (`+send`, `+reply`, `+reply-all`,
-    /// `+forward`, `+triage`, `+watch`) with their arguments and help text.
+    /// `+forward`, `+read`, `+search`, `+watch`) with their arguments and help text.
     fn inject_commands(
         &self,
         mut cmd: Command,
@@ -1629,38 +1656,41 @@ TIPS:
         );
 
         cmd = cmd.subcommand(
-            Command::new("+triage")
-                .about("[Helper] Show unread inbox summary (sender, subject, date)")
-                .arg(
-                    Arg::new("max")
-                        .long("max")
-                        .help("Maximum messages to show (default: 20)")
-                        .default_value("20")
-                        .value_name("N"),
-                )
+            Command::new("+search")
+                .about("[Helper] Search Gmail messages with full metadata")
                 .arg(
                     Arg::new("query")
                         .long("query")
-                        .help("Gmail search query (default: is:unread)")
+                        .help("Gmail search query (e.g., 'from:alice subject:report')")
+                        .required(true)
                         .value_name("QUERY"),
                 )
                 .arg(
-                    Arg::new("labels")
-                        .long("labels")
-                        .help("Include label names in output")
-                        .action(ArgAction::SetTrue),
+                    Arg::new("max")
+                        .long("max")
+                        .help("Maximum messages to return (default: 20)")
+                        .default_value("20")
+                        .value_parser(clap::value_parser!(u32).range(1..=500))
+                        .value_name("N"),
+                )
+                .arg(
+                    Arg::new("page-token")
+                        .long("page-token")
+                        .help("Page token for continuing a previous search")
+                        .value_name("TOKEN"),
                 )
                 .after_help(
                     "\
 EXAMPLES:
-  gws gmail +triage
-  gws gmail +triage --max 5 --query 'from:boss'
-  gws gmail +triage --format json | jq '.[].subject'
-  gws gmail +triage --labels
+  gws gmail +search --query 'is:unread'
+  gws gmail +search --query 'from:boss subject:urgent' --max 5
+  gws gmail +search --query 'has:attachment' --format table
+  gws gmail +search --query 'newer_than:1d' --page-token <TOKEN>
 
 TIPS:
   Read-only — never modifies your mailbox.
-  Defaults to table output format.",
+  Defaults to JSON output. Labels are resolved to human-readable names.
+  Use --page-token with the nextPageToken from a previous result to paginate.",
                 ),
         );
 
@@ -1951,8 +1981,8 @@ TIPS:
                 return Ok(true);
             }
 
-            if let Some(matches) = matches.subcommand_matches("+triage") {
-                handle_triage(matches).await?;
+            if let Some(matches) = matches.subcommand_matches("+search") {
+                handle_search(matches).await?;
                 return Ok(true);
             }
 
@@ -2331,6 +2361,7 @@ mod tests {
         assert!(subcommands.contains(&"+reply-all"));
         assert!(subcommands.contains(&"+forward"));
         assert!(subcommands.contains(&"+read"));
+        assert!(subcommands.contains(&"+search"));
     }
 
     #[test]

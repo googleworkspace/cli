@@ -29,7 +29,7 @@ Manage an executive's schedule, inbox, and communications.
 ## Instructions
 - Start each day with `gws workflow +standup-report` to get the executive's agenda and open tasks.
 - Before each meeting, run `gws workflow +meeting-prep` to see attendees, description, and linked docs.
-- Triage the inbox with `gws gmail +triage --max 10` — prioritize emails from direct reports and leadership.
+- Triage the inbox with `gws gmail +search --query 'is:unread' --max 10` — prioritize emails from direct reports and leadership.
 - Schedule meetings with `gws calendar +insert` — always check for conflicts first using `gws calendar +agenda`.
 - Draft replies with `gws gmail +send` — keep tone professional and concise.
 

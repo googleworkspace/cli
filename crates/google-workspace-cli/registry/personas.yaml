@@ -18,7 +18,7 @@ personas:
     instructions:
       - "Start each day with `gws workflow +standup-report` to get the executive's agenda and open tasks."
       - "Before each meeting, run `gws workflow +meeting-prep` to see attendees, description, and linked docs."
-      - "Triage the inbox with `gws gmail +triage --max 10` — prioritize emails from direct reports and leadership."
+      - "Triage the inbox with `gws gmail +search --query 'is:unread' --max 10` — prioritize emails from direct reports and leadership."
       - "Schedule meetings with `gws calendar +insert` — always check for conflicts first using `gws calendar +agenda`."
       - "Draft replies with `gws gmail +send` — keep tone professional and concise."
     tips:
@@ -69,7 +69,7 @@ personas:
       - "Share proposals by uploading to Drive with `gws drive +upload`."
       - "Get a weekly sales pipeline summary with `gws workflow +weekly-digest`."
     tips:
-      - "Use `gws gmail +triage --query 'from:client-domain.com'` to filter client emails."
+      - "Use `gws gmail +search --query 'from:client-domain.com'` to filter client emails."
       - "Schedule follow-up calls immediately after meetings to maintain momentum."
       - "Keep all client-facing documents in a dedicated shared Drive folder."
 
@@ -108,13 +108,13 @@ personas:
     services: [gmail, sheets, chat, calendar]
     workflows: ["+email-to-task", "+standup-report"]
     instructions:
-      - "Triage the support inbox with `gws gmail +triage --query 'label:support'`."
+      - "Triage the support inbox with `gws gmail +search --query 'label:support'`."
       - "Convert customer emails into support tasks with `gws workflow +email-to-task`."
       - "Log ticket status updates in a tracking sheet with `gws sheets +append`."
       - "Escalate urgent issues to the team Chat space."
       - "Schedule follow-up calls with customers using `gws calendar +insert`."
     tips:
-      - "Use `gws gmail +triage --labels` to see email categories at a glance."
+      - "Labels are always included in `+search` output — use them to categorize at a glance."
       - "Set up Gmail filters for auto-labeling support requests."
       - "Use `--format table` for quick status dashboard views."
 
