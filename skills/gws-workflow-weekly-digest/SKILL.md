@@ -39,7 +39,7 @@ gws workflow +weekly-digest --format table
 ## Tips
 
 - Read-only — never modifies data.
-- Combines calendar agenda (week) with gmail triage summary.
+- Combines calendar agenda (week) with gmail search summary.
 
 ## See Also
 

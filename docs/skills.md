@@ -38,7 +38,7 @@ Shortcut commands for common operations.
 | [gws-sheets-append](../skills/gws-sheets-append/SKILL.md) | Google Sheets: Append a row to a spreadsheet. |
 | [gws-sheets-read](../skills/gws-sheets-read/SKILL.md) | Google Sheets: Read values from a spreadsheet. |
 | [gws-gmail-send](../skills/gws-gmail-send/SKILL.md) | Gmail: Send an email. |
-| [gws-gmail-triage](../skills/gws-gmail-triage/SKILL.md) | Gmail: Show unread inbox summary (sender, subject, date). |
+| [gws-gmail-search](../skills/gws-gmail-search/SKILL.md) | Gmail: Search Gmail messages with full metadata. |
 | [gws-gmail-reply](../skills/gws-gmail-reply/SKILL.md) | Gmail: Reply to a message (handles threading automatically). |
 | [gws-gmail-reply-all](../skills/gws-gmail-reply-all/SKILL.md) | Gmail: Reply-all to a message (handles threading automatically). |
 | [gws-gmail-forward](../skills/gws-gmail-forward/SKILL.md) | Gmail: Forward a message to new recipients. |

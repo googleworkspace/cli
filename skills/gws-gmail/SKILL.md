@@ -24,7 +24,7 @@ gws gmail <resource> <method> [flags]
 | Command | Description |
 |---------|-------------|
 | [`+send`](../gws-gmail-send/SKILL.md) | Send an email |
-| [`+triage`](../gws-gmail-triage/SKILL.md) | Show unread inbox summary (sender, subject, date) |
+| [`+search`](../gws-gmail-search/SKILL.md) | Search Gmail messages with full metadata |
 | [`+reply`](../gws-gmail-reply/SKILL.md) | Reply to a message (handles threading automatically) |
 | [`+reply-all`](../gws-gmail-reply-all/SKILL.md) | Reply-all to a message (handles threading automatically) |
 | [`+forward`](../gws-gmail-forward/SKILL.md) | Forward a message to new recipients |

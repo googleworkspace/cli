@@ -171,7 +171,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         // Generate per-helper skills
         for helper in &helpers {
             let helper_name = helper.get_name();
-            // +triage -> triage
+            // +search -> search
             let short = helper_name.trim_start_matches('+');
             let helper_key = format!("{alias}-{short}");
 
