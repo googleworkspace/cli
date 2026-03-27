@@ -361,11 +361,12 @@ pub fn parse_service_and_version(
 }
 
 /// Extracts a global flag value from argv, checking both `--flag value` and `--flag=value` forms.
-/// Returns `None` if the flag is absent.
+/// Returns `None` if the flag is absent or if the value looks like another flag (starts with `-`).
+/// This prevents `--subject --help` from incorrectly treating `--help` as the subject value.
 fn extract_global_flag(args: &[String], name: &str) -> Option<String> {
     for i in 0..args.len() {
         if args[i] == format!("--{name}") {
-            if i + 1 < args.len() {
+            if i + 1 < args.len() && !args[i + 1].starts_with('-') {
                 return Some(args[i + 1].clone());
             }
         }
