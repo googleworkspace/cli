@@ -34,6 +34,27 @@ const PROXY_ENV_VARS: &[&str] = &[
     "ALL_PROXY",
 ];
 
+/// Environment variable name for the service account impersonation subject (email).
+/// When set, the service account will impersonate this user via domain-wide delegation.
+const IMPERSONATION_SUBJECT_ENV: &str = "GOOGLE_WORKSPACE_CLI_SUBJECT";
+
+/// Returns the impersonation subject (email address) to use with service account
+/// domain-wide delegation, if one is configured via the `GOOGLE_WORKSPACE_CLI_SUBJECT`
+/// environment variable.
+///
+/// This allows an executive assistant to operate on a executive's Google Workspace
+/// account without logging in as them — the service account uses DWD to obtain
+/// tokens "as" the target user.
+fn get_impersonation_subject() -> Option<String> {
+    let val = std::env::var(IMPERSONATION_SUBJECT_ENV).ok()?;
+    let val = val.trim();
+    if val.is_empty() {
+        None
+    } else {
+        Some(val.to_string())
+    }
+}
+
 /// Response from Google's token endpoint
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -279,9 +300,17 @@ async fn get_token_inner(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| "token_cache.json".to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
-            let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
-                Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
-            );
+            let mut builder =
+                yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
+                    Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
+                );
+
+            // Apply impersonation subject for domain-wide delegation (DWD).
+            // This allows a service account to act as a specific Workspace user,
+            // enabling executive assistant workflows described in persona-exec-assistant.
+            if let Some(subject) = get_impersonation_subject() {
+                builder = builder.subject(subject);
+            }
 
             let auth = builder
                 .build()
@@ -991,5 +1020,33 @@ mod tests {
         let _config_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
 
         assert_eq!(get_quota_project(), Some("my-project-123".to_string()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_impersonation_subject_set() {
+        let _guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_SUBJECT", "boss@company.com");
+        assert_eq!(get_impersonation_subject(), Some("boss@company.com".to_string()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_impersonation_subject_empty() {
+        let _guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_SUBJECT", "");
+        assert_eq!(get_impersonation_subject(), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_impersonation_subject_whitespace() {
+        let _guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_SUBJECT", "   ");
+        assert_eq!(get_impersonation_subject(), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_impersonation_subject_unset() {
+        let _guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_SUBJECT");
+        assert_eq!(get_impersonation_subject(), None);
     }
 }

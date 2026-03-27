@@ -62,6 +62,13 @@ async fn main() {
 async fn run() -> Result<(), GwsError> {
     let args: Vec<String> = std::env::args().collect();
 
+    // Parse --subject before the service name so it can appear before or after the
+    // service name (like --api-version). Sets GOOGLE_WORKSPACE_CLI_SUBJECT so auth.rs
+    // can apply it to the service account authenticator for domain-wide delegation.
+    if let Some(subject) = extract_global_flag(&args, "subject") {
+        std::env::set_var("GOOGLE_WORKSPACE_CLI_SUBJECT", &subject);
+    }
+
     if args.len() < 2 {
         print_usage();
         return Err(GwsError::Validation(
@@ -70,7 +77,7 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg (skip --api-version and its value)
+    // Find the first non-flag arg (skip --api-version and its value, --subject and its value)
     let mut first_arg: Option<String> = None;
     {
         let mut skip_next = false;
@@ -84,6 +91,14 @@ async fn run() -> Result<(), GwsError> {
                 continue;
             }
             if a.starts_with("--api-version=") {
+                continue;
+            }
+            // Handle --subject flag (global, used for service account impersonation)
+            if a == "--subject" {
+                skip_next = true;
+                continue;
+            }
+            if a.starts_with("--subject=") {
                 continue;
             }
             if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
@@ -345,6 +360,22 @@ pub fn parse_service_and_version(
     Ok((api_name, version))
 }
 
+/// Extracts a global flag value from argv, checking both `--flag value` and `--flag=value` forms.
+/// Returns `None` if the flag is absent.
+fn extract_global_flag(args: &[String], name: &str) -> Option<String> {
+    for i in 0..args.len() {
+        if args[i] == format!("--{name}") {
+            if i + 1 < args.len() {
+                return Some(args[i + 1].clone());
+            }
+        }
+        if let Some(val) = args[i].strip_prefix(&format!("--{name}=")) {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
 pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
     let mut sub_args: Vec<String> = vec!["gws".to_string()];
     let mut skip_next = false;
@@ -359,6 +390,14 @@ pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<St
             continue;
         }
         if arg.starts_with("--api-version=") {
+            continue;
+        }
+        // Strip --subject (global flag, consumed before subcommand parsing)
+        if arg == "--subject" {
+            skip_next = true;
+            continue;
+        }
+        if arg.starts_with("--subject=") {
             continue;
         }
         if !service_skipped && arg == service_name {
@@ -459,6 +498,7 @@ fn print_usage() {
     println!("    --output <PATH>       Output file path for binary responses");
     println!("    --format <FMT>        Output format: json (default), table, yaml, csv");
     println!("    --api-version <VER>   Override the API version (e.g., v2, v3)");
+    println!("    --subject <EMAIL>  Impersonate a Workspace user via service account DWD (global flag)");
     println!("    --page-all            Auto-paginate, one JSON line per page (NDJSON)");
     println!("    --page-limit <N>      Max pages to fetch with --page-all (default: 10)");
     println!("    --page-delay <MS>     Delay between pages in ms (default: 100)");
@@ -486,6 +526,9 @@ fn print_usage() {
     );
     println!(
         "    GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND     Keyring backend: keyring (default) or file"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_SUBJECT            Service account impersonation subject (email) for DWD"
     );
     println!("    GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE   Default Model Armor template");
     println!(
@@ -734,5 +777,68 @@ mod tests {
     fn test_select_scope_empty() {
         let scopes: Vec<String> = vec![];
         assert_eq!(select_scope(&scopes), None);
+    }
+
+    #[test]
+    fn test_extract_global_flag_separate() {
+        let args = vec!["gws", "--subject", "boss@company.com", "drive", "files", "list"];
+        assert_eq!(
+            extract_global_flag(&args, "subject"),
+            Some("boss@company.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_global_flag_equals() {
+        let args = vec!["gws", "--subject=boss@company.com", "drive", "files", "list"];
+        assert_eq!(
+            extract_global_flag(&args, "subject"),
+            Some("boss@company.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_global_flag_absent() {
+        let args = vec!["gws", "drive", "files", "list"];
+        assert_eq!(extract_global_flag(&args, "subject"), None);
+    }
+
+    #[test]
+    fn test_extract_global_flag_after_service() {
+        // --subject can appear after the service name too
+        let args = vec!["gws", "drive", "--subject", "boss@company.com", "files", "list"];
+        assert_eq!(
+            extract_global_flag(&args, "subject"),
+            Some("boss@company.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_filter_args_strips_subject() {
+        let args = vec![
+            "gws".into(),
+            "--subject".into(),
+            "boss@company.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
+        assert!(!filtered.contains(&"--subject".to_string()));
+        assert!(!filtered.contains(&"boss@company.com".to_string()));
+    }
+
+    #[test]
+    fn test_filter_args_strips_subject_equals() {
+        let args = vec![
+            "gws".into(),
+            "--subject=boss@company.com".into(),
+            "drive".into(),
+            "files".into(),
+            "list".into(),
+        ];
+        let filtered = filter_args_for_subcommand(&args, "drive");
+        assert_eq!(filtered, vec!["gws", "files", "list"]);
     }
 }
