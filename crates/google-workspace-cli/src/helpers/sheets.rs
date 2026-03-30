@@ -51,14 +51,22 @@ impl Helper for SheetsHelper {
                         .help("JSON array of rows, e.g. '[[\"a\",\"b\"],[\"c\",\"d\"]]'")
                         .value_name("JSON"),
                 )
+                .arg(
+                    Arg::new("range")
+                        .long("range")
+                        .help("Target range in A1 notation (e.g. 'Sheet2!A1'). Defaults to 'A1' (first sheet)")
+                        .value_name("RANGE"),
+                )
                 .after_help(
                     r#"EXAMPLES:
   gws sheets +append --spreadsheet ID --values 'Alice,100,true'
   gws sheets +append --spreadsheet ID --json-values '[["a","b"],["c","d"]]'
+  gws sheets +append --spreadsheet ID --range "Sheet2!A1" --values 'Alice,100'
 
 TIPS:
   Use --values for simple single-row appends.
-  Use --json-values for bulk multi-row inserts."#,
+  Use --json-values for bulk multi-row inserts.
+  Use --range to target a specific sheet tab (default: A1, i.e. first sheet)."#,
                 ),
         );
 
@@ -212,11 +220,9 @@ fn build_append_request(
         GwsError::Discovery("Method 'spreadsheets.values.append' not found".to_string())
     })?;
 
-    let range = "A1";
-
     let params = json!({
         "spreadsheetId": config.spreadsheet_id,
-        "range": range,
+        "range": config.range,
         "valueInputOption": "USER_ENTERED"
     });
 
@@ -262,6 +268,8 @@ fn build_read_request(
 pub struct AppendConfig {
     /// The ID of the spreadsheet to append to.
     pub spreadsheet_id: String,
+    /// Target range in A1 notation (e.g. "Sheet2!A1"). Defaults to "A1".
+    pub range: String,
     /// The rows to append, where each inner Vec represents one row.
     pub values: Vec<Vec<String>>,
 }
@@ -289,8 +297,14 @@ pub fn parse_append_args(matches: &ArgMatches) -> AppendConfig {
         Vec::new()
     };
 
+    let range = matches
+        .get_one::<String>("range")
+        .cloned()
+        .unwrap_or_else(|| "A1".to_string());
+
     AppendConfig {
         spreadsheet_id: matches.get_one::<String>("spreadsheet").unwrap().clone(),
+        range,
         values,
     }
 }
@@ -353,7 +367,8 @@ mod tests {
         let cmd = Command::new("test")
             .arg(Arg::new("spreadsheet").long("spreadsheet"))
             .arg(Arg::new("values").long("values"))
-            .arg(Arg::new("json-values").long("json-values"));
+            .arg(Arg::new("json-values").long("json-values"))
+            .arg(Arg::new("range").long("range"));
         cmd.try_get_matches_from(args).unwrap()
     }
 
@@ -369,15 +384,30 @@ mod tests {
         let doc = make_mock_doc();
         let config = AppendConfig {
             spreadsheet_id: "123".to_string(),
+            range: "A1".to_string(),
             values: vec![vec!["a".to_string(), "b".to_string(), "c".to_string()]],
         };
         let (params, body, scopes) = build_append_request(&config, &doc).unwrap();
 
         assert!(params.contains("123"));
         assert!(params.contains("USER_ENTERED"));
+        assert!(params.contains("A1"));
         assert!(body.contains("a"));
         assert!(body.contains("b"));
         assert_eq!(scopes[0], "https://scope");
+    }
+
+    #[test]
+    fn test_build_append_request_with_range() {
+        let doc = make_mock_doc();
+        let config = AppendConfig {
+            spreadsheet_id: "123".to_string(),
+            range: "Sheet2!A1".to_string(),
+            values: vec![vec!["x".to_string()]],
+        };
+        let (params, _body, _scopes) = build_append_request(&config, &doc).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&params).unwrap();
+        assert_eq!(parsed["range"], "Sheet2!A1");
     }
 
     #[test]
@@ -399,7 +429,30 @@ mod tests {
         let matches = make_matches_append(&["test", "--spreadsheet", "123", "--values", "a,b,c"]);
         let config = parse_append_args(&matches);
         assert_eq!(config.spreadsheet_id, "123");
+        assert_eq!(config.range, "A1");
         assert_eq!(config.values, vec![vec!["a", "b", "c"]]);
+    }
+
+    #[test]
+    fn test_parse_append_args_with_range() {
+        let matches = make_matches_append(&[
+            "test",
+            "--spreadsheet",
+            "123",
+            "--range",
+            "Sheet2!A1",
+            "--values",
+            "a,b",
+        ]);
+        let config = parse_append_args(&matches);
+        assert_eq!(config.range, "Sheet2!A1");
+    }
+
+    #[test]
+    fn test_parse_append_args_default_range() {
+        let matches = make_matches_append(&["test", "--spreadsheet", "123", "--values", "a"]);
+        let config = parse_append_args(&matches);
+        assert_eq!(config.range, "A1");
     }
 
     #[test]
@@ -436,6 +489,7 @@ mod tests {
         let doc = make_mock_doc();
         let config = AppendConfig {
             spreadsheet_id: "123".to_string(),
+            range: "A1".to_string(),
             values: vec![
                 vec!["Alice".to_string(), "100".to_string()],
                 vec!["Bob".to_string(), "200".to_string()],
