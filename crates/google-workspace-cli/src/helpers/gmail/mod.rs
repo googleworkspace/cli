@@ -258,15 +258,15 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
         let name = header.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let value = header.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
-        match name {
-            "From" => parsed.from = value.to_string(),
-            "Reply-To" => append_address_list_header_value(&mut parsed.reply_to, value),
-            "To" => append_address_list_header_value(&mut parsed.to, value),
-            "Cc" => append_address_list_header_value(&mut parsed.cc, value),
-            "Subject" => parsed.subject = value.to_string(),
-            "Date" => parsed.date = value.to_string(),
-            "Message-ID" | "Message-Id" => parsed.message_id = value.to_string(),
-            "References" => append_header_value(&mut parsed.references, value),
+        match name.to_ascii_lowercase().as_str() {
+            "from" => parsed.from = value.to_string(),
+            "reply-to" => append_address_list_header_value(&mut parsed.reply_to, value),
+            "to" => append_address_list_header_value(&mut parsed.to, value),
+            "cc" => append_address_list_header_value(&mut parsed.cc, value),
+            "subject" => parsed.subject = value.to_string(),
+            "date" => parsed.date = value.to_string(),
+            "message-id" => parsed.message_id = value.to_string(),
+            "references" => append_header_value(&mut parsed.references, value),
             _ => {}
         }
     }
@@ -2138,6 +2138,61 @@ mod tests {
         assert!(original.date.is_none());
         assert!(original.references.is_empty());
         assert!(original.body_html.is_none());
+    }
+
+    #[test]
+    fn test_parse_message_headers_all_uppercase() {
+        let headers = vec![
+            json!({ "name": "FROM", "value": "alice@example.com" }),
+            json!({ "name": "TO", "value": "bob@example.com" }),
+            json!({ "name": "CC", "value": "carol@example.com, dave@example.com" }),
+            json!({ "name": "SUBJECT", "value": "Uppercase" }),
+            json!({ "name": "DATE", "value": "Mon, 1 Jan 2026 00:00:00 +0000" }),
+            json!({ "name": "MESSAGE-ID", "value": "<upper@example.com>" }),
+            json!({ "name": "REFERENCES", "value": "<ref1@example.com>" }),
+            json!({ "name": "REPLY-TO", "value": "reply@example.com" }),
+        ];
+        let parsed = parse_message_headers(&headers);
+        assert_eq!(parsed.from, "alice@example.com");
+        assert_eq!(parsed.to, "bob@example.com");
+        assert_eq!(parsed.cc, "carol@example.com, dave@example.com");
+        assert_eq!(parsed.subject, "Uppercase");
+        assert_eq!(parsed.date, "Mon, 1 Jan 2026 00:00:00 +0000");
+        assert_eq!(parsed.message_id, "<upper@example.com>");
+        assert_eq!(parsed.references, "<ref1@example.com>");
+        assert_eq!(parsed.reply_to, "reply@example.com");
+    }
+
+    #[test]
+    fn test_parse_message_headers_all_lowercase() {
+        let headers = vec![
+            json!({ "name": "from", "value": "alice@example.com" }),
+            json!({ "name": "to", "value": "bob@example.com" }),
+            json!({ "name": "cc", "value": "carol@example.com" }),
+            json!({ "name": "subject", "value": "Lowercase" }),
+            json!({ "name": "message-id", "value": "<lower@example.com>" }),
+        ];
+        let parsed = parse_message_headers(&headers);
+        assert_eq!(parsed.from, "alice@example.com");
+        assert_eq!(parsed.to, "bob@example.com");
+        assert_eq!(parsed.cc, "carol@example.com");
+        assert_eq!(parsed.subject, "Lowercase");
+        assert_eq!(parsed.message_id, "<lower@example.com>");
+    }
+
+    #[test]
+    fn test_parse_message_headers_mixed_case() {
+        let headers = vec![
+            json!({ "name": "From", "value": "alice@example.com" }),
+            json!({ "name": "CC", "value": "carol@example.com" }),
+            json!({ "name": "message-id", "value": "<mixed@example.com>" }),
+            json!({ "name": "REPLY-TO", "value": "reply@example.com" }),
+        ];
+        let parsed = parse_message_headers(&headers);
+        assert_eq!(parsed.from, "alice@example.com");
+        assert_eq!(parsed.cc, "carol@example.com");
+        assert_eq!(parsed.message_id, "<mixed@example.com>");
+        assert_eq!(parsed.reply_to, "reply@example.com");
     }
 
     #[test]
