@@ -811,7 +811,7 @@ fn should_run_interactive_scope_picker(
     services_filter: Option<&HashSet<String>>,
 ) -> bool {
     matches!(scope_mode, ScopeMode::Default)
-        && !services_filter.is_some_and(|services| !services.is_empty())
+        && services_filter.is_none_or(|services| services.is_empty())
 }
 
 /// Check if a scope URL belongs to one of the specified services.
