@@ -14,15 +14,11 @@ targets = [
 
 # Advisories — checks for known vulnerable crate versions
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "deny"
 ignore = []
 db-urls = ["https://github.com/rustsec/advisory-db"]
 
 # Licenses — allowlist of acceptable licenses
 [licenses]
-unlicensed = "deny"
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
