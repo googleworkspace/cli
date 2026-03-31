@@ -5,7 +5,7 @@
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 
 const { supportedPlatforms } = require("./package.json");
 
@@ -46,10 +46,13 @@ function getPlatformKey() {
   // On Linux, try to detect musl libc
   if (rawOs === "Linux") {
     try {
-      const lddOutput = execSync("ldd --version 2>&1 || true", {
+      const result = spawnSync("ldd", ["--version"], {
         encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
       });
-      if (lddOutput.toLowerCase().includes("musl")) {
+      // musl ldd prints version info to stderr
+      const output = (result.stdout || "") + (result.stderr || "");
+      if (output.toLowerCase().includes("musl")) {
         osType = "unknown-linux-musl";
       }
     } catch {

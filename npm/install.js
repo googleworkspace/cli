@@ -7,7 +7,7 @@ const path = require("path");
 const os = require("os");
 const { pipeline } = require("stream/promises");
 const { createWriteStream, mkdirSync, rmSync } = require("fs");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const { getPlatform } = require("./platform");
 
 const INSTALL_DIR = path.join(__dirname, "bin");
@@ -38,27 +38,42 @@ async function download(url, dest) {
 }
 
 /**
+ * Run a command and throw on failure.
+ */
+function run(cmd, args) {
+  const result = spawnSync(cmd, args, { stdio: "pipe" });
+  if (result.error) {
+    throw new Error(`Failed to run ${cmd}: ${result.error.message}`);
+  }
+  if ((result.status ?? 1) !== 0) {
+    const stderr = result.stderr ? result.stderr.toString() : "";
+    throw new Error(
+      `Command failed: ${cmd} ${args.join(" ")}\n${stderr}`,
+    );
+  }
+}
+
+/**
  * Extract the archive to the install directory.
  */
 function extract(archivePath, destDir) {
-  const ext = path.extname(archivePath);
   const isZip = archivePath.endsWith(".zip");
   const isTar = archivePath.includes(".tar.");
 
   if (isTar) {
-    execSync(`tar xf "${archivePath}" --strip-components 1 -C "${destDir}"`, {
-      stdio: "pipe",
-    });
+    run("tar", ["xf", archivePath, "--strip-components", "1", "-C", destDir]);
   } else if (isZip) {
     if (process.platform === "win32") {
-      execSync(
-        `powershell.exe -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${destDir}' -Force"`,
-        { stdio: "pipe" },
-      );
+      run("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `& { param($LiteralPath, $DestinationPath) Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath -Force }`,
+        archivePath,
+        destDir,
+      ]);
     } else {
-      execSync(`unzip -q -o "${archivePath}" -d "${destDir}"`, {
-        stdio: "pipe",
-      });
+      run("unzip", ["-q", "-o", archivePath, "-d", destDir]);
     }
   } else {
     throw new Error(`Unsupported archive format: ${archivePath}`);
