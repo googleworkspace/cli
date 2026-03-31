@@ -58,7 +58,7 @@ chrono-tz = "0.10"
 iana-time-zone = "0.1"
 mail-builder = "0.4"
 async-trait = "0.1.89"
-serde_yaml = "0.9.34"
+toml = "0.8"
 percent-encoding = "2.3.2"
 zeroize = { version = "1.8.2", features = ["derive"] }
 tracing = "0.1"

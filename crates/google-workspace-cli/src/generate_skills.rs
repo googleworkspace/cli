@@ -24,8 +24,8 @@ use crate::services;
 use clap::Command;
 use std::path::Path;
 
-const PERSONAS_YAML: &str = include_str!("../registry/personas.yaml");
-const RECIPES_YAML: &str = include_str!("../registry/recipes.yaml");
+const PERSONAS_TOML: &str = include_str!("../registry/personas.toml");
+const RECIPES_TOML: &str = include_str!("../registry/recipes.toml");
 
 /// Methods blocked from skill generation.
 /// Format: (service_alias, resource, method).
@@ -202,12 +202,11 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         }
     }
 
-    // Generate Personas
     if filter
         .as_ref()
         .is_none_or(|f| "persona".contains(f.as_str()) || "personas".contains(f.as_str()))
     {
-        if let Ok(registry) = serde_yaml::from_str::<PersonaRegistry>(PERSONAS_YAML) {
+        if let Ok(registry) = toml::from_str::<PersonaRegistry>(PERSONAS_TOML) {
             eprintln!(
                 "Generating skills for {} personas...",
                 registry.personas.len()
@@ -229,7 +228,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 }
             }
         } else {
-            eprintln!("WARNING: Failed to parse personas.yaml");
+            eprintln!("WARNING: Failed to parse personas.toml");
         }
     }
 
@@ -238,7 +237,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
         .as_ref()
         .is_none_or(|f| "recipe".contains(f.as_str()) || "recipes".contains(f.as_str()))
     {
-        if let Ok(registry) = serde_yaml::from_str::<RecipeRegistry>(RECIPES_YAML) {
+        if let Ok(registry) = toml::from_str::<RecipeRegistry>(RECIPES_TOML) {
             eprintln!(
                 "Generating skills for {} recipes...",
                 registry.recipes.len()
@@ -260,7 +259,7 @@ pub async fn handle_generate_skills(args: &[String]) -> Result<(), GwsError> {
                 }
             }
         } else {
-            eprintln!("WARNING: Failed to parse recipes.yaml");
+            eprintln!("WARNING: Failed to parse recipes.toml");
         }
     }
 

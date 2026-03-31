@@ -1,0 +1,496 @@
+[[recipes]]
+name = "label-and-archive-emails"
+title = "Label and Archive Gmail Threads"
+description = "Apply Gmail labels to matching messages and archive them to keep your inbox clean."
+category = "productivity"
+services = [ "gmail" ]
+steps = [
+  "Search for matching emails: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"from:notifications@service.com\"}' --format table`",
+  "Apply a label: `gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"MESSAGE_ID\"}' --json '{\"addLabelIds\": [\"LABEL_ID\"]}'`",
+  "Archive (remove from inbox): `gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"MESSAGE_ID\"}' --json '{\"removeLabelIds\": [\"INBOX\"]}'`"
+]
+
+[[recipes]]
+name = "draft-email-from-doc"
+title = "Draft a Gmail Message from a Google Doc"
+description = "Read content from a Google Doc and use it as the body of a Gmail message."
+category = "productivity"
+services = [ "docs", "gmail" ]
+steps = [
+  "Get the document content: `gws docs documents get --params '{\"documentId\": \"DOC_ID\"}'`",
+  "Copy the text from the body content",
+  "Send the email: `gws gmail +send --to recipient@example.com --subject 'Newsletter Update' --body 'CONTENT_FROM_DOC'`"
+]
+
+[[recipes]]
+name = "organize-drive-folder"
+title = "Organize Files into Google Drive Folders"
+description = "Create a Google Drive folder structure and move files into the right locations."
+category = "productivity"
+services = [ "drive" ]
+steps = [
+  "Create a project folder: `gws drive files create --json '{\"name\": \"Q2 Project\", \"mimeType\": \"application/vnd.google-apps.folder\"}'`",
+  "Create sub-folders: `gws drive files create --json '{\"name\": \"Documents\", \"mimeType\": \"application/vnd.google-apps.folder\", \"parents\": [\"PARENT_FOLDER_ID\"]}'`",
+  "Move existing files into folder: `gws drive files update --params '{\"fileId\": \"FILE_ID\", \"addParents\": \"FOLDER_ID\", \"removeParents\": \"OLD_PARENT_ID\"}'`",
+  "Verify structure: `gws drive files list --params '{\"q\": \"FOLDER_ID in parents\"}' --format table`"
+]
+
+[[recipes]]
+name = "share-folder-with-team"
+title = "Share a Google Drive Folder with a Team"
+description = "Share a Google Drive folder and all its contents with a list of collaborators."
+category = "productivity"
+services = [ "drive" ]
+steps = [
+  "Find the folder: `gws drive files list --params '{\"q\": \"name = '\\''Project X'\\'' and mimeType = '\\''application/vnd.google-apps.folder'\\''\"}'`",
+  "Share as editor: `gws drive permissions create --params '{\"fileId\": \"FOLDER_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"colleague@company.com\"}'`",
+  "Share as viewer: `gws drive permissions create --params '{\"fileId\": \"FOLDER_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"stakeholder@company.com\"}'`",
+  "Verify permissions: `gws drive permissions list --params '{\"fileId\": \"FOLDER_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "email-drive-link"
+title = "Email a Google Drive File Link"
+description = "Share a Google Drive file and email the link with a message to recipients."
+category = "productivity"
+services = [ "drive", "gmail" ]
+steps = [
+  "Find the file: `gws drive files list --params '{\"q\": \"name = '\\''Quarterly Report'\\''\"}'`",
+  "Share the file: `gws drive permissions create --params '{\"fileId\": \"FILE_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"client@example.com\"}'`",
+  "Email the link: `gws gmail +send --to client@example.com --subject 'Quarterly Report' --body 'Hi, please find the report here: https://docs.google.com/document/d/FILE_ID'`"
+]
+
+[[recipes]]
+name = "create-doc-from-template"
+title = "Create a Google Doc from a Template"
+description = "Copy a Google Docs template, fill in content, and share with collaborators."
+category = "productivity"
+services = [ "drive", "docs" ]
+steps = [
+  "Copy the template: `gws drive files copy --params '{\"fileId\": \"TEMPLATE_DOC_ID\"}' --json '{\"name\": \"Project Brief - Q2 Launch\"}'`",
+  "Get the new doc ID from the response",
+  "Add content: `gws docs +write --document-id NEW_DOC_ID --text '## Project: Q2 Launch\n\n### Objective\nLaunch the new feature by end of Q2.'`",
+  "Share with team: `gws drive permissions create --params '{\"fileId\": \"NEW_DOC_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"team@company.com\"}'`"
+]
+
+[[recipes]]
+name = "create-expense-tracker"
+title = "Create a Google Sheets Expense Tracker"
+description = "Set up a Google Sheets spreadsheet for tracking expenses with headers and initial entries."
+category = "productivity"
+services = [ "sheets", "drive" ]
+steps = [
+  "Create spreadsheet: `gws drive files create --json '{\"name\": \"Expense Tracker 2025\", \"mimeType\": \"application/vnd.google-apps.spreadsheet\"}'`",
+  "Add headers: `gws sheets +append --spreadsheet SHEET_ID --range 'Sheet1' --values '[\"Date\", \"Category\", \"Description\", \"Amount\"]'`",
+  "Add first entry: `gws sheets +append --spreadsheet SHEET_ID --range 'Sheet1' --values '[\"2025-01-15\", \"Travel\", \"Flight to NYC\", \"450.00\"]'`",
+  "Share with manager: `gws drive permissions create --params '{\"fileId\": \"SHEET_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"manager@company.com\"}'`"
+]
+
+[[recipes]]
+name = "copy-sheet-for-new-month"
+title = "Copy a Google Sheet for a New Month"
+description = "Duplicate a Google Sheets template tab for a new month of tracking."
+category = "productivity"
+services = [ "sheets" ]
+steps = [
+  "Get spreadsheet details: `gws sheets spreadsheets get --params '{\"spreadsheetId\": \"SHEET_ID\"}'`",
+  "Copy the template sheet: `gws sheets spreadsheets sheets copyTo --params '{\"spreadsheetId\": \"SHEET_ID\", \"sheetId\": 0}' --json '{\"destinationSpreadsheetId\": \"SHEET_ID\"}'`",
+  "Rename the new tab: `gws sheets spreadsheets batchUpdate --params '{\"spreadsheetId\": \"SHEET_ID\"}' --json '{\"requests\": [{\"updateSheetProperties\": {\"properties\": {\"sheetId\": 123, \"title\": \"February 2025\"}, \"fields\": \"title\"}}]}'`"
+]
+
+[[recipes]]
+name = "block-focus-time"
+title = "Block Focus Time on Google Calendar"
+description = "Create recurring focus time blocks on Google Calendar to protect deep work hours."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Create recurring focus block: `gws calendar events insert --params '{\"calendarId\": \"primary\"}' --json '{\"summary\": \"Focus Time\", \"description\": \"Protected deep work block\", \"start\": {\"dateTime\": \"2025-01-20T09:00:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"2025-01-20T11:00:00\", \"timeZone\": \"America/New_York\"}, \"recurrence\": [\"RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR\"], \"transparency\": \"opaque\"}'`",
+  "Verify it shows as busy: `gws calendar +agenda`"
+]
+
+[[recipes]]
+name = "reschedule-meeting"
+title = "Reschedule a Google Calendar Meeting"
+description = "Move a Google Calendar event to a new time and automatically notify all attendees."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Find the event: `gws calendar +agenda`",
+  "Get event details: `gws calendar events get --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\"}'`",
+  "Update the time: `gws calendar events patch --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\", \"sendUpdates\": \"all\"}' --json '{\"start\": {\"dateTime\": \"2025-01-22T14:00:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"2025-01-22T15:00:00\", \"timeZone\": \"America/New_York\"}}'`"
+]
+
+[[recipes]]
+name = "create-gmail-filter"
+title = "Create a Gmail Filter"
+description = "Create a Gmail filter to automatically label, star, or categorize incoming messages."
+category = "productivity"
+services = [ "gmail" ]
+steps = [
+  "List existing labels: `gws gmail users labels list --params '{\"userId\": \"me\"}' --format table`",
+  "Create a new label: `gws gmail users labels create --params '{\"userId\": \"me\"}' --json '{\"name\": \"Receipts\"}'`",
+  "Create a filter: `gws gmail users settings filters create --params '{\"userId\": \"me\"}' --json '{\"criteria\": {\"from\": \"receipts@example.com\"}, \"action\": {\"addLabelIds\": [\"LABEL_ID\"], \"removeLabelIds\": [\"INBOX\"]}}'`",
+  "Verify filter: `gws gmail users settings filters list --params '{\"userId\": \"me\"}' --format table`"
+]
+
+[[recipes]]
+name = "schedule-recurring-event"
+title = "Schedule a Recurring Meeting"
+description = "Create a recurring Google Calendar event with attendees."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Create recurring event: `gws calendar events insert --params '{\"calendarId\": \"primary\"}' --json '{\"summary\": \"Weekly Standup\", \"start\": {\"dateTime\": \"2024-03-18T09:00:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"2024-03-18T09:30:00\", \"timeZone\": \"America/New_York\"}, \"recurrence\": [\"RRULE:FREQ=WEEKLY;BYDAY=MO\"], \"attendees\": [{\"email\": \"team@company.com\"}]}'`",
+  "Verify it was created: `gws calendar +agenda --days 14 --format table`"
+]
+
+[[recipes]]
+name = "find-free-time"
+title = "Find Free Time Across Calendars"
+description = "Query Google Calendar free/busy status for multiple users to find a meeting slot."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Query free/busy: `gws calendar freebusy query --json '{\"timeMin\": \"2024-03-18T08:00:00Z\", \"timeMax\": \"2024-03-18T18:00:00Z\", \"items\": [{\"id\": \"user1@company.com\"}, {\"id\": \"user2@company.com\"}]}'`",
+  "Review the output to find overlapping free slots",
+  "Create event in the free slot: `gws calendar +insert --summary 'Meeting' --attendee user1@company.com --attendee user2@company.com --start '2024-03-18T14:00:00' --end '2024-03-18T14:30:00'`"
+]
+
+[[recipes]]
+name = "bulk-download-folder"
+title = "Bulk Download Drive Folder"
+description = "List and download all files from a Google Drive folder."
+category = "productivity"
+services = [ "drive" ]
+steps = [
+  "List files in folder: `gws drive files list --params '{\"q\": \"'\\''FOLDER_ID'\\'' in parents\"}' --format json`",
+  "Download each file: `gws drive files get --params '{\"fileId\": \"FILE_ID\", \"alt\": \"media\"}' -o filename.ext`",
+  "Export Google Docs as PDF: `gws drive files export --params '{\"fileId\": \"FILE_ID\", \"mimeType\": \"application/pdf\"}' -o document.pdf`"
+]
+
+[[recipes]]
+name = "find-large-files"
+title = "Find Largest Files in Drive"
+description = "Identify large Google Drive files consuming storage quota."
+category = "productivity"
+services = [ "drive" ]
+steps = [
+  "List files sorted by size: `gws drive files list --params '{\"orderBy\": \"quotaBytesUsed desc\", \"pageSize\": 20, \"fields\": \"files(id,name,size,mimeType,owners)\"}' --format table`",
+  "Review the output and identify files to archive or move"
+]
+
+[[recipes]]
+name = "create-shared-drive"
+title = "Create and Configure a Shared Drive"
+description = "Create a Google Shared Drive and add members with appropriate roles."
+category = "productivity"
+services = [ "drive" ]
+steps = [
+  "Create shared drive: `gws drive drives create --params '{\"requestId\": \"unique-id-123\"}' --json '{\"name\": \"Project X\"}'`",
+  "Add a member: `gws drive permissions create --params '{\"fileId\": \"DRIVE_ID\", \"supportsAllDrives\": true}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"member@company.com\"}'`",
+  "List members: `gws drive permissions list --params '{\"fileId\": \"DRIVE_ID\", \"supportsAllDrives\": true}'`"
+]
+
+[[recipes]]
+name = "log-deal-update"
+title = "Log Deal Update to Sheet"
+description = "Append a deal status update to a Google Sheets sales tracking spreadsheet."
+category = "sales"
+services = [ "sheets", "drive" ]
+steps = [
+  "Find the tracking sheet: `gws drive files list --params '{\"q\": \"name = '\\''Sales Pipeline'\\'' and mimeType = '\\''application/vnd.google-apps.spreadsheet'\\''\"}'`",
+  "Read current data: `gws sheets +read --spreadsheet SHEET_ID --range \"Pipeline!A1:F\"`",
+  "Append new row: `gws sheets +append --spreadsheet SHEET_ID --range 'Pipeline' --values '[\"2024-03-15\", \"Acme Corp\", \"Proposal Sent\", \"$50,000\", \"Q2\", \"jdoe\"]'`"
+]
+
+[[recipes]]
+name = "collect-form-responses"
+title = "Check Form Responses"
+description = "Retrieve and review responses from a Google Form."
+category = "productivity"
+services = [ "forms" ]
+steps = [
+  "List forms: `gws forms forms list` (if you don't have the form ID)",
+  "Get form details: `gws forms forms get --params '{\"formId\": \"FORM_ID\"}'`",
+  "Get responses: `gws forms forms responses list --params '{\"formId\": \"FORM_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "post-mortem-setup"
+title = "Set Up Post-Mortem"
+description = "Create a Google Docs post-mortem, schedule a Google Calendar review, and notify via Chat."
+category = "engineering"
+services = [ "docs", "calendar", "chat" ]
+steps = [
+  "Create post-mortem doc: `gws docs +write --title 'Post-Mortem: [Incident]' --body '## Summary\\n\\n## Timeline\\n\\n## Root Cause\\n\\n## Action Items'`",
+  "Schedule review meeting: `gws calendar +insert --summary 'Post-Mortem Review: [Incident]' --attendee team@company.com --start '2026-03-16T14:00:00' --end '2026-03-16T15:00:00'`",
+  "Notify in Chat: `gws chat +send --space spaces/ENG_SPACE --text '🔍 Post-mortem scheduled for [Incident].'`"
+]
+
+[[recipes]]
+name = "create-task-list"
+title = "Create a Task List and Add Tasks"
+description = "Set up a new Google Tasks list with initial tasks."
+category = "productivity"
+services = [ "tasks" ]
+steps = [
+  "Create task list: `gws tasks tasklists insert --json '{\"title\": \"Q2 Goals\"}'`",
+  "Add a task: `gws tasks tasks insert --params '{\"tasklist\": \"TASKLIST_ID\"}' --json '{\"title\": \"Review Q1 metrics\", \"notes\": \"Pull data from analytics dashboard\", \"due\": \"2024-04-01T00:00:00Z\"}'`",
+  "Add another task: `gws tasks tasks insert --params '{\"tasklist\": \"TASKLIST_ID\"}' --json '{\"title\": \"Draft Q2 OKRs\"}'`",
+  "List tasks: `gws tasks tasks list --params '{\"tasklist\": \"TASKLIST_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "review-overdue-tasks"
+title = "Review Overdue Tasks"
+description = "Find Google Tasks that are past due and need attention."
+category = "productivity"
+services = [ "tasks" ]
+steps = [
+  "List task lists: `gws tasks tasklists list --format table`",
+  "List tasks with status: `gws tasks tasks list --params '{\"tasklist\": \"TASKLIST_ID\", \"showCompleted\": false}' --format table`",
+  "Review due dates and prioritize overdue items"
+]
+
+[[recipes]]
+name = "watch-drive-changes"
+title = "Watch for Drive Changes"
+description = "Subscribe to change notifications on a Google Drive file or folder."
+category = "engineering"
+services = [ "events" ]
+steps = [
+  "Create subscription: `gws events subscriptions create --json '{\"targetResource\": \"//drive.googleapis.com/drives/DRIVE_ID\", \"eventTypes\": [\"google.workspace.drive.file.v1.updated\"], \"notificationEndpoint\": {\"pubsubTopic\": \"projects/PROJECT/topics/TOPIC\"}, \"payloadOptions\": {\"includeResource\": true}}'`",
+  "List active subscriptions: `gws events subscriptions list`",
+  "Renew before expiry: `gws events +renew --subscription SUBSCRIPTION_ID`"
+]
+
+[[recipes]]
+name = "create-classroom-course"
+title = "Create a Google Classroom Course"
+description = "Create a Google Classroom course and invite students."
+category = "education"
+services = [ "classroom" ]
+steps = [
+  "Create the course: `gws classroom courses create --json '{\"name\": \"Introduction to CS\", \"section\": \"Period 1\", \"room\": \"Room 101\", \"ownerId\": \"me\"}'`",
+  "Invite a student: `gws classroom invitations create --json '{\"courseId\": \"COURSE_ID\", \"userId\": \"student@school.edu\", \"role\": \"STUDENT\"}'`",
+  "List enrolled students: `gws classroom courses students list --params '{\"courseId\": \"COURSE_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "create-meet-space"
+title = "Create a Google Meet Conference"
+description = "Create a Google Meet meeting space and share the join link."
+category = "scheduling"
+services = [ "meet", "gmail" ]
+steps = [
+  "Create meeting space: `gws meet spaces create --json '{\"config\": {\"accessType\": \"OPEN\"}}'`",
+  "Copy the meeting URI from the response",
+  "Email the link: `gws gmail +send --to team@company.com --subject 'Join the meeting' --body 'Join here: MEETING_URI'`"
+]
+
+[[recipes]]
+name = "review-meet-participants"
+title = "Review Google Meet Attendance"
+description = "Review who attended a Google Meet conference and for how long."
+category = "productivity"
+services = [ "meet" ]
+steps = [
+  "List recent conferences: `gws meet conferenceRecords list --format table`",
+  "List participants: `gws meet conferenceRecords participants list --params '{\"parent\": \"conferenceRecords/CONFERENCE_ID\"}' --format table`",
+  "Get session details: `gws meet conferenceRecords participants participantSessions list --params '{\"parent\": \"conferenceRecords/CONFERENCE_ID/participants/PARTICIPANT_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "create-presentation"
+title = "Create a Google Slides Presentation"
+description = "Create a new Google Slides presentation and add initial slides."
+category = "productivity"
+services = [ "slides" ]
+steps = [
+  "Create presentation: `gws slides presentations create --json '{\"title\": \"Quarterly Review Q2\"}'`",
+  "Get the presentation ID from the response",
+  "Share with team: `gws drive permissions create --params '{\"fileId\": \"PRESENTATION_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"team@company.com\"}'`"
+]
+
+[[recipes]]
+name = "save-email-attachments"
+title = "Save Gmail Attachments to Google Drive"
+description = "Find Gmail messages with attachments and save them to a Google Drive folder."
+category = "productivity"
+services = [ "gmail", "drive" ]
+steps = [
+  "Search for emails with attachments: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"has:attachment from:client@example.com\"}' --format table`",
+  "Get message details: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MESSAGE_ID\"}'`",
+  "Download attachment: `gws gmail users messages attachments get --params '{\"userId\": \"me\", \"messageId\": \"MESSAGE_ID\", \"id\": \"ATTACHMENT_ID\"}'`",
+  "Upload to Drive folder: `gws drive +upload --file ./attachment.pdf --parent FOLDER_ID`"
+]
+
+[[recipes]]
+name = "send-team-announcement"
+title = "Announce via Gmail and Google Chat"
+description = "Send a team announcement via both Gmail and a Google Chat space."
+category = "communication"
+services = [ "gmail", "chat" ]
+steps = [
+  "Send email: `gws gmail +send --to team@company.com --subject 'Important Update' --body 'Please review the attached policy changes.'`",
+  "Post in Chat: `gws chat +send --space spaces/TEAM_SPACE --text '📢 Important Update: Please check your email for policy changes.'`"
+]
+
+[[recipes]]
+name = "create-feedback-form"
+title = "Create and Share a Google Form"
+description = "Create a Google Form for feedback and share it via Gmail."
+category = "productivity"
+services = [ "forms", "gmail" ]
+steps = [
+  "Create form: `gws forms forms create --json '{\"info\": {\"title\": \"Event Feedback\", \"documentTitle\": \"Event Feedback Form\"}}'`",
+  "Get the form URL from the response (responderUri field)",
+  "Email the form: `gws gmail +send --to attendees@company.com --subject 'Please share your feedback' --body 'Fill out the form: FORM_URL'`"
+]
+
+[[recipes]]
+name = "sync-contacts-to-sheet"
+title = "Export Google Contacts to Sheets"
+description = "Export Google Contacts directory to a Google Sheets spreadsheet."
+category = "productivity"
+services = [ "people", "sheets" ]
+steps = [
+  "List contacts: `gws people people listDirectoryPeople --params '{\"readMask\": \"names,emailAddresses,phoneNumbers\", \"sources\": [\"DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE\"], \"pageSize\": 100}' --format json`",
+  "Create a sheet: `gws sheets +append --spreadsheet SHEET_ID --range 'Contacts' --values '[\"Name\", \"Email\", \"Phone\"]'`",
+  "Append each contact row: `gws sheets +append --spreadsheet SHEET_ID --range 'Contacts' --values '[\"Jane Doe\", \"jane@company.com\", \"+1-555-0100\"]'`"
+]
+
+[[recipes]]
+name = "share-event-materials"
+title = "Share Files with Meeting Attendees"
+description = "Share Google Drive files with all attendees of a Google Calendar event."
+category = "productivity"
+services = [ "calendar", "drive" ]
+steps = [
+  "Get event attendees: `gws calendar events get --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\"}'`",
+  "Share file with each attendee: `gws drive permissions create --params '{\"fileId\": \"FILE_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"attendee@company.com\"}'`",
+  "Verify sharing: `gws drive permissions list --params '{\"fileId\": \"FILE_ID\"}' --format table`"
+]
+
+[[recipes]]
+name = "create-vacation-responder"
+title = "Set Up a Gmail Vacation Responder"
+description = "Enable a Gmail out-of-office auto-reply with a custom message and date range."
+category = "productivity"
+services = [ "gmail" ]
+steps = [
+  "Enable vacation responder: `gws gmail users settings updateVacation --params '{\"userId\": \"me\"}' --json '{\"enableAutoReply\": true, \"responseSubject\": \"Out of Office\", \"responseBodyPlainText\": \"I am out of the office until Jan 20. For urgent matters, contact backup@company.com.\", \"restrictToContacts\": false, \"restrictToDomain\": false}'`",
+  "Verify settings: `gws gmail users settings getVacation --params '{\"userId\": \"me\"}'`",
+  "Disable when back: `gws gmail users settings updateVacation --params '{\"userId\": \"me\"}' --json '{\"enableAutoReply\": false}'`"
+]
+
+[[recipes]]
+name = "create-events-from-sheet"
+title = "Create Google Calendar Events from a Sheet"
+description = "Read event data from a Google Sheets spreadsheet and create Google Calendar entries for each row."
+category = "productivity"
+services = [ "sheets", "calendar" ]
+steps = [
+  "Read event data: `gws sheets +read --spreadsheet SHEET_ID --range \"Events!A2:D\"`",
+  "For each row, create a calendar event: `gws calendar +insert --summary 'Team Standup' --start '2026-01-20T09:00:00' --end '2026-01-20T09:30:00' --attendee alice@company.com --attendee bob@company.com`"
+]
+
+[[recipes]]
+name = "plan-weekly-schedule"
+title = "Plan Your Weekly Google Calendar Schedule"
+description = "Review your Google Calendar week, identify gaps, and add events to fill them."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Check this week's agenda: `gws calendar +agenda`",
+  "Check free/busy for the week: `gws calendar freebusy query --json '{\"timeMin\": \"2025-01-20T00:00:00Z\", \"timeMax\": \"2025-01-25T00:00:00Z\", \"items\": [{\"id\": \"primary\"}]}'`",
+  "Add a new event: `gws calendar +insert --summary 'Deep Work Block' --start '2026-01-21T14:00:00' --end '2026-01-21T16:00:00'`",
+  "Review updated schedule: `gws calendar +agenda`"
+]
+
+[[recipes]]
+name = "share-doc-and-notify"
+title = "Share a Google Doc and Notify Collaborators"
+description = "Share a Google Docs document with edit access and email collaborators the link."
+category = "productivity"
+services = [ "drive", "docs", "gmail" ]
+steps = [
+  "Find the doc: `gws drive files list --params '{\"q\": \"name contains '\\''Project Brief'\\'' and mimeType = '\\''application/vnd.google-apps.document'\\''\"}'`",
+  "Share with editor access: `gws drive permissions create --params '{\"fileId\": \"DOC_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"reviewer@company.com\"}'`",
+  "Email the link: `gws gmail +send --to reviewer@company.com --subject 'Please review: Project Brief' --body 'I have shared the project brief with you: https://docs.google.com/document/d/DOC_ID'`"
+]
+
+[[recipes]]
+name = "backup-sheet-as-csv"
+title = "Export a Google Sheet as CSV"
+description = "Export a Google Sheets spreadsheet as a CSV file for local backup or processing."
+category = "productivity"
+services = [ "sheets", "drive" ]
+steps = [
+  "Get spreadsheet details: `gws sheets spreadsheets get --params '{\"spreadsheetId\": \"SHEET_ID\"}'`",
+  "Export as CSV: `gws drive files export --params '{\"fileId\": \"SHEET_ID\", \"mimeType\": \"text/csv\"}'`",
+  "Or read values directly: `gws sheets +read --spreadsheet SHEET_ID --range 'Sheet1' --format csv`"
+]
+
+[[recipes]]
+name = "save-email-to-doc"
+title = "Save a Gmail Message to Google Docs"
+description = "Save a Gmail message body into a Google Doc for archival or reference."
+category = "productivity"
+services = [ "gmail", "docs" ]
+steps = [
+  "Find the message: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"subject:important from:boss@company.com\"}' --format table`",
+  "Get message content: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}'`",
+  "Create a doc with the content: `gws docs documents create --json '{\"title\": \"Saved Email - Important Update\"}'`",
+  "Write the email body: `gws docs +write --document-id DOC_ID --text 'From: boss@company.com\nSubject: Important Update\n\n[EMAIL BODY]'`"
+]
+
+[[recipes]]
+name = "compare-sheet-tabs"
+title = "Compare Two Google Sheets Tabs"
+description = "Read data from two tabs in a Google Sheet to compare and identify differences."
+category = "productivity"
+services = [ "sheets" ]
+steps = [
+  "Read the first tab: `gws sheets +read --spreadsheet SHEET_ID --range \"January!A1:D\"`",
+  "Read the second tab: `gws sheets +read --spreadsheet SHEET_ID --range \"February!A1:D\"`",
+  "Compare the data and identify changes"
+]
+
+[[recipes]]
+name = "batch-invite-to-event"
+title = "Add Multiple Attendees to a Calendar Event"
+description = "Add a list of attendees to an existing Google Calendar event and send notifications."
+category = "scheduling"
+services = [ "calendar" ]
+steps = [
+  "Get the event: `gws calendar events get --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\"}'`",
+  "Add attendees: `gws calendar events patch --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\", \"sendUpdates\": \"all\"}' --json '{\"attendees\": [{\"email\": \"alice@company.com\"}, {\"email\": \"bob@company.com\"}, {\"email\": \"carol@company.com\"}]}'`",
+  "Verify attendees: `gws calendar events get --params '{\"calendarId\": \"primary\", \"eventId\": \"EVENT_ID\"}'`"
+]
+
+[[recipes]]
+name = "forward-labeled-emails"
+title = "Forward Labeled Gmail Messages"
+description = "Find Gmail messages with a specific label and forward them to another address."
+category = "productivity"
+services = [ "gmail" ]
+steps = [
+  "Find labeled messages: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"label:needs-review\"}' --format table`",
+  "Get message content: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}'`",
+  "Forward via new email: `gws gmail +send --to manager@company.com --subject 'FW: [Original Subject]' --body 'Forwarding for your review:\n\n[Original Message Body]'`"
+]
+
+[[recipes]]
+name = "generate-report-from-sheet"
+title = "Generate a Google Docs Report from Sheet Data"
+description = "Read data from a Google Sheet and create a formatted Google Docs report."
+category = "productivity"
+services = [ "sheets", "docs", "drive" ]
+steps = [
+  "Read the data: `gws sheets +read --spreadsheet SHEET_ID --range \"Sales!A1:D\"`",
+  "Create the report doc: `gws docs documents create --json '{\"title\": \"Sales Report - January 2025\"}'`",
+  "Write the report: `gws docs +write --document-id DOC_ID --text '## Sales Report - January 2025\n\n### Summary\nTotal deals: 45\nRevenue: $125,000\n\n### Top Deals\n1. Acme Corp - $25,000\n2. Widget Inc - $18,000'`",
+  "Share with stakeholders: `gws drive permissions create --params '{\"fileId\": \"DOC_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"cfo@company.com\"}'`"
+]
