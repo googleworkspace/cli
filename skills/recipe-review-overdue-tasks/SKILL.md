@@ -2,7 +2,7 @@
 name: recipe-review-overdue-tasks
 description: "Find Google Tasks that are past due and need attention."
 metadata:
-  version: 0.22.4
+  version: 0.22.5
   openclaw:
     category: "recipe"
     domain: "productivity"

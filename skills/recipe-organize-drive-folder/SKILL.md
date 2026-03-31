@@ -2,7 +2,7 @@
 name: recipe-organize-drive-folder
 description: "Create a Google Drive folder structure and move files into the right locations."
 metadata:
-  version: 0.22.4
+  version: 0.22.5
   openclaw:
     category: "recipe"
     domain: "productivity"

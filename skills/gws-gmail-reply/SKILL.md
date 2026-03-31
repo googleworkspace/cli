@@ -2,7 +2,7 @@
 name: gws-gmail-reply
 description: "Gmail: Reply to a message (handles threading automatically)."
 metadata:
-  version: 0.22.4
+  version: 0.22.5
   openclaw:
     category: "productivity"
     requires:
