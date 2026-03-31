@@ -21,13 +21,29 @@ function getDownloadUrl(artifactName) {
 }
 
 /**
+ * Strip ANSI escape sequences from a string.
+ */
+function sanitize(str) {
+  // eslint-disable-next-line no-control-regex
+  return String(str).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+/**
  * Download a file using native fetch (Node 18+).
+ *
+ * NOTE: Native fetch does not respect HTTP_PROXY / HTTPS_PROXY environment
+ * variables. If proxy support is needed, consider using the `undici` ProxyAgent
+ * or a Node.js build with proxy support.
  */
 async function download(url, dest) {
   const res = await fetch(url, { redirect: "follow" });
 
   if (!res.ok) {
     throw new Error(`Failed to download ${url}: ${res.status} ${res.statusText}`);
+  }
+
+  if (!res.body) {
+    throw new Error(`Failed to download ${url}: Response body is empty`);
   }
 
   const fileStream = createWriteStream(dest);
@@ -64,13 +80,15 @@ function extract(archivePath, destDir) {
     run("tar", ["xf", archivePath, "--strip-components", "1", "-C", destDir]);
   } else if (isZip) {
     if (process.platform === "win32") {
+      // Use single-quoted PowerShell strings with doubled single-quote escaping
+      // to safely handle paths containing spaces and special characters.
+      const psArchive = archivePath.replace(/'/g, "''");
+      const psDest = destDir.replace(/'/g, "''");
       run("powershell.exe", [
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `& { param($LiteralPath, $DestinationPath) Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath -Force }`,
-        archivePath,
-        destDir,
+        `Expand-Archive -LiteralPath '${psArchive}' -DestinationPath '${psDest}' -Force`,
       ]);
     } else {
       run("unzip", ["-q", "-o", archivePath, "-d", destDir]);
@@ -82,13 +100,19 @@ function extract(archivePath, destDir) {
 
 async function install() {
   const platform = getPlatform();
+  const { version } = require("./package.json");
   const url = getDownloadUrl(platform.artifact);
 
-  // Check if already installed
+  // Check if the correct version is already installed
   const binPath = path.join(INSTALL_DIR, platform.binary);
-  if (fs.existsSync(binPath)) {
-    console.error(`gws is already installed, skipping installation.`);
-    return;
+  const versionFile = path.join(INSTALL_DIR, ".version");
+  if (fs.existsSync(binPath) && fs.existsSync(versionFile)) {
+    const installed = fs.readFileSync(versionFile, "utf8").trim();
+    if (installed === version) {
+      console.error(`gws v${version} is already installed, skipping.`);
+      return;
+    }
+    console.error(`Upgrading gws from v${installed} to v${version}`);
   }
 
   // Clean and create install directory
@@ -114,7 +138,8 @@ async function install() {
       fs.chmodSync(binPath, 0o755);
     }
 
-    console.error(`gws has been installed!`);
+    console.error(`gws v${version} has been installed!`);
+    fs.writeFileSync(versionFile, version);
   } finally {
     // Clean up temp files
     rmSync(tmpDir, { recursive: true, force: true });
@@ -122,6 +147,6 @@ async function install() {
 }
 
 install().catch((err) => {
-  console.error(`Error installing gws: ${err.message}`);
+  console.error(`Error installing gws: ${sanitize(err.message)}`);
   process.exit(1);
 });

@@ -1,5 +1,5 @@
 ---
-"@googleworkspace/cli": minor
+"@googleworkspace/cli": patch
 ---
 
 Remove cargo-dist; use native Node.js fetch for npm binary installer

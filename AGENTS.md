@@ -178,7 +178,7 @@ Use these labels to categorize pull requests and issues:
 - `area: http` — Request execution, URL building, response handling
 - `area: docs` — README, contributing guides, documentation
 - `area: tui` — Setup wizard, picker, input fields
-- `area: distribution` — Nix flake, cargo-dist, npm packaging, install methods
+- `area: distribution` — Nix flake, npm packaging, GitHub Actions release workflow, install methods
 - `area: auth` — OAuth, credentials, multi-account, ADC
 - `area: skills` — AI skill generation and management
 
