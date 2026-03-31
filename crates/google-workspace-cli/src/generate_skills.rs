@@ -982,10 +982,8 @@ mod tests {
 
     #[test]
     fn test_registry_references() {
-        let personas: PersonaRegistry =
-            serde_yaml::from_str(PERSONAS_YAML).expect("valid personas yaml");
-        let recipes: RecipeRegistry =
-            serde_yaml::from_str(RECIPES_YAML).expect("valid recipes yaml");
+        let personas: PersonaRegistry = toml::from_str(PERSONAS_TOML).expect("valid personas toml");
+        let recipes: RecipeRegistry = toml::from_str(RECIPES_TOML).expect("valid recipes toml");
 
         // Valid services mapped by api_name or alias
         let all_services = services::SERVICES;
