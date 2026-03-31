@@ -6,13 +6,15 @@
 
 ## Install
 
+Download the pre-built binary for your OS and architecture from the **[GitHub Releases](https://github.com/googleworkspace/cli/releases)** page.
+
+Alternatively, you can use package managers as a convenience layer:
+
 ```bash
-npm install -g @googleworkspace/cli    # npm
+npm install -g @googleworkspace/cli    # npm (downloads GitHub release binary)
 cargo install google-workspace-cli     # crates.io
 nix run github:googleworkspace/cli     # nix
 ```
-
-Pre-built binaries are available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
 
 ## Quick Start
 

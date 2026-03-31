@@ -14,9 +14,7 @@ Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JS
 </p>
 <br>
 
-```bash
-npm install -g @googleworkspace/cli
-```
+⬇️ **[Download the latest release for your OS](https://github.com/googleworkspace/cli/releases)**
 
 `gws` doesn't ship a static list of commands. It reads Google's own [Discovery Service](https://developers.google.com/discovery) at runtime and builds its entire command surface dynamically. When Google Workspace adds an API endpoint or method, `gws` picks it up automatically.
 
@@ -46,14 +44,13 @@ npm install -g @googleworkspace/cli
 
 ## Installation
 
+The recommended way to install `gws` is to download the pre-built binary for your OS and architecture from the **[GitHub Releases](https://github.com/googleworkspace/cli/releases)** page. Extract the archive and place the `gws` binary in your `$PATH`.
+
+For convenience, you can also use `npm` to automate downloading the appropriate binary from GitHub Releases:
+
 ```bash
 npm install -g @googleworkspace/cli
 ```
-
-> The npm package bundles pre-built native binaries for your OS and architecture.
-> No Rust toolchain required.
-
-Pre-built binaries are also available on the [GitHub Releases](https://github.com/googleworkspace/cli/releases) page.
 
 Or build from source:
 
