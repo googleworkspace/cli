@@ -38,7 +38,7 @@ allow = [
 # Bans — reject problematic and duplicate crates
 [bans]
 multiple-versions = "deny"
-wildcards = "allow"
+wildcards = "deny"
 deny = []
 
 # Sources — restrict where crates can come from
