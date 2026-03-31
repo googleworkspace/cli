@@ -2,6 +2,7 @@
 
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -129,6 +130,23 @@ async function install() {
   try {
     console.error(`Downloading gws from ${url}`);
     await download(url, tmpFile);
+
+    // Verify SHA256 checksum
+    const sha256Url = `${url}.sha256`;
+    const sha256File = `${tmpFile}.sha256`;
+    console.error(`Verifying checksum from ${sha256Url}`);
+    await download(sha256Url, sha256File);
+
+    const expectedHash = fs.readFileSync(sha256File, "utf8").trim().split(/\s+/)[0].toLowerCase();
+    const fileBuffer = fs.readFileSync(tmpFile);
+    const actualHash = crypto.createHash("sha256").update(fileBuffer).digest("hex").toLowerCase();
+
+    if (actualHash !== expectedHash) {
+      throw new Error(
+        `SHA256 checksum mismatch!\n  Expected: ${expectedHash}\n  Actual:   ${actualHash}\nThe downloaded binary may have been tampered with.`,
+      );
+    }
+    console.error("Checksum verified ✓");
 
     console.error(`Extracting to ${INSTALL_DIR}`);
     extract(tmpFile, INSTALL_DIR);
