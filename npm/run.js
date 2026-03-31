@@ -12,9 +12,15 @@ const binPath = path.join(__dirname, "bin", platform.binary);
 
 if (!fs.existsSync(binPath)) {
   console.error(
-    `gws binary not found at ${binPath}\nRun "npm install -g @googleworkspace/cli" to install it.`,
+    `gws binary not found at ${binPath}\nAuto-installing...`
   );
-  process.exit(1);
+  const install = spawnSync(process.execPath, [path.join(__dirname, "install.js")], {
+    cwd: __dirname,
+    stdio: "inherit",
+  });
+  if (install.status !== 0) {
+    process.exit(install.status ?? 1);
+  }
 }
 
 const result = spawnSync(binPath, process.argv.slice(2), {
