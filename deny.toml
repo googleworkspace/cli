@@ -14,7 +14,6 @@ targets = [
 
 # Advisories — checks for known vulnerable crate versions
 [advisories]
-db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 
 # Licenses — allowlist of acceptable licenses
