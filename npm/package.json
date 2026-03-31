@@ -1,0 +1,79 @@
+{
+  "name": "@googleworkspace/cli",
+  "description": "Google Workspace CLI — dynamic command surface from Discovery Service",
+  "version": "0.22.3",
+  "license": "Apache-2.0",
+  "author": "Justin Poehnelt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/googleworkspace/cli.git"
+  },
+  "homepage": "https://github.com/googleworkspace/cli",
+  "bugs": {
+    "url": "https://github.com/googleworkspace/cli/issues"
+  },
+  "bin": {
+    "gws": "run.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "preferUnplugged": true,
+  "keywords": [
+    "cli",
+    "google-workspace",
+    "google",
+    "google-api",
+    "google-drive",
+    "google-gmail",
+    "google-sheets",
+    "google-calendar",
+    "google-docs",
+    "google-chat",
+    "google-admin",
+    "gsuite",
+    "discovery-api",
+    "ai-agent",
+    "agent-skills",
+    "automation",
+    "oauth2",
+    "rust"
+  ],
+  "publishConfig": {
+    "provenance": true,
+    "registry": "https://wombat-dressing-room.appspot.com"
+  },
+  "supportedPlatforms": {
+    "aarch64-apple-darwin": {
+      "artifact": "google-workspace-cli-aarch64-apple-darwin.tar.gz",
+      "binary": "gws"
+    },
+    "x86_64-apple-darwin": {
+      "artifact": "google-workspace-cli-x86_64-apple-darwin.tar.gz",
+      "binary": "gws"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "artifact": "google-workspace-cli-aarch64-unknown-linux-gnu.tar.gz",
+      "binary": "gws"
+    },
+    "aarch64-unknown-linux-musl": {
+      "artifact": "google-workspace-cli-aarch64-unknown-linux-musl.tar.gz",
+      "binary": "gws"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "artifact": "google-workspace-cli-x86_64-unknown-linux-gnu.tar.gz",
+      "binary": "gws"
+    },
+    "x86_64-unknown-linux-musl": {
+      "artifact": "google-workspace-cli-x86_64-unknown-linux-musl.tar.gz",
+      "binary": "gws"
+    },
+    "x86_64-pc-windows-msvc": {
+      "artifact": "google-workspace-cli-x86_64-pc-windows-msvc.zip",
+      "binary": "gws.exe"
+    }
+  }
+}
