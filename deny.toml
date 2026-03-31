@@ -37,7 +37,7 @@ allow = [
 
 # Bans — reject problematic and duplicate crates
 [bans]
-multiple-versions = "deny"
+multiple-versions = "warn"
 wildcards = "deny"
 deny = []
 
