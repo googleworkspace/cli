@@ -776,7 +776,10 @@ async fn resolve_scopes(
     }
 
     // Interactive scope picker when running in a TTY
-    if !cfg!(test) && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    if should_run_interactive_scope_picker(scope_mode, services_filter)
+        && !cfg!(test)
+        && std::io::IsTerminal::is_terminal(&std::io::stdin())
+    {
         // If we have a project_id, use discovery-based scope picker (rich templates)
         if let Some(pid) = project_id {
             let enabled_apis = crate::setup::get_enabled_apis(pid);
@@ -803,6 +806,14 @@ async fn resolve_scopes(
     result
 }
 
+fn should_run_interactive_scope_picker(
+    scope_mode: ScopeMode,
+    services_filter: Option<&HashSet<String>>,
+) -> bool {
+    matches!(scope_mode, ScopeMode::Default)
+        && !services_filter.is_some_and(|services| !services.is_empty())
+}
+
 /// Check if a scope URL belongs to one of the specified services.
 ///
 /// Matching is done on the scope's short name (the part after
@@ -816,6 +827,10 @@ fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
     let short = scope_url
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(scope_url);
+
+    if services.contains(short) {
+        return true;
+    }
 
     // cloud-platform is a cross-service scope, always include
     if short == "cloud-platform" {
@@ -2348,6 +2363,32 @@ mod tests {
         ];
         let result = filter_redundant_restrictive_scopes(scopes);
         assert_eq!(result, vec!["https://mail.google.com/"]);
+    }
+
+    #[test]
+    fn scope_matches_service_accepts_exact_scope_short_name() {
+        let services = HashSet::from([String::from("documents.readonly")]);
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/documents.readonly",
+            &services
+        ));
+    }
+
+    #[test]
+    fn interactive_picker_skipped_when_services_filter_is_provided() {
+        let services = HashSet::from([String::from("gmail")]);
+        assert!(!should_run_interactive_scope_picker(
+            ScopeMode::Default,
+            Some(&services)
+        ));
+    }
+
+    #[test]
+    fn interactive_picker_allowed_for_plain_default_login() {
+        assert!(should_run_interactive_scope_picker(
+            ScopeMode::Default,
+            None
+        ));
     }
 
     #[test]
