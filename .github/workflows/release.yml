@@ -92,10 +92,10 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           ARTIFACT="google-workspace-cli-${{ matrix.target }}"
-          mkdir -p "${ARTIFACT}"
-          cp "target/${{ matrix.target }}/release/gws" "${ARTIFACT}/"
-          cp LICENSE README.md CHANGELOG.md "${ARTIFACT}/"
-          tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
+          mkdir -p staging
+          cp "target/${{ matrix.target }}/release/gws" staging/
+          cp LICENSE README.md CHANGELOG.md staging/
+          tar czf "${ARTIFACT}.tar.gz" -C staging .
           shasum -a 256 "${ARTIFACT}.tar.gz" > "${ARTIFACT}.tar.gz.sha256"
         shell: bash
 

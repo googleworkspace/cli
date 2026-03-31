@@ -77,7 +77,7 @@ function extract(archivePath, destDir) {
   const isTar = archivePath.includes(".tar.");
 
   if (isTar) {
-    run("tar", ["xf", archivePath, "--strip-components", "1", "-C", destDir]);
+    run("tar", ["xf", archivePath, "-C", destDir]);
   } else if (isZip) {
     if (process.platform === "win32") {
       // Use single-quoted PowerShell strings with doubled single-quote escaping
