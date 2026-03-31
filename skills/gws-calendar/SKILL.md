@@ -2,7 +2,7 @@
 name: gws-calendar
 description: "Google Calendar: Manage calendars and events."
 metadata:
-  version: 0.22.3
+  version: 0.22.4
   openclaw:
     category: "productivity"
     requires:

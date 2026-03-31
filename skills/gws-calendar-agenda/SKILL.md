@@ -2,7 +2,7 @@
 name: gws-calendar-agenda
 description: "Google Calendar: Show upcoming events across all calendars."
 metadata:
-  version: 0.22.3
+  version: 0.22.4
   openclaw:
     category: "productivity"
     requires:

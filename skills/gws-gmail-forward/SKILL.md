@@ -2,7 +2,7 @@
 name: gws-gmail-forward
 description: "Gmail: Forward a message to new recipients."
 metadata:
-  version: 0.22.3
+  version: 0.22.4
   openclaw:
     category: "productivity"
     requires:
