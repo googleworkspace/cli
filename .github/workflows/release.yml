@@ -144,9 +144,42 @@ jobs:
           if [ "${{ needs.plan.outputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          
+          NOTES="## Installation
+          
+          Download the archive for your OS and architecture from the assets below.
+          
+          ### Linux / macOS
+          
+          Replace \`<target>\` with your platform (e.g., \`aarch64-apple-darwin\` or \`x86_64-unknown-linux-gnu\`).
+          
+          \`\`\`bash
+          # 1. Download the archive and its checksum
+          curl -sLO https://github.com/googleworkspace/cli/releases/download/${{ github.ref_name }}/google-workspace-cli-<target>.tar.gz
+          curl -sLO https://github.com/googleworkspace/cli/releases/download/${{ github.ref_name }}/google-workspace-cli-<target>.tar.gz.sha256
+          
+          # 2. Verify the checksum
+          shasum -a 256 -c google-workspace-cli-<target>.tar.gz.sha256
+          
+          # 3. Extract and install
+          tar -xzf google-workspace-cli-<target>.tar.gz
+          chmod +x gws
+          sudo mv gws /usr/local/bin/
+          \`\`\`
+          
+          ### Windows
+          
+          1. Download \`google-workspace-cli-x86_64-pc-windows-msvc.zip\` and its \`.sha256\` file
+          2. Verify the checksum (e.g., using PowerShell \`Get-FileHash\`)
+          3. Extract the archive and move \`gws.exe\` to a directory included in your system \`PATH\`.
+          
+          ---
+          "
+
           gh release create "${{ github.ref_name }}" \
             --target "${{ github.sha }}" \
             --title "${{ github.ref_name }}" \
+            --notes "$NOTES" \
             --generate-notes \
             $PRERELEASE_FLAG \
             artifacts/*
