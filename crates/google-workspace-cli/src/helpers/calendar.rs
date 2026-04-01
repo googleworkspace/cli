@@ -806,4 +806,53 @@ mod tests {
             "tomorrow boundary should carry Denver offset, got {tomorrow_rfc}"
         );
     }
+
+    #[test]
+    fn extract_event_times_all_day() {
+        let event = json!({
+            "start": { "date": "2026-03-23" },
+            "end": { "date": "2026-03-24" },
+            "summary": "All-day event"
+        });
+        let (start, end, all_day) = extract_event_times(&event);
+        assert_eq!(start, "2026-03-23");
+        assert_eq!(end, "2026-03-24");
+        assert!(all_day);
+    }
+
+    #[test]
+    fn extract_event_times_timed() {
+        let event = json!({
+            "start": { "dateTime": "2026-03-23T10:00:00+09:00" },
+            "end": { "dateTime": "2026-03-23T11:00:00+09:00" },
+            "summary": "Timed event"
+        });
+        let (start, end, all_day) = extract_event_times(&event);
+        assert_eq!(start, "2026-03-23T10:00:00+09:00");
+        assert_eq!(end, "2026-03-23T11:00:00+09:00");
+        assert!(!all_day);
+    }
+
+    #[test]
+    fn extract_event_times_missing_fields() {
+        let event = json!({ "summary": "No dates" });
+        let (start, end, all_day) = extract_event_times(&event);
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+        assert!(!all_day);
+    }
+
+    #[test]
+    fn extract_event_times_all_day_prefers_date_over_datetime() {
+        // Regression: if both `date` and `dateTime` exist on an all-day
+        // event, the bare date must win so no timezone shift occurs.
+        let event = json!({
+            "start": { "date": "2026-03-23" },
+            "end": { "date": "2026-03-24" },
+            "summary": "Mixed"
+        });
+        let (start, _end, all_day) = extract_event_times(&event);
+        assert!(all_day);
+        assert_eq!(start, "2026-03-23", "bare date must not be shifted");
+    }
 }
