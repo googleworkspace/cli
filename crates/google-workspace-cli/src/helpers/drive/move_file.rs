@@ -51,7 +51,15 @@ pub(super) async fn handle_move(matches: &ArgMatches) -> Result<(), GwsError> {
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    let remove_parents = current_parents.join(",");
+    // Filter out the destination folder from removal to avoid the Drive API
+    // error when the same ID appears in both addParents and removeParents.
+    let is_already_in_dest = current_parents.contains(&dest_folder.as_str());
+    let remove_parents: String = current_parents
+        .iter()
+        .filter(|&&p| p != dest_folder)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(",");
 
     // Step 2: Move by updating parents
     let update_url = format!(
@@ -60,13 +68,17 @@ pub(super) async fn handle_move(matches: &ArgMatches) -> Result<(), GwsError> {
     );
 
     let update_resp = crate::client::send_with_retry(|| {
+        let mut query = vec![("fields", "id,name,parents")];
+        if !is_already_in_dest {
+            query.push(("addParents", dest_folder.as_str()));
+        }
+        if !remove_parents.is_empty() {
+            query.push(("removeParents", remove_parents.as_str()));
+        }
+
         client
             .patch(&update_url)
-            .query(&[
-                ("addParents", dest_folder.as_str()),
-                ("removeParents", remove_parents.as_str()),
-                ("fields", "id,name,parents"),
-            ])
+            .query(&query)
             .bearer_auth(&token)
             .header("Content-Type", "application/json")
             .body("{}")
