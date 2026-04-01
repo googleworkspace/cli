@@ -217,9 +217,9 @@ fn extract_event_times(event: &Value) -> (String, String, bool) {
     let start_obj = event.get("start");
     let end_obj = event.get("end");
 
-    // All-day events carry a `date` field with no `dateTime`.
+    // All-day events carry a `date` field; prefer it over `dateTime` when present.
     let all_day = start_obj
-        .map(|s| s.get("date").is_some() && s.get("dateTime").is_none())
+        .map(|s| s.get("date").is_some())
         .unwrap_or(false);
 
     let start = start_obj
@@ -846,8 +846,8 @@ mod tests {
         // Regression: if both `date` and `dateTime` exist on an all-day
         // event, the bare date must win so no timezone shift occurs.
         let event = json!({
-            "start": { "date": "2026-03-23" },
-            "end": { "date": "2026-03-24" },
+            "start": { "date": "2026-03-23", "dateTime": "2026-03-21T15:00:00Z" },
+            "end": { "date": "2026-03-24", "dateTime": "2026-03-22T15:00:00Z" },
             "summary": "Mixed"
         });
         let (start, _end, all_day) = extract_event_times(&event);
