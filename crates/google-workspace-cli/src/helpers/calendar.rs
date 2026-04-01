@@ -404,8 +404,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
                 let mut events = Vec::new();
                 if let Some(items) = events_json.get("items").and_then(|i| i.as_array()) {
                     for event in items {
-                        let (start, end, all_day) =
-                            extract_event_times(event);
+                        let (start, end, all_day) = extract_event_times(event);
                         let summary = event
                             .get("summary")
                             .and_then(|v| v.as_str())
