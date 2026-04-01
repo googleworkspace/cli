@@ -206,6 +206,49 @@ TIPS:
         })
     }
 }
+/// Extract start/end times from a Google Calendar event.
+///
+/// All-day events use the `date` field (e.g. `"2026-03-23"`), while timed
+/// events use `dateTime` (RFC 3339).  We prefer `date` when present so that
+/// all-day dates are never shifted by a timezone offset.
+///
+/// Returns `(start, end, all_day)`.
+fn extract_event_times(event: &Value) -> (String, String, bool) {
+    let start_obj = event.get("start");
+    let end_obj = event.get("end");
+
+    // All-day events carry a `date` field with no `dateTime`.
+    let all_day = start_obj
+        .map(|s| s.get("date").is_some() && s.get("dateTime").is_none())
+        .unwrap_or(false);
+
+    let start = start_obj
+        .and_then(|s| {
+            if all_day {
+                s.get("date")
+            } else {
+                s.get("dateTime").or_else(|| s.get("date"))
+            }
+        })
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let end = end_obj
+        .and_then(|s| {
+            if all_day {
+                s.get("date")
+            } else {
+                s.get("dateTime").or_else(|| s.get("date"))
+            }
+        })
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    (start, end, all_day)
+}
+
 async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     let cal_scope = "https://www.googleapis.com/auth/calendar.readonly";
     let token = auth::get_token(&[cal_scope])
@@ -254,6 +297,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
 
     let time_min = time_min_dt.to_rfc3339();
     let time_max = time_max_dt.to_rfc3339();
+    let tz_name = tz.to_string();
 
     // client already built above for timezone resolution
     let calendar_filter = matches.get_one::<String>("calendar");
@@ -325,6 +369,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
             let token = &token;
             let time_min = &time_min;
             let time_max = &time_max;
+            let tz_name = &tz_name;
             async move {
                 let events_url = format!(
                     "https://www.googleapis.com/calendar/v3/calendars/{}/events",
@@ -337,6 +382,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
                         .query(&[
                             ("timeMin", time_min.as_str()),
                             ("timeMax", time_max.as_str()),
+                            ("timeZone", tz_name.as_str()),
                             ("singleEvents", "true"),
                             ("orderBy", "startTime"),
                             ("maxResults", "50"),
@@ -358,18 +404,8 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
                 let mut events = Vec::new();
                 if let Some(items) = events_json.get("items").and_then(|i| i.as_array()) {
                     for event in items {
-                        let start = event
-                            .get("start")
-                            .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let end = event
-                            .get("end")
-                            .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
+                        let (start, end, all_day) =
+                            extract_event_times(event);
                         let summary = event
                             .get("summary")
                             .and_then(|v| v.as_str())
@@ -384,6 +420,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
                         events.push(json!({
                             "start": start,
                             "end": end,
+                            "allDay": all_day,
                             "summary": summary,
                             "calendar": cal.summary,
                             "location": location,
