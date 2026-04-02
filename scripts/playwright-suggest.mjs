@@ -30,12 +30,13 @@
  * Requires:
  *   - npx playwright install chromium   (one-time browser download)
  *   - A saved browser state JSON file with valid Google session cookies
- *     (obtain by running `npx playwright codegen docs.google.com` and logging in)
+ *     (obtain by running `npx playwright codegen --save-storage=state.json docs.google.com`)
  *
  * Outputs JSON to stdout: { "ok": true, "message": "..." } or { "ok": false, "error": "..." }
  */
 
 import { chromium } from "playwright";
+import { platform } from "node:os";
 
 const DISMISS_LABELS = [
   "got it", "ok", "okay", "dismiss", "close", "no thanks",
@@ -77,15 +78,17 @@ async function openDoc(browser, stateFile, docId) {
   return { context, page };
 }
 
+/** Click a button in a dialog by its text. Returns true if found and clicked. */
 async function clickDialogButton(page, text) {
-  await page.evaluate((text) => {
+  return await page.evaluate((text) => {
     for (const sel of ['[role="dialog"]', '[role="alertdialog"]']) {
       for (const dialog of document.querySelectorAll(sel)) {
         for (const btn of dialog.querySelectorAll('button, [role="button"]')) {
-          if (btn.textContent.trim() === text) { btn.click(); return; }
+          if (btn.textContent.trim() === text) { btn.click(); return true; }
         }
       }
     }
+    return false;
   }, text);
 }
 
@@ -106,8 +109,8 @@ async function suggest(docId, find, replace, stateFile) {
     await page.getByText("Suggesting", { exact: true }).click();
     await page.waitForTimeout(500);
 
-    // Open Find & Replace
-    await page.keyboard.press("Control+h");
+    // Open Find & Replace (platform-aware shortcut)
+    await page.keyboard.press(platform() === "darwin" ? "Meta+Shift+h" : "Control+h");
     await page.waitForTimeout(2000);
 
     // Fill in find/replace fields
@@ -124,7 +127,11 @@ async function suggest(docId, find, replace, stateFile) {
     await page.waitForTimeout(500);
 
     // Navigate to first match
-    await clickDialogButton(page, "Next");
+    if (!(await clickDialogButton(page, "Next"))) {
+      await page.keyboard.press("Escape");
+      await context.storageState({ path: stateFile }).catch(() => {});
+      return { ok: false, error: 'Could not find "Next" button. The Google Docs UI may be in a non-English language.' };
+    }
     await page.waitForTimeout(1000);
 
     // Validate match count
@@ -141,21 +148,31 @@ async function suggest(docId, find, replace, stateFile) {
 
     if (matchInfo.status === "not_found") {
       await page.keyboard.press("Escape");
-      context.storageState({ path: stateFile }).catch(() => {});
+      await context.storageState({ path: stateFile }).catch(() => {});
       return { ok: false, error: `No match found for "${find}".` };
     }
 
     if (matchInfo.status === "found" && matchInfo.total > 1) {
       await page.keyboard.press("Escape");
-      context.storageState({ path: stateFile }).catch(() => {});
+      await context.storageState({ path: stateFile }).catch(() => {});
       return {
         ok: false,
         error: `${matchInfo.total} matches found for "${find}". Use a longer, unique quote.`,
       };
     }
 
+    if (matchInfo.status === "unknown") {
+      await page.keyboard.press("Escape");
+      await context.storageState({ path: stateFile }).catch(() => {});
+      return { ok: false, error: `Could not verify match count for "${find}". The Google Docs UI may be in a non-English language.` };
+    }
+
     // Execute the replacement (recorded as a suggestion)
-    await clickDialogButton(page, "Replace");
+    if (!(await clickDialogButton(page, "Replace"))) {
+      await page.keyboard.press("Escape");
+      await context.storageState({ path: stateFile }).catch(() => {});
+      return { ok: false, error: 'Could not find "Replace" button. The Google Docs UI may be in a non-English language.' };
+    }
     await page.waitForTimeout(2000);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(500);

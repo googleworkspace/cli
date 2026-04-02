@@ -33,7 +33,7 @@ See: https://issuetracker.google.com/issues/36054544
 npx playwright install chromium
 
 # Save a browser session with your Google credentials
-npx playwright codegen docs.google.com
+npx playwright codegen --save-storage=state.json docs.google.com
 # Log in in the browser that opens, then close it.
 # Move the state to: ~/.config/gws/playwright-state.json
 ```
@@ -78,7 +78,7 @@ gws docs +suggest --document 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms \
   matches exist, use a longer quote to disambiguate.
 - Each invocation takes ~15-30 seconds due to browser startup and page load.
 - The browser session expires periodically. If you get auth errors, re-run
-  `npx playwright codegen docs.google.com` to refresh it.
+  `npx playwright codegen --save-storage=state.json docs.google.com` to refresh it.
 
 > [!CAUTION]
 > This is a **write** command — confirm with the user before executing.

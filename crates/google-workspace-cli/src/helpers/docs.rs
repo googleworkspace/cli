@@ -70,8 +70,8 @@ TIPS:
                      accept or reject.\n\n\
                      PREREQUISITES:\n  \
                      - Node.js 18+ and Playwright: npx playwright install chromium\n  \
-                     - A saved browser session: npx playwright codegen docs.google.com\n    \
-                       (log in, then Ctrl+C — the state file is saved automatically)",
+                     - A saved browser session: npx playwright codegen --save-storage=state.json docs.google.com\n    \
+                       (log in, then close the browser to save the state file)",
                 )
                 .arg(
                     Arg::new("document")
@@ -245,7 +245,7 @@ async fn run_suggest(matches: &ArgMatches) -> Result<(), GwsError> {
              \n\
              To create one, run:\n  \
              npx playwright install chromium\n  \
-             npx playwright codegen docs.google.com\n\
+             npx playwright codegen --save-storage=state.json docs.google.com\n\
              \n\
              Log in to your Google account in the browser that opens, then close it.\n\
              Move the saved state to: {}",
