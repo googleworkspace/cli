@@ -17,8 +17,10 @@ use crate::auth;
 use crate::error::GwsError;
 use crate::executor;
 use clap::{Arg, ArgMatches, Command};
+use anyhow::anyhow;
 use serde_json::json;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 pub struct DocsHelper;
@@ -54,6 +56,60 @@ EXAMPLES:
 TIPS:
   Text is inserted at the end of the document body.
   For rich formatting, use the raw batchUpdate API instead.",
+                ),
+        );
+        cmd = cmd.subcommand(
+            Command::new("+suggest")
+                .about("[Helper] Suggest an edit in a document (uses Playwright)")
+                .long_about(
+                    "Create a tracked suggestion in a Google Doc by automating the browser UI.\n\n\
+                     The Google Docs API has no support for Suggesting mode — all API writes are \
+                     direct edits. This command works around that limitation by launching a headless \
+                     browser via Playwright, switching to Suggesting mode, and performing a \
+                     Find & Replace so the change appears as a suggestion that collaborators can \
+                     accept or reject.\n\n\
+                     PREREQUISITES:\n  \
+                     - Node.js 18+ and Playwright: npx playwright install chromium\n  \
+                     - A saved browser session: npx playwright codegen docs.google.com\n    \
+                       (log in, then Ctrl+C — the state file is saved automatically)",
+                )
+                .arg(
+                    Arg::new("document")
+                        .long("document")
+                        .help("Document ID")
+                        .required(true)
+                        .value_name("ID"),
+                )
+                .arg(
+                    Arg::new("find")
+                        .long("find")
+                        .help("Exact text to find (must match exactly once)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("replace")
+                        .long("replace")
+                        .help("Replacement text (recorded as a suggestion)")
+                        .required(true)
+                        .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("state-file")
+                        .long("state-file")
+                        .help("Path to Playwright browser state JSON")
+                        .value_name("PATH")
+                        .default_value("~/.config/gws/playwright-state.json"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  gws docs +suggest --document DOC_ID --find 'old text' --replace 'new text'
+
+WHY:
+  The Google Docs API v1 has no method to create suggestions. This command
+  automates the browser UI to work around that decade-old limitation.
+  See: https://issuetracker.google.com/issues/36054544",
                 ),
         );
         cmd
@@ -111,6 +167,11 @@ TIPS:
 
                 return Ok(true);
             }
+
+            if let Some(matches) = matches.subcommand_matches("+suggest") {
+                return run_suggest(matches).await.map(|_| true);
+            }
+
             Ok(false)
         })
     }
@@ -155,6 +216,99 @@ fn build_write_request(
         .collect();
 
     Ok((params.to_string(), body.to_string(), scopes))
+}
+
+/// Run the Playwright-based suggest script as a subprocess.
+///
+/// The Google Docs API has no Suggesting mode support (see
+/// https://issuetracker.google.com/issues/36054544). This function shells out
+/// to a bundled Node.js script that automates the Docs UI via Playwright to
+/// create tracked suggestions.
+async fn run_suggest(matches: &ArgMatches) -> Result<(), GwsError> {
+    let document = matches.get_one::<String>("document").unwrap();
+    let find = matches.get_one::<String>("find").unwrap();
+    let replace = matches.get_one::<String>("replace").unwrap();
+    let state_file_raw = matches.get_one::<String>("state-file").unwrap();
+
+    // Expand ~ to home directory
+    let state_file = if state_file_raw.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&state_file_raw[2..]))
+            .unwrap_or_else(|| PathBuf::from(state_file_raw))
+    } else {
+        PathBuf::from(state_file_raw)
+    };
+
+    if !state_file.exists() {
+        return Err(GwsError::Validation(format!(
+            "Browser state file not found: {}\n\
+             \n\
+             To create one, run:\n  \
+             npx playwright install chromium\n  \
+             npx playwright codegen docs.google.com\n\
+             \n\
+             Log in to your Google account in the browser that opens, then close it.\n\
+             Move the saved state to: {}",
+            state_file.display(),
+            state_file.display(),
+        )));
+    }
+
+    // Locate the bundled script relative to the binary
+    let script = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.parent()
+                .map(|dir| dir.join("../scripts/playwright-suggest.mjs"))
+        })
+        .unwrap_or_else(|| PathBuf::from("scripts/playwright-suggest.mjs"));
+
+    let output = tokio::process::Command::new("node")
+        .arg(&script)
+        .arg("suggest")
+        .arg(document)
+        .arg(find)
+        .arg(replace)
+        .arg(&state_file)
+        .output()
+        .await
+        .map_err(|e| {
+            GwsError::Other(anyhow!(
+                "Failed to launch Playwright script (is Node.js installed?): {e}"
+            ))
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        let detail = if !stderr.is_empty() {
+            stderr.to_string()
+        } else {
+            stdout.to_string()
+        };
+        return Err(GwsError::Other(anyhow!(
+            "Playwright script failed (exit {}):\n{detail}",
+            output.status.code().unwrap_or(-1)
+        )));
+    }
+
+    // Parse the JSON output
+    if let Ok(result) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+        if result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        } else {
+            let error = result
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(GwsError::Other(anyhow!(error.to_string())));
+        }
+    } else {
+        println!("{stdout}");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
