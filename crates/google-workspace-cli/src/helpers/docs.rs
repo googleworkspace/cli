@@ -254,17 +254,19 @@ async fn run_suggest(matches: &ArgMatches) -> Result<(), GwsError> {
         )));
     }
 
-    // Locate the bundled script relative to the binary
-    let script = std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            exe.parent()
-                .map(|dir| dir.join("../scripts/playwright-suggest.mjs"))
-        })
-        .unwrap_or_else(|| PathBuf::from("scripts/playwright-suggest.mjs"));
+    // Embed the Playwright script in the binary so it works regardless of
+    // install method (cargo install, pre-built binary, npm, etc.)
+    static SCRIPT: &str = include_str!("../../../../scripts/playwright-suggest.mjs");
+
+    let script_file = tempfile::Builder::new()
+        .suffix(".mjs")
+        .tempfile()
+        .map_err(|e| GwsError::Other(anyhow!("Failed to create temp file for script: {e}")))?;
+    std::fs::write(script_file.path(), SCRIPT)
+        .map_err(|e| GwsError::Other(anyhow!("Failed to write script to temp file: {e}")))?;
 
     let output = tokio::process::Command::new("node")
-        .arg(&script)
+        .arg(script_file.path())
         .arg("suggest")
         .arg(document)
         .arg(find)
@@ -293,19 +295,22 @@ async fn run_suggest(matches: &ArgMatches) -> Result<(), GwsError> {
         )));
     }
 
-    // Parse the JSON output
-    if let Ok(result) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-        if result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
-        } else {
-            let error = result
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown error");
-            return Err(GwsError::Other(anyhow!(error.to_string())));
-        }
+    // Parse the JSON output — treat unparseable output as an error
+    let result: serde_json::Value =
+        serde_json::from_str(stdout.trim()).map_err(|e| {
+            GwsError::Other(anyhow!(
+                "Playwright script returned invalid JSON ({e}):\n{stdout}"
+            ))
+        })?;
+
+    if result.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
     } else {
-        println!("{stdout}");
+        let error = result
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(GwsError::Other(anyhow!(error.to_string())));
     }
 
     Ok(())
