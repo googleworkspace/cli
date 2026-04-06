@@ -776,7 +776,7 @@ async fn resolve_scopes(
     }
 
     // Interactive scope picker when running in a TTY
-    if should_run_interactive_scope_picker(scope_mode, services_filter)
+    if should_run_interactive_scope_picker(&scope_mode, services_filter)
         && !cfg!(test)
         && std::io::IsTerminal::is_terminal(&std::io::stdin())
     {
@@ -807,11 +807,13 @@ async fn resolve_scopes(
 }
 
 fn should_run_interactive_scope_picker(
-    scope_mode: ScopeMode,
+    scope_mode: &ScopeMode,
     services_filter: Option<&HashSet<String>>,
 ) -> bool {
     matches!(scope_mode, ScopeMode::Default)
-        && services_filter.is_none_or(|services| services.is_empty())
+        && services_filter
+            .as_ref()
+            .map_or(true, |services| services.is_empty())
 }
 
 /// Check if a scope URL belongs to one of the specified services.
