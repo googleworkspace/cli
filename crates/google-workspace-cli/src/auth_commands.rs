@@ -118,7 +118,8 @@ async fn login_with_proxy_support(
 ) -> Result<(String, String), GwsError> {
     // Start local server to receive OAuth callback.
     // Bind to all interfaces so port-forwarding works in Docker/CI environments.
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", callback_port))
+    let host = if callback_port == 0 { "127.0.0.1" } else { "0.0.0.0" };
+    let listener = TcpListener::bind(format!("{host}:{callback_port}"))
         .map_err(|e| GwsError::Auth(format!("Failed to start local server: {e}")))?;
     let port = listener
         .local_addr()
