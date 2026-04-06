@@ -122,6 +122,8 @@ async fn login_with_proxy_support(
     // (e.g. Docker/CI where the callback arrives via port-forwarding).
     let bind_addr = if callback_host == "localhost" || callback_host == "127.0.0.1" {
         format!("127.0.0.1:{}", callback_port)
+    } else if callback_host == "::1" || callback_host == "[::1]" {
+        format!("[::1]:{}", callback_port)
     } else {
         format!("0.0.0.0:{}", callback_port)
     };
