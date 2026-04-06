@@ -919,9 +919,15 @@ fn extract_payload_recursive(
     // Primary signal: does this part have fetchable binary data?
     let is_hydratable = !attachment_id.is_empty();
 
-    // A body text part has inline body.data, no attachmentId, no filename, and no Content-ID.
+    // A body text part is text/plain or text/html with inline body.data, no
+    // attachmentId, and no filename.
+    // Note: Content-ID is NOT checked here. Outlook/Exchange adds Content-ID to
+    // the text/html body part for multipart/related referencing — excluding parts
+    // with Content-ID would cause the HTML body to be silently dropped, falling
+    // back to a plain-text conversion that loses all formatting and nested quotes.
+    let is_text_mime = mime_type == "text/plain" || mime_type == "text/html";
     let is_body_text_part =
-        !is_hydratable && filename.is_empty() && content_id_header.is_none() && body_data.is_some();
+        !is_hydratable && filename.is_empty() && is_text_mime && body_data.is_some();
 
     if is_body_text_part {
         // body_data is guaranteed Some by the is_body_text_part check above.
@@ -985,6 +991,28 @@ fn extract_payload_recursive(
             for child in child_parts {
                 extract_payload_recursive(child, contents, part_counter);
             }
+        } else if body_data.is_some() && !mime_type.starts_with("multipart/") {
+            // Non-body-text, non-hydratable leaf with inline data that we're about
+            // to drop. Log so silent loss is at least debuggable.
+            let mime_label = if mime_type.is_empty() {
+                "<unknown type>"
+            } else {
+                mime_type
+            };
+            eprintln!(
+                "Warning: skipping inline {} part ({}{})",
+                sanitize_for_terminal(mime_label),
+                if filename.is_empty() {
+                    "no filename".to_string()
+                } else {
+                    format!("filename: {}", sanitize_for_terminal(filename))
+                },
+                if body_size > 0 {
+                    format!(", {} bytes", body_size)
+                } else {
+                    String::new()
+                },
+            );
         }
     }
 }
@@ -3739,6 +3767,36 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_payload_contents_plain_text_with_content_id() {
+        // Some mail generators add Content-ID to text/plain parts (seen in
+        // forwarded messages and certain enterprise gateways). The walker must
+        // still recognize these as body text.
+        let text_data = base64url("Plain text body with Content-ID");
+        let payload = json!({
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": { "data": text_data, "size": 31 },
+                    "headers": [
+                        { "name": "Content-Type", "value": "text/plain; charset=\"utf-8\"" },
+                        { "name": "Content-ID", "value": "<plaintext@example.com>" }
+                    ]
+                }
+            ]
+        });
+        let contents = extract_payload_contents(&payload);
+        assert!(
+            contents.body_text.is_some(),
+            "text/plain with Content-ID must not be skipped"
+        );
+        assert_eq!(
+            contents.body_text.as_deref(),
+            Some("Plain text body with Content-ID")
+        );
+    }
+
+    #[test]
     fn test_header_case_insensitive() {
         let payload = json!({
             "mimeType": "image/gif",
@@ -3899,6 +3957,126 @@ mod tests {
         assert_eq!(
             original.parts[1].content_id.as_deref(),
             Some("img1@example.com")
+        );
+    }
+
+    #[test]
+    fn test_parse_original_message_html_with_content_id_end_to_end() {
+        // End-to-end regression test: Outlook/Exchange adds Content-ID to text/html
+        // body parts for multipart/related referencing. The HTML must survive through
+        // parse_original_message and resolve_html_body, not fall back to <br>-ified
+        // plain text.
+        let plain_data = base64url("Plain text version");
+        let html_data = base64url(
+            "<html><body><p>Rich HTML</p><blockquote>Nested quote</blockquote></body></html>",
+        );
+        let msg = json!({
+            "threadId": "thread1",
+            "snippet": "Rich HTML",
+            "payload": {
+                "mimeType": "multipart/related",
+                "headers": [
+                    { "name": "From", "value": "sender@example.com" },
+                    { "name": "To", "value": "recipient@example.com" },
+                    { "name": "Subject", "value": "Re: Meeting followup" },
+                    { "name": "Message-ID", "value": "<outlook-msg@exchange.example.com>" },
+                ],
+                "parts": [
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            {
+                                "mimeType": "text/plain",
+                                "body": { "data": plain_data, "size": 18 },
+                                "headers": [
+                                    { "name": "Content-Type", "value": "text/plain; charset=\"utf-8\"" }
+                                ]
+                            },
+                            {
+                                "mimeType": "text/html",
+                                "body": { "data": html_data, "size": 78 },
+                                "headers": [
+                                    { "name": "Content-Type", "value": "text/html; charset=\"utf-8\"" },
+                                    { "name": "Content-ID", "value": "<htmlbody@exchange.example.com>" }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "mimeType": "image/png",
+                        "filename": "",
+                        "body": { "attachmentId": "SIG_IMG", "size": 500 },
+                        "headers": [
+                            { "name": "Content-ID", "value": "<image001.png@01DCC5A9>" }
+                        ]
+                    }
+                ]
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        // body_html must be the actual HTML, not None
+        assert!(
+            original.body_html.is_some(),
+            "HTML body with Content-ID must be preserved through parse_original_message"
+        );
+        // resolve_html_body must return the HTML, not a <br>-converted plain text fallback
+        let resolved = resolve_html_body(&original);
+        assert!(
+            resolved.contains("blockquote"),
+            "resolve_html_body must use the HTML body, not plain-text fallback"
+        );
+        assert!(
+            !resolved.contains("<br>"),
+            "resolve_html_body must not fall back to <br>-converted plain text"
+        );
+        // Inline signature image must still be collected as a part
+        assert_eq!(original.parts.len(), 1);
+        assert_eq!(original.parts[0].attachment_id, "SIG_IMG");
+    }
+
+    #[test]
+    fn test_extract_payload_contents_multiple_html_leaves_first_wins() {
+        // When multiple text/html parts are eligible (e.g. one with Content-ID,
+        // one without), the walker takes the first one encountered in DFS order.
+        // This documents current behavior — it is a heuristic, not a guarantee
+        // of multipart/related root-part semantics (which would require honoring
+        // the start= parameter).
+        let first_html = base64url("<p>First HTML (with Content-ID)</p>");
+        let second_html = base64url("<p>Second HTML (no Content-ID)</p>");
+        let payload = json!({
+            "mimeType": "multipart/related",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/html",
+                            "body": { "data": first_html, "size": 34 },
+                            "headers": [
+                                { "name": "Content-ID", "value": "<first@example.com>" }
+                            ]
+                        },
+                        {
+                            "mimeType": "text/html",
+                            "body": { "data": second_html, "size": 37 },
+                            "headers": []
+                        }
+                    ]
+                }
+            ]
+        });
+        let contents = extract_payload_contents(&payload);
+        assert!(
+            contents.body_html.is_some(),
+            "at least one text/html part should be recognized as body"
+        );
+        assert!(
+            contents
+                .body_html
+                .as_deref()
+                .unwrap()
+                .contains("First HTML"),
+            "First eligible text/html in DFS order should win"
         );
     }
 
