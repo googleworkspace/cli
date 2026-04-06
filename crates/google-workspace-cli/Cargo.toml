@@ -34,7 +34,7 @@ google-workspace = { version = "0.22.5", path = "../google-workspace" }
 tempfile = "3"
 aes-gcm = "0.10"
 anyhow = "1"
-clap = { version = "4", features = ["derive", "string"] }
+clap = { version = "4", features = ["derive", "string", "env"] }
 dirs = "5"
 dotenvy = "0.15"
 hostname = "0.4"

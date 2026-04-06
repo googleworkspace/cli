@@ -215,6 +215,8 @@ See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md)
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (for `gws auth login` when no `client_secret.json` is saved) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID` above) |
+| `GOOGLE_WORKSPACE_CLI_CALLBACK_HOST` | Hostname used in the OAuth redirect URI during `gws auth login` (default: `localhost`; overridden by `--callback-host`) |
+| `GOOGLE_WORKSPACE_CLI_CALLBACK_PORT` | Port for the local OAuth callback server during `gws auth login` (default: `0` = OS-assigned; overridden by `--callback-port`) |
 
 ### Sanitization (Model Armor)
 
