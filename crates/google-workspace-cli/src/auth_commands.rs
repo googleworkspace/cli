@@ -124,6 +124,8 @@ async fn login_with_proxy_support(
         format!("127.0.0.1:{}", callback_port)
     } else if callback_host == "::1" || callback_host == "[::1]" {
         format!("[::1]:{}", callback_port)
+    } else if callback_host.contains(':') {
+        format!("[::]:{}", callback_port)
     } else {
         format!("0.0.0.0:{}", callback_port)
     };
