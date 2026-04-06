@@ -131,7 +131,11 @@ async fn login_with_proxy_support(
         .local_addr()
         .map_err(|e| GwsError::Auth(format!("Failed to inspect local server: {e}")))?
         .port();
-    let redirect_uri = format!("http://{}:{}", callback_host, port);
+    let redirect_uri = if callback_host.contains(':') && !callback_host.starts_with('[') {
+        format!("http://[{}]:{}", callback_host, port)
+    } else {
+        format!("http://{}:{}", callback_host, port)
+    };
 
     let auth_url = build_proxy_auth_url(client_id, &redirect_uri, scopes);
 
@@ -2654,5 +2658,18 @@ mod tests {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CALLBACK_PORT");
         }
         assert_eq!(callback_port, 5555u16);
+    }
+
+    #[test]
+    fn build_proxy_auth_url_ipv6_host_brackets_redirect_uri() {
+        // Verify that IPv6 addresses are wrapped in brackets in the redirect URI
+        let scopes = vec!["openid".to_string()];
+        let redirect_uri = if "::1".contains(':') && !"::1".starts_with('[') {
+            format!("http://[::1]:{}", 8080)
+        } else {
+            format!("http://::1:{}", 8080)
+        };
+        let url = build_proxy_auth_url("client-id", &redirect_uri, &scopes);
+        assert!(url.contains("redirect_uri=http%3A%2F%2F%5B%3A%3A1%5D%3A8080"));
     }
 }
