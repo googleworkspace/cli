@@ -13,7 +13,7 @@ metadata:
 
 # script +push
 
-> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.
+> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If you're installing skills selectively, install `gws-shared` alongside this skill. If you're generating skills from a local checkout, run `gws generate-skills` to create it.
 
 Upload local files to an Apps Script project
 

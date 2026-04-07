@@ -224,9 +224,12 @@ The repo ships 100+ Agent Skills (`SKILL.md` files) — one for every supported 
 npx skills add https://github.com/googleworkspace/cli
 
 # Or pick only what you need
+npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-shared
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
 ```
+
+When you selectively install skills, always install `gws-shared` first so the service skills can rely on the shared auth, flag, and safety guidance.
 
 <details>
 <summary>OpenClaw setup</summary>
@@ -236,7 +239,7 @@ npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
 ln -s $(pwd)/skills/gws-* ~/.openclaw/skills/
 
 # Or copy specific skills
-cp -r skills/gws-drive skills/gws-gmail ~/.openclaw/skills/
+cp -r skills/gws-shared skills/gws-drive skills/gws-gmail ~/.openclaw/skills/
 ```
 
 The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the CLI via `npm` if `gws` isn't on PATH.

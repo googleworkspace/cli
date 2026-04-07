@@ -404,7 +404,7 @@ metadata:
     out.push_str(&format!("# {alias} ({api_version})\n\n"));
 
     out.push_str(
-        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n",
+        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If you're installing skills selectively, install `gws-shared` alongside this skill. If you're generating skills from a local checkout, run `gws generate-skills` to create it.\n\n",
     );
 
     out.push_str(&format!(
@@ -541,7 +541,7 @@ metadata:
     out.push_str(&format!("# {alias} {cmd_name}\n\n"));
 
     out.push_str(
-        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n",
+        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If you're installing skills selectively, install `gws-shared` alongside this skill. If you're generating skills from a local checkout, run `gws generate-skills` to create it.\n\n",
     );
 
     out.push_str(&format!("{about}\n\n"));
@@ -1399,5 +1399,71 @@ mod tests {
             fm.contains("- gws"),
             "frontmatter should contain '- gws' block entry"
         );
+    }
+
+    #[test]
+    fn test_service_skill_prerequisite_mentions_selective_install_and_local_generation() {
+        let entry = services::SERVICES
+            .iter()
+            .find(|s| s.api_name == "drive")
+            .unwrap();
+        let doc = crate::discovery::RestDescription {
+            name: entry.api_name.to_string(),
+            title: Some("Google Drive API".to_string()),
+            description: Some(entry.description.to_string()),
+            ..Default::default()
+        };
+        let cli = crate::commands::build_cli(&doc);
+        let helpers: Vec<&Command> = cli
+            .get_subcommands()
+            .filter(|s| s.get_name().starts_with('+'))
+            .collect();
+        let resources: Vec<&Command> = cli
+            .get_subcommands()
+            .filter(|s| !s.get_name().starts_with('+'))
+            .collect();
+
+        let md = render_service_skill(
+            entry.aliases[0],
+            entry,
+            &helpers,
+            &resources,
+            "Google Drive",
+            &doc,
+        );
+
+        assert!(md.contains("install `gws-shared` alongside this skill"));
+        assert!(md.contains("If you're generating skills from a local checkout, run `gws generate-skills`"));
+    }
+
+    #[test]
+    fn test_helper_skill_prerequisite_mentions_selective_install_and_local_generation() {
+        let entry = services::SERVICES
+            .iter()
+            .find(|s| s.api_name == "drive")
+            .unwrap();
+
+        let doc = crate::discovery::RestDescription {
+            name: entry.api_name.to_string(),
+            title: Some("Google Drive API".to_string()),
+            description: Some(entry.description.to_string()),
+            ..Default::default()
+        };
+        let cli = crate::commands::build_cli(&doc);
+        let helper = cli
+            .get_subcommands()
+            .find(|s| s.get_name().starts_with('+'))
+            .expect("No helper command found for test");
+
+        let md = render_helper_skill(
+            entry.aliases[0],
+            helper.get_name(),
+            helper,
+            entry,
+            "Google Drive",
+        );
+
+        assert!(md.contains("install `gws-shared` alongside this skill"));
+        assert!(md.contains("If you're generating skills from a local checkout, run `gws generate-skills`"));
     }
 }
