@@ -143,28 +143,28 @@ TIPS:
                     Arg::new("margin-top")
                         .long("margin-top")
                         .help("Top margin in inches")
-                        .value_parser(clap::value_parser!(f64))
+                        .value_parser(clap::value_parser!(f64).range(0.0..))
                         .value_name("INCHES"),
                 )
                 .arg(
                     Arg::new("margin-bottom")
                         .long("margin-bottom")
                         .help("Bottom margin in inches")
-                        .value_parser(clap::value_parser!(f64))
+                        .value_parser(clap::value_parser!(f64).range(0.0..))
                         .value_name("INCHES"),
                 )
                 .arg(
                     Arg::new("margin-left")
                         .long("margin-left")
                         .help("Left margin in inches")
-                        .value_parser(clap::value_parser!(f64))
+                        .value_parser(clap::value_parser!(f64).range(0.0..))
                         .value_name("INCHES"),
                 )
                 .arg(
                     Arg::new("margin-right")
                         .long("margin-right")
                         .help("Right margin in inches")
-                        .value_parser(clap::value_parser!(f64))
+                        .value_parser(clap::value_parser!(f64).range(0.0..))
                         .value_name("INCHES"),
                 )
                 .arg(
@@ -348,9 +348,7 @@ fn build_page_setup_request(
 
     // Paper size: always stored as portrait dimensions; orientation handled via flipPageOrientation.
     if let Some(size_name) = paper_size {
-        let (w, h) = paper_size_points(size_name).ok_or_else(|| {
-            GwsError::Validation(format!("Unsupported paper size: {size_name}"))
-        })?;
+        let (w, h) = paper_size_points(size_name).unwrap(); // clap validates
         style.insert(
             "pageSize".to_string(),
             json!({
