@@ -600,8 +600,9 @@ async fn handle_login_inner(
 
     // Ensure openid + email + profile scopes are always present so we can
     // identify the user via the userinfo endpoint after login, and so the
-    // Gmail helpers can fall back to the People API to populate the From
-    // display name when the send-as identity lacks one (Workspace accounts).
+    // Gmail helpers can fall back to the OAuth userinfo endpoint to populate
+    // the From display name when the send-as identity lacks one (Workspace
+    // accounts).
     let identity_scopes = [
         "openid",
         "https://www.googleapis.com/auth/userinfo.email",

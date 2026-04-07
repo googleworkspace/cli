@@ -552,6 +552,18 @@ fn resolve_sender_from_identities(
     }
 }
 
+fn uses_env_access_token() -> bool {
+    std::env::var_os("GOOGLE_WORKSPACE_CLI_TOKEN").is_some_and(|token| !token.is_empty())
+}
+
+fn profile_scope_tip(using_env_token: bool) -> &'static str {
+    if using_env_token {
+        "Tip: set `GOOGLE_WORKSPACE_CLI_TOKEN` to an access token that includes the \"profile\" scope to include your display name in the From header"
+    } else {
+        "Tip: run `gws auth login` and grant the \"profile\" scope to include your display name in the From header"
+    }
+}
+
 /// Resolve the `From` address using Gmail send-as identities.
 ///
 /// Fetches send-as settings and enriches the From address with the display name.
@@ -595,39 +607,42 @@ pub(super) async fn resolve_sender(
 
     // When the resolved identity has no display name (common for Workspace accounts
     // where the primary address inherits its name from the organization directory),
-    // try the People API as a fallback. This requires the `profile` scope, which
-    // may not be granted — if so, degrade gracefully with a hint.
+    // try Google's OAuth userinfo endpoint as a fallback. This requires the
+    // `profile` scope, which may not be granted — if so, degrade gracefully
+    // with a hint.
     if let Some(ref addrs) = result {
-        // Only attempt People API for a single address — the API returns one
-        // profile name, so it can't meaningfully enrich multiple From addresses.
+        // Only attempt the userinfo endpoint for a single address — it returns
+        // one profile name, so it can't meaningfully enrich multiple From addresses.
         if addrs.len() == 1 && addrs[0].name.is_none() {
+            let using_env_token = uses_env_access_token();
             let profile_token =
                 auth::get_token(&["https://www.googleapis.com/auth/userinfo.profile"]).await;
             match profile_token {
                 Err(e) => {
                     // Token acquisition failed — scope likely not granted.
                     eprintln!(
-                        "Tip: run `gws auth login` and grant the \"profile\" scope \
-                         to include your display name in the From header ({})",
+                        "{} ({})",
+                        profile_scope_tip(using_env_token),
                         sanitize_for_terminal(&e.to_string())
                     );
                 }
-                Ok(t) => match fetch_profile_display_name(client, &t).await {
+                Ok(t) => match fetch_userinfo_display_name(client, &t).await {
                     Ok(Some(name)) => {
                         let raw = format!("{name} <{}>", addrs[0].email);
                         result = Some(vec![Mailbox::parse(&raw)]);
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        eprintln!(
+                            "Note: the userinfo endpoint returned no display name for this account"
+                        );
+                    }
                     Err(e) if matches!(&e, GwsError::Api { code: 403, .. }) => {
                         // Token exists but doesn't carry the scope.
-                        eprintln!(
-                            "Tip: run `gws auth login` and grant the \"profile\" scope \
-                             to include your display name in the From header"
-                        );
+                        eprintln!("{}", profile_scope_tip(using_env_token));
                     }
                     Err(e) => {
                         eprintln!(
-                            "Note: could not fetch display name from People API ({})",
+                            "Note: could not fetch display name from the userinfo endpoint ({})",
                             sanitize_for_terminal(&e.to_string())
                         );
                     }
@@ -639,20 +654,19 @@ pub(super) async fn resolve_sender(
     Ok(result)
 }
 
-/// Fetch the authenticated user's display name from the People API.
+/// Fetch the authenticated user's display name from Google's OAuth userinfo endpoint.
 /// Requires a token with the `profile` scope.
-async fn fetch_profile_display_name(
+async fn fetch_userinfo_display_name(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<Option<String>, GwsError> {
     let resp = crate::client::send_with_retry(|| {
         client
-            .get("https://people.googleapis.com/v1/people/me")
-            .query(&[("personFields", "names")])
+            .get("https://www.googleapis.com/oauth2/v2/userinfo")
             .bearer_auth(token)
     })
     .await
-    .map_err(|e| GwsError::Other(anyhow::anyhow!("People API request failed: {e}")))?;
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("userinfo request failed: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -660,22 +674,20 @@ async fn fetch_profile_display_name(
             .text()
             .await
             .unwrap_or_else(|_| "(error body unreadable)".to_string());
-        return Err(build_api_error(status, &body, "People API request failed"));
+        return Err(build_api_error(status, &body, "userinfo request failed"));
     }
 
-    let body: Value = resp.json().await.map_err(|e| {
-        GwsError::Other(anyhow::anyhow!("Failed to parse People API response: {e}"))
-    })?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse userinfo response: {e}")))?;
 
-    Ok(parse_profile_display_name(&body))
+    Ok(parse_userinfo_display_name(&body))
 }
 
-/// Extract the display name from a People API `people.get` response.
-fn parse_profile_display_name(body: &Value) -> Option<String> {
-    body.get("names")
-        .and_then(|v| v.as_array())
-        .and_then(|names| names.first())
-        .and_then(|n| n.get("displayName"))
+/// Extract the display name from a Google OAuth userinfo response.
+fn parse_userinfo_display_name(body: &Value) -> Option<String> {
+    body.get("name")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(sanitize_control_chars)
@@ -3393,26 +3405,18 @@ mod tests {
         assert!(addrs[0].name.is_none());
     }
 
-    // --- parse_profile_display_name tests ---
+    // --- parse_userinfo_display_name tests ---
 
     #[test]
-    fn test_parse_profile_display_name() {
+    fn test_parse_userinfo_display_name() {
         let body = serde_json::json!({
-            "resourceName": "people/112118466613566642951",
-            "etag": "%EgUBAi43PRoEAQIFByIMR0xCc0FMcVBJQmc9",
-            "names": [{
-                "metadata": {
-                    "primary": true,
-                    "source": { "type": "DOMAIN_PROFILE", "id": "112118466613566642951" }
-                },
-                "displayName": "Malo Bourgon",
-                "familyName": "Bourgon",
-                "givenName": "Malo",
-                "displayNameLastFirst": "Bourgon, Malo"
-            }]
+            "id": "112118466613566642951",
+            "name": "Malo Bourgon",
+            "given_name": "Malo",
+            "family_name": "Bourgon"
         });
         assert_eq!(
-            parse_profile_display_name(&body).as_deref(),
+            parse_userinfo_display_name(&body).as_deref(),
             Some("Malo Bourgon")
         );
     }
@@ -3583,23 +3587,33 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_profile_display_name_empty() {
+    fn test_parse_userinfo_display_name_empty() {
         let body = serde_json::json!({});
-        assert!(parse_profile_display_name(&body).is_none());
+        assert!(parse_userinfo_display_name(&body).is_none());
     }
 
     #[test]
-    fn test_parse_profile_display_name_empty_name() {
+    fn test_parse_userinfo_display_name_empty_name() {
         let body = serde_json::json!({
-            "names": [{ "displayName": "" }]
+            "name": ""
         });
-        assert!(parse_profile_display_name(&body).is_none());
+        assert!(parse_userinfo_display_name(&body).is_none());
     }
 
     #[test]
-    fn test_parse_profile_display_name_no_names_array() {
-        let body = serde_json::json!({ "names": "not-an-array" });
-        assert!(parse_profile_display_name(&body).is_none());
+    fn test_parse_userinfo_display_name_non_string_name() {
+        let body = serde_json::json!({ "name": ["not-a-string"] });
+        assert!(parse_userinfo_display_name(&body).is_none());
+    }
+
+    #[test]
+    fn test_profile_scope_tip_for_saved_credentials() {
+        assert!(profile_scope_tip(false).contains("gws auth login"));
+    }
+
+    #[test]
+    fn test_profile_scope_tip_for_env_token() {
+        assert!(profile_scope_tip(true).contains("GOOGLE_WORKSPACE_CLI_TOKEN"));
     }
 
     // --- build_api_error tests ---
