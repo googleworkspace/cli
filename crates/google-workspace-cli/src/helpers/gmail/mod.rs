@@ -442,13 +442,18 @@ pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsErro
 }
 
 #[derive(Debug)]
-struct SendAsIdentity {
-    mailbox: Mailbox,
-    is_default: bool,
+pub(super) struct SendAsIdentity {
+    pub mailbox: Mailbox,
+    pub is_default: bool,
+    /// Gmail's "Treat as alias" setting. When true, the address is considered
+    /// owned by this account (an alias). When false, Gmail treats it as an
+    /// external send-as address. This CLI uses this field to determine which
+    /// addresses participate in self-reply detection.
+    pub treat_as_alias: bool,
 }
 
 /// Fetch all send-as identities from the Gmail settings API.
-async fn fetch_send_as_identities(
+pub(super) async fn fetch_send_as_identities(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<Vec<SendAsIdentity>, GwsError> {
@@ -507,12 +512,68 @@ fn parse_send_as_response(body: &Value) -> Vec<SendAsIdentity> {
                 .get("isDefault")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let treat_as_alias = entry
+                .get("treatAsAlias")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true); // default true when absent: over-include rather than miss self-detection
             Some(SendAsIdentity {
                 mailbox: Mailbox::parse(&raw),
                 is_default,
+                treat_as_alias,
             })
         })
         .collect()
+}
+
+/// Pre-lowercased set of the user's self-identifiable email addresses.
+///
+/// Used for self-reply detection (`is_self_reply`) and self-exclusion in
+/// reply-all (`collect_excluded_emails`). Includes the default identity
+/// (primary address) and all send-as aliases with `treatAsAlias: true`.
+/// Non-default, non-alias send-as addresses are treated as external by
+/// Gmail and excluded. An empty set means identity information is
+/// unavailable (dry-run mode or failed sendAs fetch).
+#[derive(Debug)]
+pub(super) struct SelfEmails(Vec<String>);
+
+impl SelfEmails {
+    /// Build from pre-fetched send-as identities. Only includes identities
+    /// with `treat_as_alias: true`, matching Gmail web's behavior where
+    /// non-alias send-as addresses are treated as external for reply purposes.
+    /// The default identity (primary address) is always included even when
+    /// `treatAsAlias` is false — it is not an alias of another mailbox, it IS
+    /// the canonical address, so it must participate in self-reply detection.
+    /// Emails are lowercased at construction time for consistent comparison.
+    pub fn from_identities(identities: &[SendAsIdentity]) -> Self {
+        Self(
+            identities
+                .iter()
+                .filter(|id| id.treat_as_alias || id.is_default)
+                .map(|id| id.mailbox.email.to_lowercase())
+                .collect(),
+        )
+    }
+
+    /// An empty set — used for dry-run mode or when the sendAs fetch failed.
+    pub fn empty() -> Self {
+        Self(vec![])
+    }
+
+    /// Check if the given email matches any identity (case-insensitive).
+    pub fn contains_email(&self, email: &str) -> bool {
+        self.0.contains(&email.to_lowercase())
+    }
+
+    /// Build from raw email strings. Emails are lowercased at construction time.
+    #[cfg(test)]
+    pub fn from_emails(emails: &[&str]) -> Self {
+        Self(emails.iter().map(|e| e.to_lowercase()).collect())
+    }
+
+    /// Iterate over the lowercased email addresses.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
 }
 
 /// Given pre-fetched send-as identities, resolve the `From` address.
@@ -559,10 +620,9 @@ fn resolve_sender_from_identities(
 /// addresses unchanged (without display name enrichment), or `Ok(None)` if
 /// `from` was not provided.
 ///
-/// Note: this resolves the *sender identity* for the From header only. Callers
-/// that need the authenticated user's *primary* email (e.g. reply-all self-dedup)
-/// should fetch it separately via `/users/me/profile`, since the default send-as
-/// alias may differ from the primary address.
+/// For callers that also need the identity list (e.g. reply handlers for
+/// self-reply detection), use `fetch_send_as_identities` directly and pass
+/// the result to `resolve_sender_with_identities`.
 pub(super) async fn resolve_sender(
     client: &reqwest::Client,
     token: &str,
@@ -591,7 +651,34 @@ pub(super) async fn resolve_sender(
         }
     };
 
-    let mut result = resolve_sender_from_identities(from, &identities);
+    resolve_sender_with_identities(client, from, &identities).await
+}
+
+/// Resolve the `From` address using pre-fetched send-as identities.
+///
+/// Performs the same enrichment logic as `resolve_sender` (identity matching,
+/// display name lookup via People API fallback) but expects the caller to
+/// provide pre-fetched identities rather than fetching them internally. The
+/// caller is responsible for handling sendAs fetch failures before calling
+/// this function. Use when the caller needs the identity list for other
+/// purposes (e.g. reply handlers for self-reply detection).
+///
+/// Note: this function may still make async network calls (People API for
+/// display name enrichment on Workspace accounts) even though identity
+/// fetching is the caller's responsibility.
+pub(super) async fn resolve_sender_with_identities(
+    client: &reqwest::Client,
+    from: Option<&[Mailbox]>,
+    identities: &[SendAsIdentity],
+) -> Result<Option<Vec<Mailbox>>, GwsError> {
+    // All provided mailboxes already have display names — skip enrichment.
+    if let Some(addrs) = from {
+        if addrs.iter().all(|m| m.name.is_some()) {
+            return Ok(Some(addrs.to_vec()));
+        }
+    }
+
+    let mut result = resolve_sender_from_identities(from, identities);
 
     // When the resolved identity has no display name (common for Workspace accounts
     // where the primary address inherits its name from the organization directory),
@@ -3251,15 +3338,53 @@ mod tests {
         assert_eq!(ids[0].mailbox.email, "malo@intelligence.org");
         assert_eq!(ids[0].mailbox.name.as_deref(), Some("Malo Bourgon"));
         assert!(ids[0].is_default);
+        assert!(!ids[0].treat_as_alias); // explicitly false in test data
 
         assert_eq!(ids[1].mailbox.email, "malo@work.com");
         assert_eq!(ids[1].mailbox.name.as_deref(), Some("Malo (Work)"));
         assert!(!ids[1].is_default);
+        assert!(ids[1].treat_as_alias); // explicitly true in test data
 
-        // Empty displayName becomes None
+        // Empty displayName becomes None; missing treatAsAlias defaults to true
         assert_eq!(ids[2].mailbox.email, "noreply@example.com");
         assert!(ids[2].mailbox.name.is_none());
         assert!(!ids[2].is_default);
+        assert!(ids[2].treat_as_alias);
+    }
+
+    #[test]
+    fn test_self_emails_filters_by_treat_as_alias() {
+        // SelfEmails includes: aliases (treatAsAlias: true) and the default
+        // identity (even when treatAsAlias: false, which is typical for
+        // Workspace primary addresses). Non-default, non-alias addresses
+        // are treated as external by Gmail.
+        let identities = vec![
+            SendAsIdentity {
+                mailbox: Mailbox::parse("primary@example.com"),
+                is_default: true,
+                treat_as_alias: false, // realistic: Workspace primary
+            },
+            SendAsIdentity {
+                mailbox: Mailbox::parse("custom@external.com"),
+                is_default: false,
+                treat_as_alias: false, // non-alias, non-default → excluded
+            },
+            SendAsIdentity {
+                mailbox: Mailbox::parse("alias@example.com"),
+                is_default: false,
+                treat_as_alias: true, // true alias → included
+            },
+        ];
+        let emails = SelfEmails::from_identities(&identities);
+        assert!(
+            emails.contains_email("primary@example.com"),
+            "default identity must be included even with treatAsAlias: false"
+        );
+        assert!(emails.contains_email("alias@example.com"));
+        assert!(
+            !emails.contains_email("custom@external.com"),
+            "non-alias, non-default send-as should not be in SelfEmails"
+        );
     }
 
     #[test]
@@ -3290,6 +3415,7 @@ mod tests {
                     email: "malo@intelligence.org".to_string(),
                 },
                 is_default: true,
+                treat_as_alias: true,
             },
             SendAsIdentity {
                 mailbox: Mailbox {
@@ -3297,6 +3423,7 @@ mod tests {
                     email: "malo@work.com".to_string(),
                 },
                 is_default: false,
+                treat_as_alias: true,
             },
         ]
     }
@@ -3373,6 +3500,7 @@ mod tests {
                 email: "alias@example.com".to_string(),
             },
             is_default: false,
+            treat_as_alias: true,
         }];
         let result = resolve_sender_from_identities(None, &ids);
         assert!(result.is_none());
@@ -3386,6 +3514,7 @@ mod tests {
                 email: "bare@example.com".to_string(),
             },
             is_default: true,
+            treat_as_alias: true,
         }];
         let result = resolve_sender_from_identities(None, &ids);
         let addrs = result.unwrap();
