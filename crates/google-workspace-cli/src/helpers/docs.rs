@@ -348,7 +348,9 @@ fn build_page_setup_request(
 
     // Paper size: always stored as portrait dimensions; orientation handled via flipPageOrientation.
     if let Some(size_name) = paper_size {
-        let (w, h) = paper_size_points(size_name).unwrap(); // clap validates the value
+        let (w, h) = paper_size_points(size_name).ok_or_else(|| {
+            GwsError::Validation(format!("Unsupported paper size: {size_name}"))
+        })?;
         style.insert(
             "pageSize".to_string(),
             json!({
