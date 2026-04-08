@@ -343,7 +343,7 @@ fn build_page_setup_request(
             "documentFormat".to_string(),
             json!({ "documentMode": api_mode }),
         );
-        fields.push("documentFormat");
+        fields.push("documentFormat.documentMode");
     }
 
     // Paper size: always stored as portrait dimensions; orientation handled via flipPageOrientation.
@@ -409,7 +409,7 @@ fn build_page_setup_request(
                 }
             }),
         );
-        fields.push("background");
+        fields.push("background.color");
     }
 
     let params = json!({ "documentId": document_id });
@@ -684,7 +684,7 @@ mod tests {
             req["documentStyle"]["documentFormat"]["documentMode"],
             "PAGELESS"
         );
-        assert_eq!(req["fields"], "documentFormat");
+        assert_eq!(req["fields"], "documentFormat.documentMode");
     }
 
     #[test]
