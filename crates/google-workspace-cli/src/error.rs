@@ -63,12 +63,12 @@ fn error_label(err: &GwsError) -> String {
 /// TTY. For `accessNotConfigured` errors (HTTP 403, reason
 /// `accessNotConfigured`), additional guidance is printed to stderr.
 /// The JSON output on stdout is unchanged (machine-readable).
+fn error_json_line(err: &GwsError) -> String {
+    serde_json::to_string(&err.to_json()).unwrap_or_default()
+}
+
 pub fn print_error_json(err: &GwsError) {
-    let json = err.to_json();
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json).unwrap_or_default()
-    );
+    println!("{}", error_json_line(err));
 
     // Print a colored summary to stderr. For accessNotConfigured errors,
     // print specialized guidance instead of the generic message to avoid
@@ -149,5 +149,24 @@ mod tests {
 
         let input3 = "hello\x07bell\x08backspace";
         assert_eq!(sanitize_for_terminal(input3), "hellobellbackspace");
+    }
+
+    #[test]
+    fn test_error_json_line_is_compact_ndjson() {
+        let err = GwsError::Api {
+            code: 401,
+            message: "Failed to get Pub/Sub token: Failed to get token".to_string(),
+            reason: "authError".to_string(),
+            enable_url: None,
+        };
+        let line = error_json_line(&err);
+        assert!(!line.contains('\n'));
+
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["error"]["code"], 401);
+        assert_eq!(
+            parsed["error"]["reason"],
+            serde_json::Value::String("authError".to_string())
+        );
     }
 }
