@@ -258,15 +258,15 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
         let name = header.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let value = header.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
-        match name {
-            "From" => parsed.from = value.to_string(),
-            "Reply-To" => append_address_list_header_value(&mut parsed.reply_to, value),
-            "To" => append_address_list_header_value(&mut parsed.to, value),
-            "Cc" => append_address_list_header_value(&mut parsed.cc, value),
-            "Subject" => parsed.subject = value.to_string(),
-            "Date" => parsed.date = value.to_string(),
-            "Message-ID" | "Message-Id" => parsed.message_id = value.to_string(),
-            "References" => append_header_value(&mut parsed.references, value),
+        match name.to_ascii_lowercase().as_str() {
+            "from" => parsed.from = value.to_string(),
+            "reply-to" => append_address_list_header_value(&mut parsed.reply_to, value),
+            "to" => append_address_list_header_value(&mut parsed.to, value),
+            "cc" => append_address_list_header_value(&mut parsed.cc, value),
+            "subject" => parsed.subject = value.to_string(),
+            "date" => parsed.date = value.to_string(),
+            "message-id" => parsed.message_id = value.to_string(),
+            "references" => append_header_value(&mut parsed.references, value),
             _ => {}
         }
     }
@@ -2425,6 +2425,54 @@ mod tests {
         );
         assert_eq!(original.body_text, "Snippet fallback");
         assert_eq!(original.body_html.as_deref(), Some("<p>HTML only</p>"));
+    }
+
+    #[test]
+    fn test_parse_original_message_accepts_case_insensitive_header_names() {
+        let msg = json!({
+            "threadId": "thread-case-1",
+            "snippet": "Snippet fallback",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "FROM", "value": "alice@example.com" },
+                    { "name": "reply-to", "value": "team@example.com" },
+                    { "name": "TO", "value": "bob@example.com" },
+                    { "name": "CC", "value": "carol@example.com" },
+                    { "name": "subject", "value": "Case test" },
+                    { "name": "DATE", "value": "Fri, 6 Mar 2026 12:00:00 +0000" },
+                    { "name": "Message-Id", "value": "<msg-case@example.com>" },
+                    { "name": "REFERENCES", "value": "<ref-case-1@example.com>" },
+                    { "name": "references", "value": "<ref-case-2@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("Body text") }
+            }
+        });
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert_eq!(original.from.email, "alice@example.com");
+        assert_eq!(original.message_id, "msg-case@example.com");
+        assert_eq!(original.subject, "Case test");
+        assert_eq!(
+            original.date.as_deref(),
+            Some("Fri, 6 Mar 2026 12:00:00 +0000")
+        );
+        assert_eq!(original.to.len(), 1);
+        assert_eq!(original.to[0].email, "bob@example.com");
+
+        let cc = original.cc.unwrap();
+        assert_eq!(cc.len(), 1);
+        assert_eq!(cc[0].email, "carol@example.com");
+
+        let reply_to = original.reply_to.unwrap();
+        assert_eq!(reply_to.len(), 1);
+        assert_eq!(reply_to[0].email, "team@example.com");
+
+        assert_eq!(
+            original.references,
+            vec!["ref-case-1@example.com", "ref-case-2@example.com"]
+        );
     }
 
     #[test]
