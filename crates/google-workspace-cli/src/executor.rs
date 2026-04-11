@@ -156,6 +156,49 @@ fn parse_and_validate_inputs(
     })
 }
 
+fn extract_due_string_with_non_midnight_time(body: &Value) -> Option<String> {
+    let due = body.get("due")?.as_str()?;
+    let time_part = due.split_once('T')?.1;
+    let hhmmss: String = time_part
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == ':')
+        .collect();
+
+    let mut parts = hhmmss.split(':');
+    let hour: u32 = parts.next()?.parse().ok()?;
+    let minute: u32 = parts.next()?.parse().ok()?;
+    let second: u32 = parts
+        .next()
+        .and_then(|s| s.split('.').next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    if hour == 0 && minute == 0 && second == 0 {
+        None
+    } else {
+        Some(due.to_string())
+    }
+}
+
+fn tasks_due_time_truncated_warning(
+    doc: &RestDescription,
+    method: &RestMethod,
+    body: Option<&Value>,
+) -> Option<String> {
+    if doc.name != "tasks" {
+        return None;
+    }
+    if !matches!(method.http_method.as_str(), "POST" | "PUT" | "PATCH") {
+        return None;
+    }
+    let body = body?;
+    let due = extract_due_string_with_non_midnight_time(body)?;
+    Some(format!(
+        "Google Tasks API stores only the due date; time-of-day is ignored (received due='{}').",
+        due
+    ))
+}
+
 /// Build an HTTP request with auth, query params, page token, and body/multipart attachment.
 #[allow(clippy::too_many_arguments)]
 async fn build_http_request(
@@ -412,6 +455,10 @@ pub async fn execute_method(
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
     let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some())?;
+
+    if let Some(msg) = tasks_due_time_truncated_warning(doc, method, input.body.as_ref()) {
+        eprintln!("Warning: {msg}");
+    }
 
     if dry_run {
         let dry_run_info = json!({
@@ -1207,6 +1254,54 @@ mod tests {
         assert_eq!(AuthMethod::OAuth, AuthMethod::OAuth);
         assert_eq!(AuthMethod::None, AuthMethod::None);
         assert_ne!(AuthMethod::OAuth, AuthMethod::None);
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_detects_non_midnight_due_time() {
+        let doc = RestDescription {
+            name: "tasks".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "POST".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_ignores_midnight_due_time() {
+        let doc = RestDescription {
+            name: "tasks".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "PATCH".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T00:00:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_ignores_non_tasks_apis() {
+        let doc = RestDescription {
+            name: "drive".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "POST".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_none());
     }
 
     #[test]
