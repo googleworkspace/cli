@@ -75,13 +75,7 @@ async fn exchange_code_with_reqwest(
 fn build_proxy_auth_url(client_id: &str, redirect_uri: &str, scopes: &[String]) -> String {
     let scopes_str = scopes.join(" ");
     format!(
-        "https://accounts.google.com/o/oauth2/auth?\
-         scope={}&\
-         access_type=offline&\
-         redirect_uri={}&\
-         response_type=code&\
-         client_id={}&\
-         prompt=select_account+consent",
+        "https://accounts.google.com/o/oauth2/auth?scope={}&access_type=offline&redirect_uri={}&response_type=code&client_id={}&prompt=select_account+consent",
         urlencoding(&scopes_str),
         urlencoding(redirect_uri),
         urlencoding(client_id)
@@ -2495,6 +2489,9 @@ mod tests {
             "scope={}",
             urlencoding("https://www.googleapis.com/auth/drive openid")
         )));
+        assert!(url.contains("response_type=code"));
+        assert!(!url.contains("%20response_type"));
+        assert!(!url.contains(" response_type"));
     }
 
     #[test]
