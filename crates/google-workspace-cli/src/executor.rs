@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::Context;
+use base64::Engine as _;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
@@ -243,6 +244,7 @@ async fn build_http_request(
 #[allow(clippy::too_many_arguments)]
 async fn handle_json_response(
     body_text: &str,
+    output_path: Option<&str>,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
@@ -296,7 +298,38 @@ async fn handle_json_response(
             }
         }
 
-        if capture_output {
+        if let Some(path) = output_path {
+            if pagination.page_all {
+                return Err(GwsError::Validation(
+                    "--output cannot be used with --page-all for JSON responses".to_string(),
+                ));
+            }
+
+            let data = extract_json_wrapped_binary(&json_val).ok_or_else(|| {
+                GwsError::Validation(
+                    "--output is only supported for binary responses or JSON payloads with a base64url `data` field"
+                        .to_string(),
+                )
+            })?;
+
+            let path = PathBuf::from(path);
+            tokio::fs::write(&path, &data)
+                .await
+                .context("Failed to write decoded JSON payload to output file")?;
+
+            let result = json!({
+                "status": "success",
+                "saved_file": path.display().to_string(),
+                "bytes": data.len(),
+                "decoded_from": "json.data(base64url)",
+            });
+
+            if capture_output {
+                captured.push(result);
+            } else {
+                println!("{}", crate::formatter::format_value(&result, output_format));
+            }
+        } else if capture_output {
             captured.push(json_val.clone());
         } else if pagination.page_all {
             let is_first_page = *pages_fetched == 1;
@@ -334,6 +367,15 @@ async fn handle_json_response(
     }
 
     Ok(false)
+}
+
+fn extract_json_wrapped_binary(json_val: &Value) -> Option<Vec<u8>> {
+    let data = json_val.get("data")?.as_str()?;
+
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data)
+        .ok()
+        .or_else(|| base64::engine::general_purpose::URL_SAFE.decode(data).ok())
 }
 
 /// Handle a binary response by streaming it to a file.
@@ -497,6 +539,7 @@ pub async fn execute_method(
 
             let should_continue = handle_json_response(
                 &body_text,
+                output_path,
                 pagination,
                 sanitize_template,
                 sanitize_mode,
@@ -1207,6 +1250,128 @@ mod tests {
         assert_eq!(AuthMethod::OAuth, AuthMethod::OAuth);
         assert_eq!(AuthMethod::None, AuthMethod::None);
         assert_ne!(AuthMethod::OAuth, AuthMethod::None);
+    }
+
+    #[test]
+    fn test_extract_json_wrapped_binary_decodes_base64url() {
+        let json_val = json!({ "data": "SGVsbG8" });
+        let bytes = extract_json_wrapped_binary(&json_val).unwrap();
+        assert_eq!(bytes, b"Hello");
+    }
+
+    #[test]
+    fn test_extract_json_wrapped_binary_rejects_invalid_payload() {
+        let json_val = json!({ "data": "***not-base64***" });
+        assert!(extract_json_wrapped_binary(&json_val).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handle_json_response_rejects_output_with_page_all() {
+        let mut pages_fetched = 0;
+        let mut page_token = None;
+        let mut captured = Vec::new();
+        let pagination = PaginationConfig {
+            page_all: true,
+            page_limit: 10,
+            page_delay_ms: 0,
+        };
+
+        let err = handle_json_response(
+            r#"{"data":"SGVsbG8"}"#,
+            Some("out.bin"),
+            &pagination,
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::Json,
+            &mut pages_fetched,
+            &mut page_token,
+            false,
+            &mut captured,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("--output cannot be used with --page-all"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_json_response_writes_decoded_data_to_output_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("attachment.bin");
+        let mut pages_fetched = 0;
+        let mut page_token = None;
+        let mut captured = Vec::new();
+        let pagination = PaginationConfig::default();
+
+        let should_continue = handle_json_response(
+            r#"{"data":"SGVsbG8"}"#,
+            Some(path.to_str().unwrap()),
+            &pagination,
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::Json,
+            &mut pages_fetched,
+            &mut page_token,
+            true,
+            &mut captured,
+        )
+        .await
+        .unwrap();
+
+        assert!(!should_continue);
+        assert_eq!(std::fs::read(path).unwrap(), b"Hello");
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0]["decoded_from"], "json.data(base64url)");
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_detects_non_midnight_due_time() {
+        let doc = RestDescription {
+            name: "tasks".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "POST".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_ignores_midnight_due_time() {
+        let doc = RestDescription {
+            name: "tasks".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "PATCH".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T00:00:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_ignores_non_tasks_apis() {
+        let doc = RestDescription {
+            name: "drive".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "POST".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_none());
     }
 
     #[test]
