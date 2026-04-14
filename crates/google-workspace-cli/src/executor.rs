@@ -158,25 +158,19 @@ fn parse_and_validate_inputs(
 
 fn extract_due_string_with_non_midnight_time(body: &Value) -> Option<String> {
     let due = body.get("due")?.as_str()?;
-    let time_part = due.split_once('T')?.1;
-    let hhmmss: String = time_part
+    let (_, time_part) = due.split_once('T')?;
+    let time_only = match time_part.find(|c: char| c == 'Z' || c == '+' || c == '-') {
+        Some(idx) => &time_part[..idx],
+        None => time_part,
+    };
+
+    if time_only
         .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == ':')
-        .collect();
-
-    let mut parts = hhmmss.split(':');
-    let hour: u32 = parts.next()?.parse().ok()?;
-    let minute: u32 = parts.next()?.parse().ok()?;
-    let second: u32 = parts
-        .next()
-        .and_then(|s| s.split('.').next())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-
-    if hour == 0 && minute == 0 && second == 0 {
-        None
-    } else {
+        .any(|c| c.is_ascii_digit() && c != '0')
+    {
         Some(due.to_string())
+    } else {
+        None
     }
 }
 
@@ -1286,6 +1280,22 @@ mod tests {
 
         let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
         assert!(warning.is_none());
+    }
+
+    #[test]
+    fn tasks_due_time_truncated_warning_detects_fractional_seconds() {
+        let doc = RestDescription {
+            name: "tasks".to_string(),
+            ..Default::default()
+        };
+        let method = RestMethod {
+            http_method: "PATCH".to_string(),
+            ..Default::default()
+        };
+        let body = json!({"due": "2026-04-12T00:00:00.500Z"});
+
+        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
+        assert!(warning.is_some());
     }
 
     #[test]
