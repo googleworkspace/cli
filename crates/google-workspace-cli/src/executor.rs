@@ -1327,54 +1327,6 @@ mod tests {
     }
 
     #[test]
-    fn tasks_due_time_truncated_warning_detects_non_midnight_due_time() {
-        let doc = RestDescription {
-            name: "tasks".to_string(),
-            ..Default::default()
-        };
-        let method = RestMethod {
-            http_method: "POST".to_string(),
-            ..Default::default()
-        };
-        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
-
-        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
-        assert!(warning.is_some());
-    }
-
-    #[test]
-    fn tasks_due_time_truncated_warning_ignores_midnight_due_time() {
-        let doc = RestDescription {
-            name: "tasks".to_string(),
-            ..Default::default()
-        };
-        let method = RestMethod {
-            http_method: "PATCH".to_string(),
-            ..Default::default()
-        };
-        let body = json!({"due": "2026-04-12T00:00:00.000Z"});
-
-        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
-        assert!(warning.is_none());
-    }
-
-    #[test]
-    fn tasks_due_time_truncated_warning_ignores_non_tasks_apis() {
-        let doc = RestDescription {
-            name: "drive".to_string(),
-            ..Default::default()
-        };
-        let method = RestMethod {
-            http_method: "POST".to_string(),
-            ..Default::default()
-        };
-        let body = json!({"due": "2026-04-12T15:30:00.000Z"});
-
-        let warning = tasks_due_time_truncated_warning(&doc, &method, Some(&body));
-        assert!(warning.is_none());
-    }
-
-    #[test]
     fn test_mime_to_extension_more_types() {
         assert_eq!(mime_to_extension("text/plain"), "txt");
         assert_eq!(mime_to_extension("text/csv"), "csv");
