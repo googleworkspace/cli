@@ -457,7 +457,7 @@ pub async fn execute_method(
     let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some())?;
 
     if let Some(msg) = tasks_due_time_truncated_warning(doc, method, input.body.as_ref()) {
-        eprintln!("Warning: {msg}");
+        eprintln!("Warning: {}", sanitize_for_terminal(&msg));
     }
 
     if dry_run {
