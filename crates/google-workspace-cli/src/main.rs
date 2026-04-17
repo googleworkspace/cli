@@ -19,6 +19,7 @@
 //! It supports deep schema validation, OAuth / Service Account authentication,
 //! interactive prompts, and integration with Model Armor.
 
+mod agent;
 mod auth;
 pub(crate) mod auth_commands;
 mod client;
@@ -136,6 +137,12 @@ async fn run() -> Result<(), GwsError> {
     if first_arg == "auth" {
         let auth_args: Vec<String> = args.iter().skip(2).cloned().collect();
         return auth_commands::handle_auth_command(&auth_args).await;
+    }
+
+    // Handle the `agent` command (terminal AI agent with tool use)
+    if first_arg == "agent" {
+        let agent_args: Vec<String> = args.iter().skip(2).cloned().collect();
+        return agent::handle_agent_command(&agent_args).await;
     }
 
     // Parse service name and optional version override
@@ -443,6 +450,7 @@ fn print_usage() {
     println!("USAGE:");
     println!("    gws <service> <resource> [sub-resource] <method> [flags]");
     println!("    gws schema <service.resource.method> [--resolve-refs]");
+    println!("    gws agent [--prompt TEXT] [--provider openrouter|ollama] [--model M]");
     println!();
     println!("EXAMPLES:");
     println!("    gws drive files list --params '{{\"pageSize\": 10}}'");
