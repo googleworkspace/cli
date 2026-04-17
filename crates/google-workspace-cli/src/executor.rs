@@ -1197,7 +1197,7 @@ mod tests {
     #[test]
     fn test_pagination_config_default() {
         let config = PaginationConfig::default();
-        assert_eq!(config.page_all, false);
+        assert!(!config.page_all);
         assert_eq!(config.page_limit, 10);
         assert_eq!(config.page_delay_ms, 100);
     }
@@ -1533,7 +1533,8 @@ mod tests {
         let file_content = b"Hello stream";
         std::fs::write(&file_path, file_content).unwrap();
 
-        let metadata = Some(json!({ "name": "small.txt" }));
+        let metadata_value = json!({ "name": "small.txt" });
+        let metadata = Some(metadata_value.clone());
         let file_size = file_content.len() as u64;
 
         let (_body, content_type, declared_len) = build_multipart_stream(
@@ -1550,7 +1551,7 @@ mod tests {
         // Manually compute expected content length:
         // preamble = "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json}\r\n--{boundary}\r\nContent-Type: text/plain\r\n\r\n"
         // postamble = "\r\n--{boundary}--\r\n"
-        let metadata_json = serde_json::to_string(&metadata.unwrap()).unwrap();
+        let metadata_json = serde_json::to_string(&metadata_value).unwrap();
         let preamble = format!(
             "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata_json}\r\n\
              --{boundary}\r\nContent-Type: text/plain\r\n\r\n"

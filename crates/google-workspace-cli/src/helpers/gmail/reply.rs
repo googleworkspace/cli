@@ -787,7 +787,7 @@ mod tests {
                     .action(ArgAction::Append),
             );
         let matches = cmd
-            .try_get_matches_from(&["test", "--message-id", "abc", "--body", "hi"])
+            .try_get_matches_from(["test", "--message-id", "abc", "--body", "hi"])
             .unwrap();
         let config = parse_reply_args(&matches).unwrap();
         assert!(config.remove.is_none());

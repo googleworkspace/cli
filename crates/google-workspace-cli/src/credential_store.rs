@@ -482,12 +482,15 @@ mod tests {
         PlatformError,
     }
 
+    /// Optional callback invoked by the mock keyring whenever a value is stored.
+    type OnSetCallback = RefCell<Option<Box<dyn FnMut(&str)>>>;
+
     /// Mock keyring for testing `resolve_key()` without OS dependencies.
     struct MockKeyring {
         get_state: MockState,
         set_succeeds: bool,
         last_set: RefCell<Option<String>>,
-        on_set: RefCell<Option<Box<dyn FnMut(&str)>>>,
+        on_set: OnSetCallback,
     }
 
     impl MockKeyring {
