@@ -243,6 +243,7 @@ async fn build_http_request(
 #[allow(clippy::too_many_arguments)]
 async fn handle_json_response(
     body_text: &str,
+    output_path: Option<&str>,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
@@ -253,6 +254,12 @@ async fn handle_json_response(
     captured: &mut Vec<Value>,
 ) -> Result<bool, GwsError> {
     if let Ok(mut json_val) = serde_json::from_str::<Value>(body_text) {
+        if output_path.is_some() {
+            return Err(GwsError::Validation(
+                "--output only supports raw binary responses; this endpoint returned JSON instead. Use jq/base64 to extract the payload or rerun without --output.".to_string(),
+            ));
+        }
+
         *pages_fetched += 1;
 
         // Run Model Armor sanitization if --sanitize is enabled
@@ -497,6 +504,7 @@ pub async fn execute_method(
 
             let should_continue = handle_json_response(
                 &body_text,
+                output_path,
                 pagination,
                 sanitize_template,
                 sanitize_mode,
@@ -2148,6 +2156,75 @@ async fn test_execute_method_missing_path_param() {
         .unwrap_err()
         .to_string()
         .contains("Required path parameter"));
+}
+
+#[cfg(test)]
+fn spawn_single_response_server(body: &'static str, content_type: &'static str) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = body.to_string();
+    let content_type = content_type.to_string();
+
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request_buf = [0_u8; 1024];
+        let _ = std::io::Read::read(&mut stream, &mut request_buf);
+
+        let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        std::io::Write::write_all(&mut stream, response.as_bytes()).unwrap();
+    });
+
+    format!("http://{addr}/")
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn test_execute_method_errors_when_output_targets_json_response() {
+    let root_url =
+        spawn_single_response_server(r#"{"data":"aGVsbG8","size":5}"#, "application/json");
+    let tempdir = tempfile::tempdir().unwrap();
+    let output_path = tempdir.path().join("attachment.bin");
+
+    let doc = RestDescription {
+        root_url,
+        service_path: "".to_string(),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        id: Some("gmail.users.messages.attachments.get".to_string()),
+        path: "users/me/messages/1/attachments/2".to_string(),
+        ..Default::default()
+    };
+
+    let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+    let result = execute_method(
+        &doc,
+        &method,
+        None,
+        None,
+        None,
+        AuthMethod::None,
+        Some(output_path.to_str().unwrap()),
+        None,
+        false,
+        &PaginationConfig::default(),
+        None,
+        &sanitize_mode,
+        &crate::formatter::OutputFormat::default(),
+        false,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("--output only supports raw binary responses"));
+    assert!(!output_path.exists());
 }
 
 #[test]
