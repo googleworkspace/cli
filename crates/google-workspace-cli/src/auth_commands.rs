@@ -542,6 +542,48 @@ struct CliFlowDelegate {
     login_hint: Option<String>,
 }
 
+/// Defensive: ensure `response_type=code` is present before the user
+/// opens the URL. The URL arrives from yup_oauth2's
+/// `build_authentication_request_url`, which should already include it,
+/// but issue #695 reports cases on macOS with Desktop OAuth clients where
+/// the URL reaching the browser is missing `response_type`, and Google
+/// rejects with "Error 400: invalid_request, Required parameter is
+/// missing: response_type". Injecting here is a no-op when the upstream
+/// URL is correct and a targeted fix when it is not.
+///
+/// Also appends `login_hint` if provided, and preserves any URL fragment
+/// by splitting it off before query-string manipulation and reattaching
+/// it at the end.
+fn build_display_url(url: &str, login_hint: Option<&str>) -> String {
+    let (base, fragment) = match url.split_once('#') {
+        Some((b, f)) => (b, Some(f)),
+        None => (url, None),
+    };
+
+    let mut display_url = if base.split(['?', '&']).any(|p| p == "response_type=code") {
+        base.to_string()
+    } else if base.contains('?') {
+        format!("{base}&response_type=code")
+    } else {
+        format!("{base}?response_type=code")
+    };
+
+    if let Some(hint) = login_hint {
+        let encoded = percent_encoding::percent_encode(
+            hint.as_bytes(),
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        display_url = format!("{display_url}&login_hint={encoded}");
+    }
+
+    if let Some(f) = fragment {
+        display_url.push('#');
+        display_url.push_str(f);
+    }
+
+    display_url
+}
+
 impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelegate {
     fn present_user_url<'a>(
         &'a self,
@@ -550,21 +592,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
     {
         Box::pin(async move {
-            // Inject login_hint into the OAuth URL if we have one
-            let display_url = if let Some(ref hint) = self.login_hint {
-                let encoded: String = percent_encoding::percent_encode(
-                    hint.as_bytes(),
-                    percent_encoding::NON_ALPHANUMERIC,
-                )
-                .to_string();
-                if url.contains('?') {
-                    format!("{url}&login_hint={encoded}")
-                } else {
-                    format!("{url}?login_hint={encoded}")
-                }
-            } else {
-                url.to_string()
-            };
+            let display_url = build_display_url(url, self.login_hint.as_deref());
             eprintln!("Open this URL in your browser to authenticate:\n");
             eprintln!("  {display_url}\n");
             Ok(String::new())
@@ -2531,5 +2559,98 @@ mod tests {
 
         let err = read_refresh_token_from_cache(file.path()).unwrap_err();
         assert!(err.to_string().contains("no refresh token was returned"));
+    }
+
+    #[test]
+    fn url_without_query_gets_response_type() {
+        let out = build_display_url("https://accounts.google.com/o/oauth2/v2/auth", None);
+        assert_eq!(out, "https://accounts.google.com/o/oauth2/v2/auth?response_type=code");
+    }
+
+    #[test]
+    fn url_with_query_gets_response_type_appended() {
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc",
+            None,
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code"
+        );
+    }
+
+    #[test]
+    fn url_with_exact_response_type_param_not_duplicated() {
+        let input =
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code&scope=openid";
+        let out = build_display_url(input, None);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn url_with_response_type_in_other_param_value_still_injects() {
+        // `state=response_type=code_fake` contains the substring
+        // "response_type=code" but is not itself the response_type param.
+        // The exact-equality check must see through this and still inject
+        // the real response_type=code.
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?state=response_type=code_fake",
+            None,
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?state=response_type=code_fake&response_type=code"
+        );
+    }
+
+    #[test]
+    fn url_with_fragment_preserves_fragment() {
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc#section",
+            None,
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code#section"
+        );
+    }
+
+    #[test]
+    fn url_with_response_type_only_in_fragment_still_injects() {
+        // Fragments are client-side only and do not satisfy the OAuth
+        // requirement. The fragment-split must happen before the param
+        // check so response_type=code lands in the query string.
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc#response_type=code",
+            None,
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code#response_type=code"
+        );
+    }
+
+    #[test]
+    fn login_hint_appended_after_response_type_with_encoding() {
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc",
+            Some("foo+bar@example.com"),
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code&login_hint=foo%2Bbar%40example%2Ecom"
+        );
+    }
+
+    #[test]
+    fn fragment_reattached_after_login_hint() {
+        let out = build_display_url(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc#section",
+            Some("user@example.com"),
+        );
+        assert_eq!(
+            out,
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code&login_hint=user%40example%2Ecom#section"
+        );
     }
 }
