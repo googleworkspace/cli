@@ -69,7 +69,7 @@ services = [ "drive", "docs" ]
 steps = [
   "Copy the template: `gws drive files copy --params '{\"fileId\": \"TEMPLATE_DOC_ID\"}' --json '{\"name\": \"Project Brief - Q2 Launch\"}'`",
   "Get the new doc ID from the response",
-  "Add content: `gws docs +write --document-id NEW_DOC_ID --text '## Project: Q2 Launch\n\n### Objective\nLaunch the new feature by end of Q2.'`",
+  "Add content: `gws docs +write --document NEW_DOC_ID --text '## Project: Q2 Launch\n\n### Objective\nLaunch the new feature by end of Q2.'`",
   "Share with team: `gws drive permissions create --params '{\"fileId\": \"NEW_DOC_ID\"}' --json '{\"role\": \"writer\", \"type\": \"user\", \"emailAddress\": \"team@company.com\"}'`"
 ]
 
@@ -443,7 +443,7 @@ steps = [
   "Find the message: `gws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"subject:important from:boss@company.com\"}' --format table`",
   "Get message content: `gws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"MSG_ID\"}'`",
   "Create a doc with the content: `gws docs documents create --json '{\"title\": \"Saved Email - Important Update\"}'`",
-  "Write the email body: `gws docs +write --document-id DOC_ID --text 'From: boss@company.com\nSubject: Important Update\n\n[EMAIL BODY]'`"
+  "Write the email body: `gws docs +write --document DOC_ID --text 'From: boss@company.com\nSubject: Important Update\n\n[EMAIL BODY]'`"
 ]
 
 [[recipes]]
@@ -491,6 +491,6 @@ services = [ "sheets", "docs", "drive" ]
 steps = [
   "Read the data: `gws sheets +read --spreadsheet SHEET_ID --range \"Sales!A1:D\"`",
   "Create the report doc: `gws docs documents create --json '{\"title\": \"Sales Report - January 2025\"}'`",
-  "Write the report: `gws docs +write --document-id DOC_ID --text '## Sales Report - January 2025\n\n### Summary\nTotal deals: 45\nRevenue: $125,000\n\n### Top Deals\n1. Acme Corp - $25,000\n2. Widget Inc - $18,000'`",
+  "Write the report: `gws docs +write --document DOC_ID --text '## Sales Report - January 2025\n\n### Summary\nTotal deals: 45\nRevenue: $125,000\n\n### Top Deals\n1. Acme Corp - $25,000\n2. Widget Inc - $18,000'`",
   "Share with stakeholders: `gws drive permissions create --params '{\"fileId\": \"DOC_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"cfo@company.com\"}'`"
 ]
