@@ -124,4 +124,5 @@ Multi-step task sequences with real commands.
 | [recipe-batch-invite-to-event](../skills/recipe-batch-invite-to-event/SKILL.md) | Add a list of attendees to an existing Google Calendar event and send notifications. |
 | [recipe-forward-labeled-emails](../skills/recipe-forward-labeled-emails/SKILL.md) | Find Gmail messages with a specific label and forward them to another address. |
 | [recipe-generate-report-from-sheet](../skills/recipe-generate-report-from-sheet/SKILL.md) | Read data from a Google Sheet and create a formatted Google Docs report. |
+| [recipe-apply-filter-to-existing-emails](../skills/recipe-apply-filter-to-existing-emails/SKILL.md) | Apply a Gmail filter's actions to existing messages (API equivalent of the UI 'apply to matching conversations' box). |
 
