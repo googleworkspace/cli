@@ -448,7 +448,7 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
 
     match matches.subcommand() {
         Some(("login", sub_m)) => {
-            let (scope_mode, services_filter) = parse_login_args(sub_m);
+            let (scope_mode, services_filter) = parse_login_args(sub_m)?;
 
             handle_login_inner(scope_mode, services_filter).await
         }
@@ -483,7 +483,11 @@ fn login_command() -> clap::Command {
 }
 
 /// Extract `ScopeMode` and optional services filter from parsed login args.
-fn parse_login_args(matches: &clap::ArgMatches) -> (ScopeMode, Option<HashSet<String>>) {
+///
+/// Returns `Err` if any token in `--services` is not a known service alias.
+fn parse_login_args(
+    matches: &clap::ArgMatches,
+) -> Result<(ScopeMode, Option<HashSet<String>>), GwsError> {
     let scope_mode = if let Some(scopes_str) = matches.get_one::<String>("scopes") {
         ScopeMode::Custom(
             scopes_str
@@ -501,14 +505,42 @@ fn parse_login_args(matches: &clap::ArgMatches) -> (ScopeMode, Option<HashSet<St
         ScopeMode::Default
     };
 
-    let services_filter: Option<HashSet<String>> = matches.get_one::<String>("services").map(|v| {
-        v.split(',')
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect()
-    });
+    let services_filter: Option<HashSet<String>> =
+        if let Some(v) = matches.get_one::<String>("services") {
+            let tokens: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
 
-    (scope_mode, services_filter)
+            let unknown: Vec<&str> = tokens
+                .iter()
+                .filter(|name| {
+                    !crate::services::SERVICES
+                        .iter()
+                        .any(|e| e.aliases.contains(&name.as_str()))
+                })
+                .map(|s| s.as_str())
+                .collect();
+
+            if !unknown.is_empty() {
+                let valid: Vec<&str> = crate::services::SERVICES
+                    .iter()
+                    .flat_map(|e| e.aliases.iter().copied())
+                    .collect();
+                return Err(GwsError::Validation(format!(
+                    "Unknown service(s): {}. Valid services: {}.",
+                    unknown.join(", "),
+                    valid.join(", ")
+                )));
+            }
+
+            Some(tokens.into_iter().collect())
+        } else {
+            None
+        };
+
+    Ok((scope_mode, services_filter))
 }
 
 /// Run the `auth login` flow.
@@ -532,7 +564,7 @@ pub async fn run_login(args: &[String]) -> Result<(), GwsError> {
         Err(e) => return Err(GwsError::Validation(e.to_string())),
     };
 
-    let (scope_mode, services_filter) = parse_login_args(&matches);
+    let (scope_mode, services_filter) = parse_login_args(&matches)?;
 
     handle_login_inner(scope_mode, services_filter).await
 }
@@ -817,11 +849,6 @@ fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(scope_url);
 
-    // cloud-platform is a cross-service scope, always include
-    if short == "cloud-platform" {
-        return true;
-    }
-
     let prefix = short.split('.').next().unwrap_or(short);
 
     services.iter().any(|svc| {
@@ -1102,8 +1129,9 @@ fn run_discovery_scope_picker(
                 }
             }
 
-            // Always include cloud-platform scope
-            if !selected.contains(&PLATFORM_SCOPE.to_string()) {
+            // Include cloud-platform when no services filter is active. When the
+            // user passes -s, they get exactly the services they asked for.
+            if services_filter.is_none() && !selected.contains(&PLATFORM_SCOPE.to_string()) {
                 selected.push(PLATFORM_SCOPE.to_string());
             }
 
@@ -2184,9 +2212,9 @@ mod tests {
     }
 
     #[test]
-    fn scope_matches_service_cloud_platform_always_matches() {
+    fn scope_matches_service_cloud_platform_does_not_match_unrelated_service() {
         let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
-        assert!(scope_matches_service(
+        assert!(!scope_matches_service(
             "https://www.googleapis.com/auth/cloud-platform",
             &services
         ));
@@ -2248,9 +2276,7 @@ mod tests {
                 .strip_prefix("https://www.googleapis.com/auth/")
                 .unwrap_or(scope);
             assert!(
-                short.starts_with("drive")
-                    || short.starts_with("gmail")
-                    || short == "cloud-platform",
+                short.starts_with("drive") || short.starts_with("gmail"),
                 "Unexpected scope with service filter: {scope}"
             );
         }
@@ -2274,7 +2300,7 @@ mod tests {
                 .strip_prefix("https://www.googleapis.com/auth/")
                 .unwrap_or(scope);
             assert!(
-                short.starts_with("drive") || short == "cloud-platform",
+                short.starts_with("drive"),
                 "Unexpected scope with service + readonly filter: {scope}"
             );
         }
@@ -2289,7 +2315,7 @@ mod tests {
                 .strip_prefix("https://www.googleapis.com/auth/")
                 .unwrap_or(scope);
             assert!(
-                short.starts_with("gmail") || short == "cloud-platform",
+                short.starts_with("gmail"),
                 "Unexpected scope with service + full filter: {scope}"
             );
         }
@@ -2305,6 +2331,31 @@ mod tests {
         );
         assert_eq!(scopes.len(), 1);
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/calendar");
+    }
+
+    #[test]
+    fn parse_login_args_rejects_unknown_service() {
+        let cmd = login_command();
+        let matches = cmd
+            .try_get_matches_from(["login", "--services", "drive,typoservice"])
+            .unwrap();
+        let result = parse_login_args(&matches);
+        assert!(result.is_err());
+        let msg = result.err().expect("expected error").to_string();
+        assert!(msg.contains("typoservice"), "error should name the unknown token: {msg}");
+        assert!(msg.contains("drive"), "error should list valid services: {msg}");
+    }
+
+    #[test]
+    fn parse_login_args_accepts_known_services() {
+        let cmd = login_command();
+        let matches = cmd
+            .try_get_matches_from(["login", "--services", "Drive,Gmail"])
+            .unwrap();
+        let (_, filter) = parse_login_args(&matches).unwrap();
+        let services = filter.unwrap();
+        assert!(services.contains("drive"), "should lowercase: {services:?}");
+        assert!(services.contains("gmail"), "should lowercase: {services:?}");
     }
 
     #[test]
