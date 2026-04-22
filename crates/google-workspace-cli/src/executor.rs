@@ -495,6 +495,15 @@ pub async fn execute_method(
                 .await
                 .context("Failed to read response body")?;
 
+            if body_text.is_empty() {
+                eprintln!(
+                    "Warning: {} returned HTTP {} with an empty response body.",
+                    method_id,
+                    status.as_u16()
+                );
+                break;
+            }
+
             let should_continue = handle_json_response(
                 &body_text,
                 pagination,
@@ -2023,6 +2032,63 @@ mod tests {
             }
             _ => panic!("Expected Api error"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_handle_json_response_empty_body_returns_no_continue() {
+        let pagination = PaginationConfig::default();
+        let output_format = crate::formatter::OutputFormat::Json;
+        let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+        let mut pages_fetched = 0u32;
+        let mut page_token: Option<String> = None;
+        let mut captured: Vec<Value> = Vec::new();
+
+        let result = handle_json_response(
+            "",
+            &pagination,
+            None,
+            &sanitize_mode,
+            &output_format,
+            &mut pages_fetched,
+            &mut page_token,
+            false,
+            &mut captured,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "empty body: should not continue pagination");
+        assert_eq!(pages_fetched, 0, "empty body: pages_fetched should not increment");
+        assert!(captured.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_json_response_valid_json_increments_pages() {
+        let pagination = PaginationConfig::default();
+        let output_format = crate::formatter::OutputFormat::Json;
+        let sanitize_mode = crate::helpers::modelarmor::SanitizeMode::Warn;
+        let mut pages_fetched = 0u32;
+        let mut page_token: Option<String> = None;
+        let mut captured: Vec<Value> = Vec::new();
+
+        let result = handle_json_response(
+            r#"{"id": "abc"}"#,
+            &pagination,
+            None,
+            &sanitize_mode,
+            &output_format,
+            &mut pages_fetched,
+            &mut page_token,
+            true,
+            &mut captured,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "single page: should not continue pagination");
+        assert_eq!(pages_fetched, 1);
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0]["id"], "abc");
     }
 }
 
