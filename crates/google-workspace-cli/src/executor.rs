@@ -486,6 +486,14 @@ pub async fn execute_method(
             "API request"
         );
 
+        // 204 No Content: the server intentionally sent no body, so there is nothing
+        // to parse or save.  Break here before the content-type routing so that
+        // endpoints whose 204 response happens to carry a non-empty content-type header
+        // (e.g. "text/html") are not mis-routed into handle_binary_response().
+        if status == reqwest::StatusCode::NO_CONTENT {
+            break;
+        }
+
         let is_json =
             content_type.contains("application/json") || content_type.contains("text/json");
 
