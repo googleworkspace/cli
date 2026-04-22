@@ -513,24 +513,36 @@ fn parse_login_args(
                 .filter(|s| !s.is_empty())
                 .collect();
 
+            // Platform scopes recognised by the tool but not registered as
+            // Workspace API services (they lack an API discovery entry).
+            const PLATFORM_SCOPES: &[&str] = &["cloud-platform", "pubsub"];
+
             let unknown: Vec<&str> = tokens
                 .iter()
                 .filter(|name| {
-                    !crate::services::SERVICES
-                        .iter()
-                        .any(|e| e.aliases.contains(&name.as_str()))
+                    let n = name.as_str();
+                    !PLATFORM_SCOPES.contains(&n)
+                        && !crate::services::SERVICES
+                            .iter()
+                            .any(|e| e.aliases.contains(&n))
                 })
                 .map(|s| s.as_str())
                 .collect();
 
             if !unknown.is_empty() {
-                let valid: Vec<&str> = crate::services::SERVICES
+                let mut valid: Vec<&str> = crate::services::SERVICES
                     .iter()
                     .flat_map(|e| e.aliases.iter().copied())
                     .collect();
+                valid.extend(PLATFORM_SCOPES);
+                valid.sort_unstable();
                 return Err(GwsError::Validation(format!(
                     "Unknown service(s): {}. Valid services: {}.",
-                    unknown.join(", "),
+                    unknown
+                        .iter()
+                        .map(|s| s.escape_debug().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     valid.join(", ")
                 )));
             }
@@ -2356,6 +2368,24 @@ mod tests {
         let services = filter.unwrap();
         assert!(services.contains("drive"), "should lowercase: {services:?}");
         assert!(services.contains("gmail"), "should lowercase: {services:?}");
+    }
+
+    #[test]
+    fn parse_login_args_accepts_platform_scopes() {
+        let cmd = login_command();
+        let matches = cmd
+            .try_get_matches_from(["login", "--services", "cloud-platform,pubsub"])
+            .unwrap();
+        let (_, filter) = parse_login_args(&matches).unwrap();
+        let services = filter.unwrap();
+        assert!(
+            services.contains("cloud-platform"),
+            "cloud-platform should be accepted: {services:?}"
+        );
+        assert!(
+            services.contains("pubsub"),
+            "pubsub should be accepted: {services:?}"
+        );
     }
 
     #[test]
