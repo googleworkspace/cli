@@ -1808,9 +1808,9 @@ Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
-                    Arg::new("format")
-                        .long("format")
-                        .help("Output format (text, json)")
+                    Arg::new("body-format")
+                        .long("body-format")
+                        .help("Body rendering format: text (default) or json")
                         .value_parser(["text", "json"])
                         .default_value("text"),
                 )
@@ -1831,7 +1831,7 @@ Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
 EXAMPLES:
   gws gmail +read --id 18f1a2b3c4d
   gws gmail +read --id 18f1a2b3c4d --headers
-  gws gmail +read --id 18f1a2b3c4d --format json | jq '.body'
+  gws gmail +read --id 18f1a2b3c4d --body-format json | jq '.body_text'
 
 TIPS:
   Converts HTML-only messages to plain text automatically.
