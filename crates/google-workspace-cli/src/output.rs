@@ -86,6 +86,27 @@ pub(crate) fn info(msg: &str) {
     eprintln!("{}", sanitize_for_terminal(msg));
 }
 
+// ── Windows console codepage ───────────────────────────────────────────
+
+/// Force the Windows console output codepage to UTF-8 (CP 65001) at startup.
+/// Without this, the default system codepage (typically CP-1252) mangles
+/// non-ASCII characters printed by `println!` before Rust's stdio layer can
+/// re-encode them.
+///
+/// Failure is non-fatal — terminals that already use UTF-8 will behave
+/// correctly regardless, and the call is safe to make unconditionally on any
+/// Windows version that ships `kernel32.dll`.
+#[cfg(windows)]
+pub(crate) fn set_console_utf8() {
+    extern "system" {
+        fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+    }
+    // SAFETY: SetConsoleOutputCP is a documented Win32 API with no memory-
+    // safety requirements. The return value is ignored because failure is
+    // non-fatal — the terminal simply retains its existing codepage.
+    let _ = unsafe { SetConsoleOutputCP(65001) };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +173,24 @@ mod tests {
     fn colorize_returns_text_in_no_color_mode() {
         let result = colorize("hello", "31");
         assert!(result.contains("hello"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn set_console_utf8_sets_codepage_65001() {
+        extern "system" {
+            fn GetConsoleOutputCP() -> u32;
+        }
+        set_console_utf8();
+        // GetConsoleOutputCP returns 0 when no console is attached (e.g. in
+        // redirected test output). Only assert when we actually have a console.
+        let cp = unsafe { GetConsoleOutputCP() };
+        if cp != 0 {
+            assert_eq!(cp, 65001, "expected UTF-8 codepage (65001), got {cp}");
+        }
     }
 }

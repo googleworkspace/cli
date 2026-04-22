@@ -47,6 +47,10 @@ use error::{print_error_json, GwsError};
 
 #[tokio::main]
 async fn main() {
+    // Force UTF-8 console output on Windows; no-op on other platforms.
+    #[cfg(windows)]
+    output::set_console_utf8();
+
     // Load .env file if present (silently ignored if missing)
     let _ = dotenvy::dotenv();
 
