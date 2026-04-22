@@ -336,7 +336,11 @@ async fn handle_json_response(
     Ok(false)
 }
 
-/// Handle a binary response by streaming it to a file.
+/// Handle a binary response by streaming it to a file or stdout.
+///
+/// When `output_path` is provided the content is saved to that file and a
+/// status JSON is printed/captured.  When no path is given the raw bytes are
+/// streamed directly to stdout so the caller can pipe or redirect them.
 async fn handle_binary_response(
     response: reqwest::Response,
     content_type: &str,
@@ -344,42 +348,72 @@ async fn handle_binary_response(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let file_path = if let Some(p) = output_path {
-        PathBuf::from(p)
-    } else {
-        let ext = mime_to_extension(content_type);
-        PathBuf::from(format!("download.{ext}"))
-    };
+    if let Some(p) = output_path {
+        let file_path = PathBuf::from(p);
 
-    let mut file = tokio::fs::File::create(&file_path)
-        .await
-        .context("Failed to create output file")?;
-
-    let mut stream = response.bytes_stream();
-    let mut total_bytes: u64 = 0;
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("Failed to read response chunk")?;
-        file.write_all(&chunk)
+        let mut file = tokio::fs::File::create(&file_path)
             .await
-            .context("Failed to write to file")?;
-        total_bytes += chunk.len() as u64;
+            .context("Failed to create output file")?;
+
+        let mut stream = response.bytes_stream();
+        let mut total_bytes: u64 = 0;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read response chunk")?;
+            file.write_all(&chunk)
+                .await
+                .context("Failed to write to file")?;
+            total_bytes += chunk.len() as u64;
+        }
+
+        file.flush().await.context("Failed to flush file")?;
+
+        let result = json!({
+            "status": "success",
+            "saved_file": file_path.display().to_string(),
+            "mimeType": content_type,
+            "bytes": total_bytes,
+        });
+
+        if capture_output {
+            return Ok(Some(result));
+        }
+
+        println!("{}", crate::formatter::format_value(&result, output_format));
+    } else {
+        if !capture_output && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            return Err(GwsError::Validation(
+                "Refusing to stream binary content to a terminal. \
+                 Use --output <path> to save to a file, or redirect stdout (e.g. '> file')."
+                    .to_string(),
+            ));
+        }
+
+        let mut stdout = tokio::io::stdout();
+        let mut stream = response.bytes_stream();
+        let mut total_bytes: u64 = 0;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read response chunk")?;
+            total_bytes += chunk.len() as u64;
+            if !capture_output {
+                stdout
+                    .write_all(&chunk)
+                    .await
+                    .context("Failed to write to stdout")?;
+            }
+        }
+
+        if capture_output {
+            return Ok(Some(json!({
+                "status": "success",
+                "mimeType": content_type,
+                "bytes": total_bytes,
+            })));
+        }
+
+        stdout.flush().await.context("Failed to flush stdout")?;
     }
-
-    file.flush().await.context("Failed to flush file")?;
-
-    let result = json!({
-        "status": "success",
-        "saved_file": file_path.display().to_string(),
-        "mimeType": content_type,
-        "bytes": total_bytes,
-    });
-
-    if capture_output {
-        return Ok(Some(result));
-    }
-
-    println!("{}", crate::formatter::format_value(&result, output_format));
 
     Ok(None)
 }
@@ -1151,40 +1185,6 @@ fn get_value_type(val: &Value) -> &'static str {
     }
 }
 
-/// Maps a MIME type to a file extension.
-pub fn mime_to_extension(mime: &str) -> &str {
-    if mime.contains("pdf") {
-        "pdf"
-    } else if mime.contains("png") {
-        "png"
-    } else if mime.contains("jpeg") || mime.contains("jpg") {
-        "jpg"
-    } else if mime.contains("gif") {
-        "gif"
-    } else if mime.contains("csv") {
-        "csv"
-    } else if mime.contains("zip") {
-        "zip"
-    } else if mime.contains("xml") {
-        "xml"
-    } else if mime.contains("html") {
-        "html"
-    } else if mime.contains("plain") {
-        "txt"
-    } else if mime.contains("octet-stream") {
-        "bin"
-    } else if mime.contains("spreadsheet") || mime.contains("xlsx") {
-        "xlsx"
-    } else if mime.contains("document") || mime.contains("docx") {
-        "docx"
-    } else if mime.contains("presentation") || mime.contains("pptx") {
-        "pptx"
-    } else if mime.contains("script") {
-        "json"
-    } else {
-        "bin"
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1207,24 +1207,6 @@ mod tests {
         assert_eq!(AuthMethod::OAuth, AuthMethod::OAuth);
         assert_eq!(AuthMethod::None, AuthMethod::None);
         assert_ne!(AuthMethod::OAuth, AuthMethod::None);
-    }
-
-    #[test]
-    fn test_mime_to_extension_more_types() {
-        assert_eq!(mime_to_extension("text/plain"), "txt");
-        assert_eq!(mime_to_extension("text/csv"), "csv");
-        assert_eq!(mime_to_extension("application/zip"), "zip");
-        assert_eq!(mime_to_extension("application/xml"), "xml");
-        assert_eq!(mime_to_extension("text/html"), "html");
-        assert_eq!(mime_to_extension("application/json"), "bin"); // Default for unknown specific json types if not scripts
-        assert_eq!(
-            mime_to_extension("application/vnd.google-apps.script"),
-            "json"
-        );
-        assert_eq!(
-            mime_to_extension("application/vnd.google-apps.presentation"),
-            "pptx"
-        );
     }
 
     #[test]
