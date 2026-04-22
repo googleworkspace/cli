@@ -56,11 +56,13 @@ impl Helper for DriveHelper {
 EXAMPLES:
   gws drive +upload ./report.pdf
   gws drive +upload ./report.pdf --parent FOLDER_ID
+  gws drive +upload ./report.pdf --parent SHARED_DRIVE_FOLDER_ID
   gws drive +upload ./data.csv --name 'Sales Data.csv'
 
 TIPS:
   MIME type is detected automatically.
-  Filename is inferred from the local path unless --name is given.",
+  Filename is inferred from the local path unless --name is given.
+  Shared Drive folders are supported: pass the folder ID via --parent.",
                 ),
         );
         cmd
@@ -105,7 +107,7 @@ TIPS:
                 executor::execute_method(
                     doc,
                     create_method,
-                    None,
+                    Some(r#"{"supportsAllDrives": true}"#),
                     Some(&body_str),
                     token.as_deref(),
                     auth_method,
