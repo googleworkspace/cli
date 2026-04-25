@@ -18,7 +18,7 @@ set -euo pipefail
 # Check if cargo-llvm-cov is installed
 if ! cargo llvm-cov --version &> /dev/null; then
   echo "cargo-llvm-cov is not installed. Installing..."
-  cargo install cargo-llvm-cov
+  cargo install --locked --version 0.8.5 cargo-llvm-cov
 fi
 
 # Run coverage and generate HTML report
