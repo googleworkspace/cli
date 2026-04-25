@@ -87,6 +87,7 @@ mod backend {
                     .map_err(|e| ToolError::runtime(format!("navigate: {e}")))?;
                 tab.wait_until_navigated()
                     .map_err(|e| ToolError::runtime(format!("wait: {e}")))?;
+                let _ = tab.close();
                 Ok(format!("navigated to {url}"))
             }
             "click" => {
@@ -106,6 +107,7 @@ mod backend {
                     .map_err(|e| ToolError::runtime(format!("element: {e}")))?;
                 el.click()
                     .map_err(|e| ToolError::runtime(format!("click: {e}")))?;
+                let _ = tab.close();
                 Ok(format!("clicked {selector}"))
             }
             "text" => {
@@ -123,11 +125,15 @@ mod backend {
                 let text = body
                     .get_inner_text()
                     .map_err(|e| ToolError::runtime(format!("inner text: {e}")))?;
+                let _ = tab.close();
                 Ok(truncate(&text, 4000))
             }
-            other => Err(ToolError::runtime(format!(
-                "unknown browser action '{other}'"
-            ))),
+            other => {
+                let _ = tab.close();
+                Err(ToolError::runtime(format!(
+                    "unknown browser action '{other}'"
+                )))
+            }
         }
     }
 

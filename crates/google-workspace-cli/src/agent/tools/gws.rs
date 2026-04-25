@@ -101,7 +101,9 @@ impl Tool for GwsTool {
             argv.push(s.to_string());
         }
         // Disallow recursive agent self-invocation to avoid runaway loops.
-        if argv.first().map(|s| s.as_str()) == Some("agent") {
+        // Check all arguments, not just the first, since the LLM can use global
+        // flags before the command (e.g., `gws --api-version v1 agent ...`).
+        if argv.iter().find(|s| !s.starts_with('-')).map(|s| s.as_str()) == Some("agent") {
             return Err(ToolError::runtime("recursive agent invocation is blocked"));
         }
 
