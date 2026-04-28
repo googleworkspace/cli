@@ -111,26 +111,29 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
           VERSION="${TAG#fork/v}"
+          cat > /tmp/release-notes.md << 'RELNOTES'
+          ## Changes
+
+          See [FORK.md](https://github.com/shigechika/gws-mcp/blob/main/FORK.md) for fork-specific changes.
+
+          ## Install
+
+          ### Homebrew (macOS / Linux)
+          ```bash
+          brew install shigechika/tap/gws-mcp
+          ```
+
+          ### Cargo
+          ```bash
+          cargo install --git https://github.com/shigechika/gws-mcp --locked
+          ```
+
+          ### Direct download
+          Download the archive for your platform below and place `gws` in your PATH.
+          RELNOTES
           gh release create "$TAG" \
             --title "fork/v${VERSION}" \
-            --notes "## Changes
-
-See [FORK.md](https://github.com/shigechika/gws-mcp/blob/main/FORK.md) for fork-specific changes.
-
-## Install
-
-### Homebrew (macOS / Linux)
-\`\`\`bash
-brew install shigechika/tap/gws-mcp
-\`\`\`
-
-### Cargo
-\`\`\`bash
-cargo install --git https://github.com/shigechika/gws-mcp --locked
-\`\`\`
-
-### Direct download
-Download the archive for your platform below and place \`gws\` in your PATH." \
+            --notes-file /tmp/release-notes.md \
             gws-*.tar.gz \
             gws-*.tar.gz.sha256
 
