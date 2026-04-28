@@ -1,0 +1,8 @@
+name: Test Minimal
+on:
+  workflow_dispatch:
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
