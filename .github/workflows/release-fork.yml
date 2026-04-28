@@ -139,10 +139,10 @@ jobs:
 
       - name: Update Homebrew formula
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
         run: |
-          [[ -z "$GH_TOKEN" ]] && echo "GH_PAT not set, skipping formula update" && exit 0
+          [[ -z "$GH_TOKEN" ]] && echo "HOMEBREW_TAP_TOKEN not set, skipping formula update" && exit 0
           VERSION="${TAG#fork/v}"
           TAG_ENCODED="${TAG/\//%2F}"
           BASE_URL="https://github.com/shigechika/gws-mcp/releases/download/${TAG_ENCODED}"
