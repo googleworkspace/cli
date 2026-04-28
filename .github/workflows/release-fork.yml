@@ -109,7 +109,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.tag_name || github.ref_name }}"
+          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
           VERSION="${TAG#fork/v}"
           gh release create "$TAG" \
             --title "fork/v${VERSION}" \
@@ -135,10 +135,10 @@ Download the archive for your platform below and place \`gws\` in your PATH." \
             gws-*.tar.gz.sha256
 
       - name: Update Homebrew formula
-        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: ${{ secrets.GH_PAT != '' }}
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ inputs.tag_name || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
         run: |
           VERSION="${TAG#fork/v}"
           TAG_ENCODED="${TAG/\//%2F}"
