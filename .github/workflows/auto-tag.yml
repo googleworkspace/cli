@@ -8,6 +8,7 @@ on:
       - 'crates/**/*.rs'
       - 'crates/**/Cargo.toml'
       - 'Cargo.lock'
+  workflow_dispatch:
 
 permissions:
   contents: write
