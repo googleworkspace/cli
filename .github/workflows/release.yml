@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'fork/v*'
+    branches-ignore:
+      - '**'
   workflow_dispatch:
     inputs:
       tag_name:
@@ -78,8 +80,11 @@ jobs:
         run: |
           tar -czf "gws-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" gws
-          sha256sum "gws-${{ matrix.target }}.tar.gz" \
-            > "gws-${{ matrix.target }}.tar.gz.sha256"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "gws-${{ matrix.target }}.tar.gz" > "gws-${{ matrix.target }}.tar.gz.sha256"
+          else
+            shasum -a 256 "gws-${{ matrix.target }}.tar.gz" > "gws-${{ matrix.target }}.tar.gz.sha256"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
