@@ -12,7 +12,7 @@ It maintains the **MCP (Model Context Protocol) server** that upstream removed, 
 |---|---|---|
 | MCP server (`gws mcp`) | Removed | Maintained |
 | MCP helper tools (`--helpers`) | N/A | `gmail_send` and more |
-| CI/CD workflows | Upstream-specific | Minimal (CI + Policy + Sync) |
+| CI/CD workflows | Upstream-specific | Minimal (CI + Policy + Sync + Release) |
 
 ### MCP server
 
@@ -40,14 +40,22 @@ Enabled with the `--helpers` flag. These provide high-level operations on top of
 
 ## Installation
 
-The upstream npm package does not include MCP support. Build from source:
+### Homebrew (macOS / Linux) — recommended
 
 ```bash
-# Install directly from GitHub (recommended)
+brew install shigechika/tap/gws-mcp
+```
+
+No Rust toolchain required. Binaries are pre-built for macOS (Apple Silicon / Intel) and Linux (x86\_64 / arm64).
+
+### Cargo (from source)
+
+```bash
+# Install directly from GitHub
 cargo install --git https://github.com/shigechika/gws-mcp --locked
 ```
 
-If you cloned the repository locally, install from the working tree:
+If you cloned the repository locally:
 
 ```bash
 cd gws-mcp

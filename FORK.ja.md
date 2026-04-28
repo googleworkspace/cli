@@ -12,7 +12,7 @@ upstream が削除した **MCP（Model Context Protocol）サーバー機能** �
 |---|---|---|
 | MCP サーバー (`gws mcp`) | 削除済み | 維持・メンテナンス中 |
 | MCP helper tools (`--helpers`) | なし | `gmail_send` 等を独自実装 |
-| CI/CD ワークフロー | upstream 環境依存 | 最小構成（CI + Policy + Sync） |
+| CI/CD ワークフロー | upstream 環境依存 | 最小構成（CI + Policy + Sync + Release） |
 
 ### MCP サーバー
 
@@ -40,10 +40,18 @@ gws mcp -s gmail --tool-mode compact
 
 ## インストール
 
-upstream の npm パッケージには MCP 機能が含まれていないため、ソースからビルドしてください。
+### Homebrew（macOS / Linux）— 推奨
 
 ```bash
-# GitHub から直接インストール（推奨）
+brew install shigechika/tap/gws-mcp
+```
+
+Rust ツールチェーン不要。macOS（Apple Silicon / Intel）と Linux（x86\_64 / arm64）向けのバイナリを事前ビルドして配布しています。
+
+### Cargo（ソースからビルド）
+
+```bash
+# GitHub から直接インストール
 cargo install --git https://github.com/shigechika/gws-mcp --locked
 ```
 

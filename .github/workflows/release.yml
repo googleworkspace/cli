@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'fork/v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to release (e.g. fork/v0.22.5-mcp.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_IGNORE_SERVER_IO_ERROR: "true"
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup sccache
+        id: sccache
+        uses: mozilla-actions/sccache-action@2df7dbab909c49ab7d3382d05da469f3f975c2d6 # v0.0.7
+        continue-on-error: true
+
+      - name: Enable sccache
+        if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          if sccache --start-server 2>/dev/null; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache server failed to start, building without cache"
+          fi
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        with:
+          key: release-${{ matrix.target }}
+          cache-targets: "false"
+
+      - name: Install cross-compilation tools (aarch64 Linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package
+        run: |
+          tar -czf "gws-${{ matrix.target }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" gws
+          sha256sum "gws-${{ matrix.target }}.tar.gz" \
+            > "gws-${{ matrix.target }}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gws-${{ matrix.target }}
+          path: |
+            gws-${{ matrix.target }}.tar.gz
+            gws-${{ matrix.target }}.tar.gz.sha256
+          retention-days: 1
+
+  release:
+    name: Create Release and Update Formula
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag_name || github.ref_name }}"
+          VERSION="${TAG#fork/v}"
+          gh release create "$TAG" \
+            --title "fork/v${VERSION}" \
+            --notes "## Changes
+
+See [FORK.md](https://github.com/shigechika/gws-mcp/blob/main/FORK.md) for fork-specific changes.
+
+## Install
+
+### Homebrew (macOS / Linux)
+\`\`\`bash
+brew install shigechika/tap/gws-mcp
+\`\`\`
+
+### Cargo
+\`\`\`bash
+cargo install --git https://github.com/shigechika/gws-mcp --locked
+\`\`\`
+
+### Direct download
+Download the archive for your platform below and place \`gws\` in your PATH." \
+            gws-*.tar.gz \
+            gws-*.tar.gz.sha256
+
+      - name: Update Homebrew formula
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ inputs.tag_name || github.ref_name }}
+        run: |
+          VERSION="${TAG#fork/v}"
+          TAG_ENCODED="${TAG/\//%2F}"
+          BASE_URL="https://github.com/shigechika/gws-mcp/releases/download/${TAG_ENCODED}"
+
+          SHA_ARM64_DARWIN=$(awk '{print $1}' gws-aarch64-apple-darwin.tar.gz.sha256)
+          SHA_X86_64_DARWIN=$(awk '{print $1}' gws-x86_64-apple-darwin.tar.gz.sha256)
+          SHA_X86_64_LINUX=$(awk '{print $1}' gws-x86_64-unknown-linux-gnu.tar.gz.sha256)
+          SHA_ARM64_LINUX=$(awk '{print $1}' gws-aarch64-unknown-linux-gnu.tar.gz.sha256)
+
+          cat > /tmp/gws-mcp.rb << FORMULA
+          class GwsMcp < Formula
+            desc "Google Workspace CLI with MCP server support"
+            homepage "https://github.com/shigechika/gws-mcp"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "${BASE_URL}/gws-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_ARM64_DARWIN}"
+              end
+              on_intel do
+                url "${BASE_URL}/gws-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_X86_64_DARWIN}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE_URL}/gws-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_ARM64_LINUX}"
+              end
+              on_intel do
+                url "${BASE_URL}/gws-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_X86_64_LINUX}"
+              end
+            end
+
+            def install
+              bin.install "gws"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/gws --version")
+            end
+          end
+          FORMULA
+
+          # Commit to homebrew-tap
+          gh api repos/shigechika/homebrew-tap/contents/Formula/gws-mcp.rb \
+            --method PUT \
+            --field message="update: gws-mcp formula to ${VERSION}" \
+            --field content="$(base64 -w0 /tmp/gws-mcp.rb)" \
+            --field sha="$(gh api repos/shigechika/homebrew-tap/contents/Formula/gws-mcp.rb --jq '.sha' 2>/dev/null || echo '')" \
+            2>/dev/null || \
+          gh api repos/shigechika/homebrew-tap/contents/Formula/gws-mcp.rb \
+            --method PUT \
+            --field message="add: gws-mcp formula ${VERSION}" \
+            --field content="$(base64 -w0 /tmp/gws-mcp.rb)"
