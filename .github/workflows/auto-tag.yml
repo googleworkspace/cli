@@ -20,10 +20,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
 
       - name: Compute and push next tag
-        env:
-          GH_TOKEN: ${{ secrets.GWS_MCP_RELEASE_TOKEN }}
         run: |
           VERSION=$(grep '^version' crates/google-workspace-cli/Cargo.toml \
             | head -1 | grep -oP '[\d]+\.[\d]+\.[\d]+')
@@ -42,4 +41,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$NEW_TAG"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/shigechika/gws-mcp.git" "$NEW_TAG"
+          git push origin "$NEW_TAG"
