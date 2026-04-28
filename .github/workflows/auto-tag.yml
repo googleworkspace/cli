@@ -1,0 +1,43 @@
+name: Auto Tag
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'crates/**/*.rs'
+      - 'crates/**/Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create fork tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute and push next tag
+        run: |
+          VERSION=$(grep '^version' crates/google-workspace-cli/Cargo.toml \
+            | head -1 | grep -oP '[\d]+\.[\d]+\.[\d]+')
+
+          LAST=$(git tag -l "fork/v${VERSION}-mcp.*" | sort -V | tail -1)
+          if [ -z "$LAST" ]; then
+            N=1
+          else
+            N=$(echo "$LAST" | grep -oP '\d+$')
+            N=$((N + 1))
+          fi
+
+          NEW_TAG="fork/v${VERSION}-mcp.${N}"
+          echo "Creating tag: $NEW_TAG"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
