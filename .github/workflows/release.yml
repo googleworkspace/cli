@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'fork/v*'
-    branches-ignore:
-      - '**'
   workflow_dispatch:
     inputs:
       tag_name:
