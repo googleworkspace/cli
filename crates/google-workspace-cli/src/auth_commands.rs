@@ -841,6 +841,7 @@ fn map_service_to_scope_prefixes(service: &str) -> Vec<&str> {
         "slides" => vec!["presentations"],
         "docs" => vec!["documents"],
         "people" => vec!["contacts", "directory"],
+        "meet" => vec!["meetings"],
         s => vec![s],
     }
 }
@@ -2265,6 +2266,23 @@ mod tests {
         ));
         assert!(scope_matches_service(
             "https://www.googleapis.com/auth/chat.messages",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_meet() {
+        let services: HashSet<String> = ["meet"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/meetings.space.created",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/meetings.space.readonly",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/meetings.space.settings",
             &services
         ));
     }
