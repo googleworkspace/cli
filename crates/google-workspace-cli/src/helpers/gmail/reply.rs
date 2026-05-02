@@ -371,9 +371,42 @@ fn create_reply_raw_message(
     finalize_message(mb, body, envelope.html, attachments)
 }
 
+/// Wrap `text` so no line exceeds `max_len` characters.
+/// Preserves blank lines and honours existing line breaks as paragraph
+/// boundaries rather than merging them.
+fn word_wrap(text: &str, max_len: usize) -> String {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line.len() <= max_len {
+            out.push(line.to_string());
+            continue;
+        }
+        let mut current = String::new();
+        for word in line.split_whitespace() {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.len() + 1 + word.len() <= max_len {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                out.push(current.clone());
+                current = word.to_string();
+            }
+        }
+        if !current.is_empty() {
+            out.push(current);
+        }
+    }
+    out.join("\n")
+}
+
 fn format_quoted_original(original: &OriginalMessage) -> String {
-    let quoted_body: String = original
-        .body_text
+    // Pre-wrap to 73 chars so that after the "> " prefix (2 chars) each line
+    // stays <=75 chars — safely under the quoted-printable soft-wrap threshold
+    // of 76 chars. Without this, QP-encoded replies corrupt quoted text by
+    // injecting "=\r\n> " mid-sentence. See upstream issue #769.
+    let wrapped = word_wrap(&original.body_text, 73);
+    let quoted_body: String = wrapped
         .lines()
         .map(|line| format!("> {}", line))
         .collect::<Vec<_>>()
@@ -1298,6 +1331,44 @@ mod tests {
         assert!(quoted.starts_with("alice@example.com wrote:"));
         assert!(!quoted.contains("On "));
         assert!(quoted.contains("> Hello"));
+    }
+
+    #[test]
+    fn test_format_quoted_original_long_lines_do_not_exceed_75_chars() {
+        // Regression test for upstream issue #769: hard-wrapped lines near
+        // 70-75 chars would exceed the QP soft-wrap threshold (76) after the
+        // "> " prefix, corrupting the quoted text.
+        let long_line = "This is a fairly long line that sits right at the edge of the quoted-printable soft-wrap boundary and would trigger corruption.";
+        let original = OriginalMessage {
+            from: Mailbox::parse("alice@example.com"),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: long_line.to_string(),
+            ..Default::default()
+        };
+        let quoted = format_quoted_original(&original);
+        for line in quoted.lines() {
+            assert!(
+                line.len() <= 75,
+                "quoted line exceeds 75 chars ({} chars): {:?}",
+                line.len(),
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_word_wrap_preserves_short_lines() {
+        let text = "Short line\nAnother short line";
+        assert_eq!(word_wrap(text, 73), "Short line\nAnother short line");
+    }
+
+    #[test]
+    fn test_word_wrap_breaks_long_line() {
+        let long_line = "word ".repeat(20).trim().to_string();
+        let wrapped = word_wrap(&long_line, 20);
+        for line in wrapped.lines() {
+            assert!(line.len() <= 20, "line too long: {:?}", line);
+        }
     }
 
     // --- end-to-end --to behavioral tests ---
