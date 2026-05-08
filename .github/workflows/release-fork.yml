@@ -34,6 +34,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -69,12 +71,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Disable Windows Defender scanning for cargo
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\.cargo"
+          Add-MpPreference -ExclusionPath "$env:USERPROFILE\.rustup"
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}\target"
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           tar -czf "gws-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" gws
@@ -84,13 +95,40 @@ jobs:
             shasum -a 256 "gws-${{ matrix.target }}.tar.gz" > "gws-${{ matrix.target }}.tar.gz.sha256"
           fi
 
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/gws.exe" `
+            -DestinationPath "gws-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash "gws-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  gws-${{ matrix.target }}.zip" | Out-File -Encoding ASCII "gws-${{ matrix.target }}.zip.sha256"
+
+      - name: Generate .deb
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deb@3.7.0
+          cargo deb --no-build --no-strip --target ${{ matrix.target }} \
+            -p google-workspace-cli
+          DEB=$(ls target/${{ matrix.target }}/debian/*.deb)
+          cp "$DEB" "gws-${{ matrix.target }}.deb"
+          sha256sum "gws-${{ matrix.target }}.deb" > "gws-${{ matrix.target }}.deb.sha256"
+
+      - name: Generate .rpm
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-generate-rpm@0.21.0
+          cargo generate-rpm --target ${{ matrix.target }} \
+            -p google-workspace-cli
+          RPM=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm)
+          cp "$RPM" "gws-${{ matrix.target }}.rpm"
+          sha256sum "gws-${{ matrix.target }}.rpm" > "gws-${{ matrix.target }}.rpm.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gws-${{ matrix.target }}
-          path: |
-            gws-${{ matrix.target }}.tar.gz
-            gws-${{ matrix.target }}.tar.gz.sha256
+          path: gws-${{ matrix.target }}.*
           retention-days: 1
 
   release:
@@ -123,19 +161,31 @@ jobs:
           brew install shigechika/tap/gws-mcp
           ```
 
+          ### Debian / Ubuntu (.deb)
+          ```bash
+          sudo dpkg -i gws-mcp_<VERSION>_amd64.deb
+          ```
+
+          ### RHEL / Fedora / Amazon Linux (.rpm)
+          ```bash
+          sudo rpm -i gws-mcp-<VERSION>-1.x86_64.rpm
+          ```
+
+          ### Windows
+          Download `gws-x86_64-pc-windows-msvc.zip`, extract `gws.exe`, and place it in a directory on your PATH.
+
           ### Cargo
           ```bash
           cargo install --git https://github.com/shigechika/gws-mcp --locked
           ```
 
-          ### Direct download
-          Download the archive for your platform below and place `gws` in your PATH.
+          ### Direct download (macOS / Linux)
+          Download the `.tar.gz` archive for your platform below and place `gws` in your PATH.
           RELNOTES
           gh release create "$TAG" \
             --title "fork/v${VERSION}" \
             --notes-file /tmp/release-notes.md \
-            gws-*.tar.gz \
-            gws-*.tar.gz.sha256
+            gws-*
 
       - name: Update Homebrew formula
         env:

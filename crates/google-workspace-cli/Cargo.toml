@@ -78,3 +78,21 @@ keyring = "3.6.3"
 
 [dev-dependencies]
 serial_test = "3.4.0"
+
+[package.metadata.deb]
+name = "gws-mcp"
+maintainer = "AIKAWA Shigechika <shige@aikawa.jp>"
+copyright = "2026, Google LLC"
+license-file = ["../../LICENSE", "0"]
+extended-description = "Google Workspace CLI with MCP server support. Provides a stdio MCP server for Gmail, Drive, Calendar, and other Google Workspace APIs."
+depends = "ca-certificates"
+section = "utils"
+priority = "optional"
+assets = [["target/release/gws", "usr/bin/gws", "755"]]
+
+[package.metadata.generate-rpm]
+name = "gws-mcp"
+license = "Apache-2.0"
+description = "Google Workspace CLI with MCP server support"
+requires = { ca-certificates = "*" }
+assets = [{ source = "target/release/gws", dest = "/usr/bin/gws", mode = "755" }]
