@@ -32,7 +32,16 @@ pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
 use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
-pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+pub(super) use base64::Engine as _;
+/// URL-safe base64 decoder accepting both padded and unpadded input (Gmail API omits padding).
+pub(super) const URL_SAFE_LENIENT: base64::engine::GeneralPurpose =
+    base64::engine::GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        base64::engine::general_purpose::GeneralPurposeConfig::new()
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+    );
+#[cfg(test)]
+pub(super) use base64::engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD};
 pub(super) use clap::{Arg, ArgAction, ArgMatches, Command};
 pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
@@ -748,7 +757,7 @@ async fn fetch_attachment_data(
         ))
     })?;
 
-    URL_SAFE
+    URL_SAFE_LENIENT
         .decode(data_str)
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to decode attachment data: {e}")))
 }
@@ -840,7 +849,7 @@ struct PayloadContents {
 
 /// Decode a base64url-encoded text body part, returning the string on success.
 fn decode_text_body(data: &str, mime_label: &str) -> Option<String> {
-    match URL_SAFE.decode(data) {
+    match URL_SAFE_LENIENT.decode(data) {
         Ok(decoded) => match String::from_utf8(decoded) {
             Ok(s) => Some(s),
             Err(e) => {
@@ -3476,6 +3485,28 @@ mod tests {
 
     fn base64url(s: &str) -> String {
         URL_SAFE.encode(s)
+    }
+
+    fn base64url_no_pad(s: &str) -> String {
+        URL_SAFE_NO_PAD.encode(s)
+    }
+
+    #[test]
+    fn test_extract_payload_contents_unpadded_base64() {
+        // Gmail API returns base64url without padding; ensure we decode it correctly.
+        let text_data = base64url_no_pad("Hello plain text");
+        let html_data = base64url_no_pad("<p>Hello HTML</p>");
+        assert!(!text_data.ends_with('='), "test data must be unpadded");
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                { "mimeType": "text/plain", "body": { "data": text_data, "size": 16 } },
+                { "mimeType": "text/html", "body": { "data": html_data, "size": 18 } },
+            ]
+        });
+        let contents = extract_payload_contents(&payload);
+        assert_eq!(contents.body_text.as_deref(), Some("Hello plain text"));
+        assert_eq!(contents.body_html.as_deref(), Some("<p>Hello HTML</p>"));
     }
 
     #[test]
