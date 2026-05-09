@@ -763,8 +763,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
 
-        // Isolate global config dir to prevent races with other tests
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
+        // Isolate global config dir; guard restores the env var on drop.
+        let _config_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
 
         // Encrypt and write
         let encrypted = crate::credential_store::encrypt(json.as_bytes()).unwrap();
@@ -785,6 +785,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_load_credentials_encrypted_takes_priority_over_default() {
         // Encrypted credentials should be loaded before the default plaintext path
         let enc_json = r#"{
@@ -803,6 +804,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
         let plain_path = dir.path().join("credentials.json");
+
+        // Isolate global config dir; guard restores the env var on drop.
+        let _config_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
 
         let encrypted = crate::credential_store::encrypt(enc_json.as_bytes()).unwrap();
         std::fs::write(&enc_path, &encrypted).unwrap();

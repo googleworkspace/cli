@@ -48,6 +48,41 @@ brew install shigechika/tap/gws-mcp
 
 No Rust toolchain required. Binaries are pre-built for macOS (Apple Silicon / Intel) and Linux (x86\_64 / arm64).
 
+### Debian / Ubuntu (.deb)
+
+```bash
+sudo dpkg -i gws-mcp_<VERSION>-1_amd64.deb
+# or for arm64:
+sudo dpkg -i gws-mcp_<VERSION>-1_arm64.deb
+```
+
+Download the `.deb` file from the [latest release](https://github.com/shigechika/gws-mcp/releases/latest).
+
+### RHEL / Fedora / Amazon Linux (.rpm)
+
+```bash
+sudo rpm -i gws-mcp-<VERSION>-1.x86_64.rpm
+# or for aarch64:
+sudo rpm -i gws-mcp-<VERSION>-1.aarch64.rpm
+```
+
+Download the `.rpm` file from the [latest release](https://github.com/shigechika/gws-mcp/releases/latest).
+
+### Windows
+
+Download `gws-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/shigechika/gws-mcp/releases/latest), extract `gws.exe`, and place it in a directory on your `PATH`.
+
+### Direct download (macOS / Linux)
+
+Download the `.tar.gz` archive for your platform from the [latest release](https://github.com/shigechika/gws-mcp/releases/latest) and place `gws` in your `PATH`.
+
+| Platform | Archive |
+|---|---|
+| macOS (Apple Silicon) | `gws-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `gws-x86_64-apple-darwin.tar.gz` |
+| Linux x86\_64 | `gws-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux arm64 | `gws-aarch64-unknown-linux-gnu.tar.gz` |
+
 ### Cargo (from source)
 
 ```bash
