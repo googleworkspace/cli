@@ -62,6 +62,12 @@ fn build_mcp_cli() -> Command {
                 .help("Address to bind (HTTP transport only). Use 0.0.0.0 to allow external access"),
         )
         .arg(
+            Arg::new("auth")
+                .long("auth")
+                .action(clap::ArgAction::SetTrue)
+                .help("Enable OAuth2 PKCE authentication (HTTP transport only). Requires client_secret.json from `gws auth setup`"),
+        )
+        .arg(
             Arg::new("services")
                 .long("services")
                 .short('s')
@@ -140,7 +146,8 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
             .map(|s| s.as_str())
             .unwrap_or("127.0.0.1")
             .to_string();
-        return crate::mcp_http_server::start_http(config, port, bind).await;
+        let enable_auth = matches.get_flag("auth");
+        return crate::mcp_http_server::start_http(config, port, bind, enable_auth).await;
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
