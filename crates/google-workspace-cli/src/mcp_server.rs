@@ -37,6 +37,12 @@ pub(crate) struct ServerConfig {
     tool_mode: ToolMode,
 }
 
+impl ServerConfig {
+    pub(crate) fn services_list(&self) -> &[String] {
+        &self.services
+    }
+}
+
 fn build_mcp_cli() -> Command {
     Command::new("mcp")
         .about("Starts the MCP server (stdio by default, or HTTP with --transport http)")
@@ -250,7 +256,7 @@ async fn handle_request(
                 "tools": tools_cache.as_ref().unwrap()
             }))
         }
-        "tools/call" => match handle_tools_call(params, config).await {
+        "tools/call" => match handle_tools_call(params, config, None).await {
             Ok(val) => Ok(val),
             Err(e) => Ok(json!({
                 "content": [{ "type": "text", "text": e.to_string() }],
@@ -935,6 +941,7 @@ fn find_resource<'a>(
 pub(crate) async fn handle_tools_call(
     params: &Value,
     config: &ServerConfig,
+    user_token: Option<&str>,
 ) -> Result<Value, GwsError> {
     let tool_name = params
         .get("name")
@@ -1006,7 +1013,7 @@ pub(crate) async fn handle_tools_call(
             ))
         })?;
 
-        return execute_mcp_method(&doc, method, arguments).await;
+        return execute_mcp_method(&doc, method, arguments, user_token).await;
     }
 
     // Full mode — greedy parse that handles resource names containing underscores
@@ -1047,13 +1054,14 @@ pub(crate) async fn handle_tools_call(
         .and_then(|r| r.methods.get(&method_name))
         .ok_or_else(|| GwsError::Validation(format!("Method '{}' not found", method_name)))?;
 
-    execute_mcp_method(&doc, method, arguments).await
+    execute_mcp_method(&doc, method, arguments, user_token).await
 }
 
 async fn execute_mcp_method(
     doc: &crate::discovery::RestDescription,
     method: &crate::discovery::RestMethod,
     arguments: &Value,
+    user_token: Option<&str>,
 ) -> Result<Value, GwsError> {
     let params_json_val = arguments.get("params");
     let params_str = params_json_val
@@ -1101,13 +1109,17 @@ async fn execute_mcp_method(
     };
 
     let scopes: Vec<&str> = crate::select_scope(&method.scopes).into_iter().collect();
-    let (token, auth_method) = match crate::auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), crate::executor::AuthMethod::OAuth),
-        Err(e) => {
-            eprintln!(
-                "[gws mcp] Warning: Authentication failed, proceeding without credentials: {e}"
-            );
-            (None, crate::executor::AuthMethod::None)
+    let (token, auth_method) = if let Some(t) = user_token {
+        (Some(t.to_string()), crate::executor::AuthMethod::OAuth)
+    } else {
+        match crate::auth::get_token(&scopes).await {
+            Ok(t) => (Some(t), crate::executor::AuthMethod::OAuth),
+            Err(e) => {
+                eprintln!(
+                    "[gws mcp] Warning: Authentication failed, proceeding without credentials: {e}"
+                );
+                (None, crate::executor::AuthMethod::None)
+            }
         }
     };
 
@@ -1598,7 +1610,7 @@ mod tests {
             "name": "gmail_send",
             "arguments": {"to": "a@b.com", "subject": "Hi", "body": "Hello"}
         });
-        let result = handle_tools_call(&params, &config).await;
+        let result = handle_tools_call(&params, &config, None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--helpers"));
     }
@@ -1652,7 +1664,7 @@ mod tests {
             "name": "gmail_reply",
             "arguments": {"message_id": "abc123", "body": "Thanks!"}
         });
-        let result = handle_tools_call(&params, &config).await;
+        let result = handle_tools_call(&params, &config, None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("--helpers"));
     }

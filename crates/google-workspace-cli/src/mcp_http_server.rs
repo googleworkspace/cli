@@ -22,8 +22,9 @@
 //! Authorization Server and Resource Server.  Google is used as the identity
 //! provider; a `client_secret.json` created via `gws auth setup` is required.
 //!
-//! Phase 2+3 limitation: Google API calls still use the shared credential from
-//! `gws auth login`.  Per-user token isolation is Phase 4.
+//! Phase 4: Each authenticated user's MCP tool calls use their own Google
+//! access token obtained during the OAuth flow (per-user token isolation).
+//! GWS scopes are derived from the configured service list at authorize time.
 
 use std::{
     collections::HashMap,
@@ -58,6 +59,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
+    auth_commands::gws_scopes_for_services,
     error::GwsError,
     mcp_server::{build_tools_list, handle_tools_call, ServerConfig},
     oauth_config::{load_client_config, InstalledConfig},
@@ -115,13 +117,21 @@ impl ServerHandler for GwsMcpHandler {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        // Extract per-user GWS access token injected by bearer_auth_middleware.
+        // Present only when --auth is enabled; falls back to shared gws-auth token otherwise.
+        let user_token: Option<String> = ctx
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|p| p.extensions.get::<RequestUserToken>())
+            .map(|t| t.0.clone());
+
         let params = json!({
             "name": request.name.as_ref(),
             "arguments": request.arguments.unwrap_or_default()
         });
-        let result = handle_tools_call(&params, &self.config)
+        let result = handle_tools_call(&params, &self.config, user_token.as_deref())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         serde_json::from_value(result).map_err(|e| McpError::internal_error(e.to_string(), None))
@@ -148,11 +158,22 @@ struct PendingCode {
 }
 
 struct UserSession {
-    #[allow(dead_code)] // used in Phase 4 for per-user token lookup
     email: String,
-    #[allow(dead_code)]
     created_at: SystemTime,
 }
+
+/// Per-user Google access token obtained during the OAuth callback flow.
+#[derive(Clone)]
+struct UserGwsToken {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: SystemTime,
+}
+
+/// Axum request extension injected by bearer_auth_middleware for --auth mode.
+/// Carries the caller's GWS access token into the MCP handler via HTTP Parts.
+#[derive(Clone)]
+struct RequestUserToken(String);
 
 #[derive(Default)]
 struct AuthStore {
@@ -168,6 +189,11 @@ struct AuthStore {
 struct AppState {
     auth_store: Arc<AuthStore>,
     oauth_cfg: Arc<InstalledConfig>,
+    /// Per-user GWS access tokens keyed by email.
+    // NOTE: concurrent refresh of the same user's token is benign (both succeed, last writer wins).
+    user_tokens: Arc<Mutex<HashMap<String, UserGwsToken>>>,
+    /// Configured services — used to derive GWS scopes at authorize time.
+    services: Vec<String>,
     port: u16,
     bind: String,
 }
@@ -221,7 +247,7 @@ fn build_google_auth_url(client_id: &str, redirect_uri: &str, scopes: &str, stat
 
 async fn bearer_auth_middleware(
     State(state): State<AppState>,
-    request: Request<axum::body::Body>,
+    mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
@@ -247,15 +273,39 @@ async fn bearer_auth_middleware(
             .into_response();
     };
 
-    let sessions = state.auth_store.sessions.lock().await;
-    match sessions.get(&token) {
-        Some(s) if !is_expired(s.created_at, SESSION_TTL) => {}
-        _ => {
+    // Validate session and extract email; release lock before any async work.
+    let email = {
+        let sessions = state.auth_store.sessions.lock().await;
+        match sessions.get(&token) {
+            Some(s) if !is_expired(s.created_at, SESSION_TTL) => s.email.clone(),
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [(
+                        "WWW-Authenticate",
+                        "Bearer realm=\"gws-mcp\", error=\"invalid_token\", resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                    )],
+                )
+                    .into_response();
+            }
+        }
+    };
+
+    // Resolve (and if necessary refresh) the per-user GWS token.
+    // Lock is released before async HTTP so we never hold Mutex across await.
+    match get_or_refresh_user_token(&state, &email).await {
+        Ok(access_token) => {
+            request
+                .extensions_mut()
+                .insert(RequestUserToken(access_token));
+        }
+        Err(e) => {
+            eprintln!("[gws mcp] GWS token unavailable for {email}: {e}");
             return (
                 StatusCode::UNAUTHORIZED,
                 [(
                     "WWW-Authenticate",
-                    "Bearer realm=\"gws-mcp\", error=\"invalid_token\", resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                    "Bearer realm=\"gws-mcp\", error=\"invalid_token\", error_description=\"GWS token expired — please re-authenticate\"",
                 )],
             )
                 .into_response();
@@ -263,6 +313,47 @@ async fn bearer_auth_middleware(
     }
 
     next.run(request).await
+}
+
+/// Return a valid GWS access token for `email`, refreshing if the stored token
+/// is within 60 seconds of expiry.  Lock is never held across the async refresh call.
+async fn get_or_refresh_user_token(state: &AppState, email: &str) -> anyhow::Result<String> {
+    // Phase 1: read token info while holding lock, then release immediately.
+    let (access_token, needs_refresh, refresh_token) = {
+        let tokens = state.user_tokens.lock().await;
+        match tokens.get(email) {
+            None => anyhow::bail!("no GWS token on record"),
+            Some(t) => {
+                let expires_soon = t
+                    .expires_at
+                    .duration_since(SystemTime::now())
+                    .map(|d| d.as_secs() < 60)
+                    .unwrap_or(true);
+                (
+                    t.access_token.clone(),
+                    expires_soon,
+                    t.refresh_token.clone(),
+                )
+            }
+        }
+    };
+
+    if !needs_refresh {
+        return Ok(access_token);
+    }
+
+    // Phase 2: async HTTP refresh outside any lock.
+    let rt = refresh_token.ok_or_else(|| anyhow::anyhow!("no refresh_token available"))?;
+    let new_token = refresh_google_token(&state.oauth_cfg, &rt).await?;
+
+    // Phase 3: write updated token back.
+    state
+        .user_tokens
+        .lock()
+        .await
+        .insert(email.to_string(), new_token.clone());
+
+    Ok(new_token.access_token)
 }
 
 // ─── OAuth metadata endpoints ────────────────────────────────────────────────
@@ -333,7 +424,7 @@ struct AuthorizeParams {
     code_challenge: String,
     code_challenge_method: String,
     #[allow(dead_code)]
-    // accepted but not forwarded to Google; scope is fixed to openid email profile
+    // accepted but not forwarded to Google; scopes are derived from server-side service config
     scope: Option<String>,
 }
 
@@ -376,15 +467,12 @@ async fn oauth_authorize(
     );
 
     let callback = format!("{}/oauth/callback", server_base(state.port, &state.bind));
-    // Always use only openid/email/profile — Phase 2+3 needs only the user's
-    // email for identity.  Forwarding the client's scope would let a malicious
-    // client request arbitrary Google scopes.  Per-user GWS scopes are Phase 4.
-    let google_url = build_google_auth_url(
-        &state.oauth_cfg.client_id,
-        &callback,
-        "openid email profile",
-        &p.state,
-    );
+    // Derive GWS scopes from the configured service list (e.g. gmail, drive).
+    // The client's requested scope is ignored — only the server-side service list
+    // is trusted, preventing malicious clients from requesting arbitrary Google scopes.
+    let scope_str = gws_scopes_for_services(&state.services).join(" ");
+    let google_url =
+        build_google_auth_url(&state.oauth_cfg.client_id, &callback, &scope_str, &p.state);
 
     Ok(Redirect::to(&google_url))
 }
@@ -432,6 +520,19 @@ async fn oauth_callback(
     let email = get_google_email(&token_resp.access_token)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Store per-user GWS token for use in MCP tool calls.
+    let gws_token = UserGwsToken {
+        access_token: token_resp.access_token.clone(),
+        refresh_token: token_resp.refresh_token.clone(),
+        expires_at: SystemTime::now()
+            + Duration::from_secs(token_resp.expires_in.unwrap_or(3600).saturating_sub(60)),
+    };
+    state
+        .user_tokens
+        .lock()
+        .await
+        .insert(email.clone(), gws_token);
 
     let auth_code = Uuid::new_v4().to_string();
     state.auth_store.codes.lock().await.insert(
@@ -546,6 +647,8 @@ async fn oauth_token(
 #[derive(Deserialize)]
 struct GoogleTokenResp {
     access_token: String,
+    refresh_token: Option<String>,
+    expires_in: Option<u64>,
 }
 
 async fn exchange_google_code(
@@ -588,6 +691,41 @@ async fn get_google_email(access_token: &str) -> anyhow::Result<String> {
         .json()
         .await?;
     Ok(resp.email)
+}
+
+async fn refresh_google_token(
+    cfg: &InstalledConfig,
+    refresh_token: &str,
+) -> anyhow::Result<UserGwsToken> {
+    #[derive(Deserialize)]
+    struct RefreshResp {
+        access_token: String,
+        expires_in: Option<u64>,
+    }
+    let client = crate::client::shared_client()?;
+    let params = [
+        ("client_id", cfg.client_id.as_str()),
+        ("client_secret", cfg.client_secret.as_str()),
+        ("refresh_token", refresh_token),
+        ("grant_type", "refresh_token"),
+    ];
+    let resp = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = crate::auth::response_text_or_placeholder(resp.text().await);
+        anyhow::bail!("Google token refresh failed ({status}): {body}");
+    }
+    let r: RefreshResp = resp.json().await?;
+    Ok(UserGwsToken {
+        access_token: r.access_token,
+        refresh_token: Some(refresh_token.to_string()),
+        expires_at: SystemTime::now()
+            + Duration::from_secs(r.expires_in.unwrap_or(3600).saturating_sub(60)),
+    })
 }
 
 // ─── Router builder ───────────────────────────────────────────────────────────
@@ -659,6 +797,8 @@ pub(crate) async fn start_http(
         let app_state = AppState {
             auth_store: Arc::new(AuthStore::default()),
             oauth_cfg: Arc::new(oauth_cfg),
+            user_tokens: Arc::new(Mutex::new(HashMap::new())),
+            services: config.services_list().to_vec(),
             port,
             bind: bind.clone(),
         };

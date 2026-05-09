@@ -879,6 +879,46 @@ fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Return the GWS OAuth scopes needed to cover the given services.
+///
+/// Uses [`DEFAULT_SCOPES`] as the candidate set and filters to only scopes
+/// relevant to the requested services. Always prepends the OpenID Connect
+/// identity scopes. Returns all DEFAULT_SCOPES when `services` is empty or
+/// contains the special sentinel `"all"`.
+///
+/// **Limitation**: only [`DEFAULT_SCOPES`] are considered. Services whose
+/// scopes are not in that static list (e.g. `admin`, `script`) will not have
+/// their scopes included. Dynamic scope discovery via Discovery documents is
+/// not performed here because `oauth_authorize` must redirect synchronously.
+/// Users of such services need to ensure their Google project has the
+/// necessary APIs enabled; the access token will lack those scopes.
+pub(crate) fn gws_scopes_for_services(services: &[String]) -> Vec<String> {
+    let mut scopes: Vec<String> = vec![
+        "openid".to_string(),
+        "email".to_string(),
+        "profile".to_string(),
+    ];
+    let filter: std::collections::HashSet<String> = services.iter().cloned().collect();
+    // "all" is a sentinel meaning every service; treat it like an empty filter
+    // (return all DEFAULT_SCOPES). In practice the caller expands "all" before
+    // invoking this function, but guard here for correctness.
+    let filter_opt = if filter.is_empty() || filter.contains("all") {
+        None
+    } else {
+        Some(&filter)
+    };
+    let gws = filter_scopes_by_services(
+        DEFAULT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        filter_opt,
+    );
+    for s in gws {
+        if !scopes.contains(&s) {
+            scopes.push(s);
+        }
+    }
+    scopes
+}
+
 /// Filter a list of scope URLs to only those matching the given services.
 /// If no filter is provided, returns all scopes unchanged.
 fn filter_scopes_by_services(
@@ -2582,5 +2622,36 @@ mod tests {
 
         let err = read_refresh_token_from_cache(file.path()).unwrap_err();
         assert!(err.to_string().contains("no refresh token was returned"));
+    }
+
+    #[test]
+    fn gws_scopes_for_services_gmail() {
+        let scopes = gws_scopes_for_services(&["gmail".to_string()]);
+        assert!(scopes.contains(&"openid".to_string()));
+        assert!(scopes.contains(&"email".to_string()));
+        assert!(scopes.contains(&"profile".to_string()));
+        assert!(scopes.contains(&"https://www.googleapis.com/auth/gmail.modify".to_string()));
+        // Drive scope must NOT be included when only gmail is requested
+        assert!(!scopes.contains(&"https://www.googleapis.com/auth/drive".to_string()));
+    }
+
+    #[test]
+    fn gws_scopes_for_services_empty_returns_all_defaults() {
+        let scopes = gws_scopes_for_services(&[]);
+        assert!(scopes.contains(&"openid".to_string()));
+        // All DEFAULT_SCOPES must be present
+        for s in DEFAULT_SCOPES {
+            assert!(scopes.contains(&s.to_string()), "missing scope: {s}");
+        }
+    }
+
+    #[test]
+    fn gws_scopes_for_services_all_sentinel_returns_all_defaults() {
+        let scopes = gws_scopes_for_services(&["all".to_string()]);
+        assert!(scopes.contains(&"openid".to_string()));
+        // "all" sentinel must behave the same as empty — all DEFAULT_SCOPES included
+        for s in DEFAULT_SCOPES {
+            assert!(scopes.contains(&s.to_string()), "missing scope: {s}");
+        }
     }
 }

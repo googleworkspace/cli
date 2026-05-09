@@ -1027,6 +1027,7 @@ dependencies = [
  "futures-util",
  "google-workspace",
  "hostname",
+ "http",
  "iana-time-zone",
  "keyring",
  "mail-builder",
