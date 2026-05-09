@@ -127,6 +127,28 @@ This installs the binary to `~/.cargo/bin/gws`. Note that `cargo build --release
 }
 ```
 
+### HTTP transport (Streamable HTTP)
+
+Start the server first:
+
+```bash
+gws mcp -s gmail -s drive -s calendar --helpers --transport http --port 3000
+```
+
+Then point Claude at it — no `command`/`args` needed, just a URL:
+
+```json
+{
+  "mcpServers": {
+    "gws": {
+      "url": "http://localhost:3000/mcp"
+    }
+  }
+}
+```
+
+The server binds to `127.0.0.1` by default (loopback only). Use `--bind 0.0.0.0` to allow external access (not recommended without additional auth).
+
 ## Upstream MCP issues addressed in this fork
 
 Bug reports and feature requests that targeted upstream's MCP server (closed when MCP was removed). This fork ports the fixes so they remain useful:

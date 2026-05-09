@@ -32,6 +32,7 @@ mod fs_util;
 mod generate_skills;
 mod helpers;
 mod logging;
+mod mcp_http_server;
 mod mcp_server;
 mod oauth_config;
 mod output;

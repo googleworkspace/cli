@@ -24,13 +24,13 @@ use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ToolMode {
+pub(crate) enum ToolMode {
     Full,
     Compact,
 }
 
 #[derive(Debug, Clone)]
-struct ServerConfig {
+pub(crate) struct ServerConfig {
     services: Vec<String>,
     workflows: bool,
     helpers: bool,
@@ -39,7 +39,28 @@ struct ServerConfig {
 
 fn build_mcp_cli() -> Command {
     Command::new("mcp")
-        .about("Starts the MCP server over stdio")
+        .about("Starts the MCP server (stdio by default, or HTTP with --transport http)")
+        .arg(
+            Arg::new("transport")
+                .long("transport")
+                .value_parser(["stdio", "http"])
+                .default_value("stdio")
+                .help("Transport mode: 'stdio' (default) or 'http' (Streamable HTTP)"),
+        )
+        .arg(
+            Arg::new("port")
+                .long("port")
+                .short('p')
+                .value_parser(clap::value_parser!(u16))
+                .default_value("3000")
+                .help("Port to listen on (HTTP transport only)"),
+        )
+        .arg(
+            Arg::new("bind")
+                .long("bind")
+                .default_value("127.0.0.1")
+                .help("Address to bind (HTTP transport only). Use 0.0.0.0 to allow external access"),
+        )
         .arg(
             Arg::new("services")
                 .long("services")
@@ -105,6 +126,21 @@ pub async fn start(args: &[String]) -> Result<(), GwsError> {
             config.services.join(", ")
         );
         eprintln!("[gws mcp] Tool mode: {:?}", config.tool_mode);
+    }
+
+    let transport = matches
+        .get_one::<String>("transport")
+        .map(|s| s.as_str())
+        .unwrap_or("stdio");
+
+    if transport == "http" {
+        let port = *matches.get_one::<u16>("port").unwrap_or(&3000);
+        let bind = matches
+            .get_one::<String>("bind")
+            .map(|s| s.as_str())
+            .unwrap_or("127.0.0.1")
+            .to_string();
+        return crate::mcp_http_server::start_http(config, port, bind).await;
     }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
@@ -221,7 +257,7 @@ async fn handle_request(
     }
 }
 
-async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
+pub(crate) async fn build_tools_list(config: &ServerConfig) -> Result<Vec<Value>, GwsError> {
     if config.tool_mode == ToolMode::Compact {
         return build_compact_tools_list(config).await;
     }
@@ -889,7 +925,10 @@ fn find_resource<'a>(
     Some(current_res)
 }
 
-async fn handle_tools_call(params: &Value, config: &ServerConfig) -> Result<Value, GwsError> {
+pub(crate) async fn handle_tools_call(
+    params: &Value,
+    config: &ServerConfig,
+) -> Result<Value, GwsError> {
     let tool_name = params
         .get("name")
         .and_then(|n| n.as_str())

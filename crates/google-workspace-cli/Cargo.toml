@@ -66,6 +66,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 uuid = { version = "1.22.0", features = ["v4", "v5"] }
 mime_guess2 = "2.3.1"
+axum = "0.8"
+rmcp = { version = "1", features = ["transport-streamable-http-server", "server"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6.3", features = ["apple-native"] }
