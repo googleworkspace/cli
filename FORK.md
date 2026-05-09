@@ -12,6 +12,8 @@ It maintains the **MCP (Model Context Protocol) server** that upstream removed, 
 |---|---|---|
 | MCP server (`gws mcp`) | Removed | Maintained |
 | MCP helper tools (`--helpers`) | N/A | `gmail_send` and more |
+| HTTP transport (`--transport http`) | N/A | Streamable HTTP (Phase 1: no auth) |
+| OAuth2 PKCE auth (`--auth`) | N/A | MCP spec 2025-11-25 compliant AS (RFC 9728 + RFC 8414 + PKCE S256) |
 | CI/CD workflows | Upstream-specific | Minimal (CI + Policy + Sync + Release) |
 
 ### MCP server
@@ -148,6 +150,33 @@ Then point Claude at it — no `command`/`args` needed, just a URL:
 ```
 
 The server binds to `127.0.0.1` by default (loopback only). Use `--bind 0.0.0.0` to allow external access (not recommended without additional auth).
+
+### OAuth2 PKCE authentication (`--auth`)
+
+Enables a full OAuth2 Authorization Server on the HTTP transport, compliant with the [MCP Authorization spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization/).
+
+**Prerequisites:**
+1. Run `gws auth setup` to create `client_secret.json` with a Google OAuth2 web app credential
+2. Add `http://localhost:<port>/oauth/callback` as an **Authorized redirect URI** in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+
+```bash
+gws mcp -s gmail -s drive -s calendar --helpers --transport http --port 3000 --auth
+```
+
+The server exposes these OAuth2 endpoints:
+
+| Endpoint | RFC | Purpose |
+|---|---|---|
+| `/.well-known/oauth-protected-resource` | RFC 9728 | Protected Resource Metadata |
+| `/.well-known/oauth-authorization-server` | RFC 8414 | Authorization Server Metadata |
+| `/oauth/register` | RFC 7591 (stub) | Dynamic Client Registration |
+| `/oauth/authorize` | RFC 6749 | Authorization endpoint — redirects to Google |
+| `/oauth/callback` | — | Google OAuth2 callback |
+| `/oauth/token` | RFC 6749 | Token endpoint — exchanges code + PKCE verifier for bearer token |
+
+All requests to `/mcp` require a valid `Authorization: Bearer <token>` header. Sessions expire after 8 hours.
+
+> **Note:** In Phase 2/3 (current), GWS API calls still use the shared `gws auth login` token. Bearer tokens identify the user (email) but do not yet carry per-user GWS credentials. Per-user token isolation is planned for Phase 4.
 
 ## Upstream MCP issues addressed in this fork
 
