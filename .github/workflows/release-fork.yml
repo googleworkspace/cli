@@ -28,16 +28,28 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            asset_name: macos-arm64
           - os: macos-latest
             target: x86_64-apple-darwin
+            asset_name: macos-amd64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            asset_name: linux-amd64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            asset_name: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            asset_name: windows-amd64
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set asset filename
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          VERSION="${TAG#fork/v}"
+          echo "ASSET=gws-mcp-${VERSION}-${{ matrix.asset_name }}" >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -87,12 +99,12 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          tar -czf "gws-${{ matrix.target }}.tar.gz" \
+          tar -czf "${{ env.ASSET }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" gws
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "gws-${{ matrix.target }}.tar.gz" > "gws-${{ matrix.target }}.tar.gz.sha256"
+            sha256sum "${{ env.ASSET }}.tar.gz" > "${{ env.ASSET }}.tar.gz.sha256"
           else
-            shasum -a 256 "gws-${{ matrix.target }}.tar.gz" > "gws-${{ matrix.target }}.tar.gz.sha256"
+            shasum -a 256 "${{ env.ASSET }}.tar.gz" > "${{ env.ASSET }}.tar.gz.sha256"
           fi
 
       - name: Package (Windows)
@@ -100,9 +112,9 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "target/${{ matrix.target }}/release/gws.exe" `
-            -DestinationPath "gws-${{ matrix.target }}.zip"
-          $hash = (Get-FileHash "gws-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  gws-${{ matrix.target }}.zip" | Out-File -Encoding ASCII "gws-${{ matrix.target }}.zip.sha256"
+            -DestinationPath "${{ env.ASSET }}.zip"
+          $hash = (Get-FileHash "${{ env.ASSET }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ env.ASSET }}.zip" | Out-File -Encoding ASCII "${{ env.ASSET }}.zip.sha256"
 
       - name: Generate .deb
         if: runner.os == 'Linux'
@@ -111,8 +123,8 @@ jobs:
           cargo deb --no-build --no-strip --target ${{ matrix.target }} \
             -p google-workspace-cli
           DEB=$(ls target/${{ matrix.target }}/debian/*.deb)
-          cp "$DEB" "gws-${{ matrix.target }}.deb"
-          sha256sum "gws-${{ matrix.target }}.deb" > "gws-${{ matrix.target }}.deb.sha256"
+          cp "$DEB" "${{ env.ASSET }}.deb"
+          sha256sum "${{ env.ASSET }}.deb" > "${{ env.ASSET }}.deb.sha256"
 
       - name: Generate .rpm
         if: runner.os == 'Linux'
@@ -121,14 +133,14 @@ jobs:
           cargo generate-rpm --target ${{ matrix.target }} \
             -p crates/google-workspace-cli
           RPM=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm)
-          cp "$RPM" "gws-${{ matrix.target }}.rpm"
-          sha256sum "gws-${{ matrix.target }}.rpm" > "gws-${{ matrix.target }}.rpm.sha256"
+          cp "$RPM" "${{ env.ASSET }}.rpm"
+          sha256sum "${{ env.ASSET }}.rpm" > "${{ env.ASSET }}.rpm.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: gws-${{ matrix.target }}
-          path: gws-${{ matrix.target }}.*
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}.*
           retention-days: 1
 
   release:
@@ -163,16 +175,20 @@ jobs:
 
           ### Debian / Ubuntu (.deb)
           ```bash
-          sudo dpkg -i gws-mcp_<VERSION>_amd64.deb
+          sudo dpkg -i gws-mcp-VERSION-linux-amd64.deb
+          # or for arm64:
+          sudo dpkg -i gws-mcp-VERSION-linux-arm64.deb
           ```
 
           ### RHEL / Fedora / Amazon Linux (.rpm)
           ```bash
-          sudo rpm -i gws-mcp-<VERSION>-1.x86_64.rpm
+          sudo rpm -i gws-mcp-VERSION-linux-amd64.rpm
+          # or for aarch64:
+          sudo rpm -i gws-mcp-VERSION-linux-arm64.rpm
           ```
 
           ### Windows
-          Download `gws-x86_64-pc-windows-msvc.zip`, extract `gws.exe`, and place it in a directory on your PATH.
+          Download `gws-mcp-VERSION-windows-amd64.zip`, extract `gws.exe`, and place it in a directory on your PATH.
 
           ### Cargo
           ```bash
@@ -182,10 +198,12 @@ jobs:
           ### Direct download (macOS / Linux)
           Download the `.tar.gz` archive for your platform below and place `gws` in your PATH.
           RELNOTES
+          # Replace VERSION placeholder with actual version
+          sed -i "s/VERSION/${VERSION}/g" /tmp/release-notes.md
           gh release create "$TAG" \
             --title "fork/v${VERSION}" \
             --notes-file /tmp/release-notes.md \
-            gws-*
+            gws-mcp-*
 
       - name: Update Homebrew formula
         env:
@@ -197,10 +215,10 @@ jobs:
           TAG_ENCODED="${TAG/\//%2F}"
           BASE_URL="https://github.com/shigechika/gws-mcp/releases/download/${TAG_ENCODED}"
 
-          SHA_ARM64_DARWIN=$(awk '{print $1}' gws-aarch64-apple-darwin.tar.gz.sha256)
-          SHA_X86_64_DARWIN=$(awk '{print $1}' gws-x86_64-apple-darwin.tar.gz.sha256)
-          SHA_X86_64_LINUX=$(awk '{print $1}' gws-x86_64-unknown-linux-gnu.tar.gz.sha256)
-          SHA_ARM64_LINUX=$(awk '{print $1}' gws-aarch64-unknown-linux-gnu.tar.gz.sha256)
+          SHA_ARM64_DARWIN=$(awk '{print $1}' "gws-mcp-${VERSION}-macos-arm64.tar.gz.sha256")
+          SHA_X86_64_DARWIN=$(awk '{print $1}' "gws-mcp-${VERSION}-macos-amd64.tar.gz.sha256")
+          SHA_X86_64_LINUX=$(awk '{print $1}' "gws-mcp-${VERSION}-linux-amd64.tar.gz.sha256")
+          SHA_ARM64_LINUX=$(awk '{print $1}' "gws-mcp-${VERSION}-linux-arm64.tar.gz.sha256")
 
           cat > /tmp/gws-mcp.rb << FORMULA
           class GwsMcp < Formula
@@ -211,22 +229,22 @@ jobs:
 
             on_macos do
               on_arm do
-                url "${BASE_URL}/gws-aarch64-apple-darwin.tar.gz"
+                url "${BASE_URL}/gws-mcp-${VERSION}-macos-arm64.tar.gz"
                 sha256 "${SHA_ARM64_DARWIN}"
               end
               on_intel do
-                url "${BASE_URL}/gws-x86_64-apple-darwin.tar.gz"
+                url "${BASE_URL}/gws-mcp-${VERSION}-macos-amd64.tar.gz"
                 sha256 "${SHA_X86_64_DARWIN}"
               end
             end
 
             on_linux do
               on_arm do
-                url "${BASE_URL}/gws-aarch64-unknown-linux-gnu.tar.gz"
+                url "${BASE_URL}/gws-mcp-${VERSION}-linux-arm64.tar.gz"
                 sha256 "${SHA_ARM64_LINUX}"
               end
               on_intel do
-                url "${BASE_URL}/gws-x86_64-unknown-linux-gnu.tar.gz"
+                url "${BASE_URL}/gws-mcp-${VERSION}-linux-amd64.tar.gz"
                 sha256 "${SHA_X86_64_LINUX}"
               end
             end
