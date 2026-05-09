@@ -119,7 +119,7 @@ jobs:
         run: |
           cargo install cargo-generate-rpm@0.21.0
           cargo generate-rpm --target ${{ matrix.target }} \
-            --manifest-path crates/google-workspace-cli/Cargo.toml
+            -p crates/google-workspace-cli
           RPM=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm)
           cp "$RPM" "gws-${{ matrix.target }}.rpm"
           sha256sum "gws-${{ matrix.target }}.rpm" > "gws-${{ matrix.target }}.rpm.sha256"
