@@ -43,13 +43,15 @@ impl Helper for SheetsHelper {
                     Arg::new("values")
                         .long("values")
                         .help("Comma-separated values (simple strings)")
-                        .value_name("VALUES"),
+                        .value_name("VALUES")
+                        .required_unless_present("json-values"),
                 )
                 .arg(
                     Arg::new("json-values")
                         .long("json-values")
                         .help("JSON array of rows, e.g. '[[\"a\",\"b\"],[\"c\",\"d\"]]'")
-                        .value_name("JSON"),
+                        .value_name("JSON")
+                        .required_unless_present("values"),
                 )
                 .arg(
                     Arg::new("range")
@@ -521,5 +523,21 @@ mod tests {
         let subcommands: Vec<_> = cmd.get_subcommands().map(|s| s.get_name()).collect();
         assert!(subcommands.contains(&"+append"));
         assert!(subcommands.contains(&"+read"));
+    }
+
+    #[test]
+    fn test_append_requires_values_or_json_values() {
+        let helper = SheetsHelper;
+        let cmd = helper.inject_commands(
+            Command::new("sheets"),
+            &crate::discovery::RestDescription::default(),
+        );
+
+        let result = cmd.try_get_matches_from(["sheets", "+append", "--spreadsheet", "123"]);
+
+        assert!(
+            result.is_err(),
+            "+append should require --values or --json-values"
+        );
     }
 }
