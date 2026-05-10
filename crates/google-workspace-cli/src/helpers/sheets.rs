@@ -44,14 +44,16 @@ impl Helper for SheetsHelper {
                         .long("values")
                         .help("Comma-separated values (simple strings)")
                         .value_name("VALUES")
-                        .required_unless_present("json-values"),
+                        .required_unless_present("json-values")
+                        .conflicts_with("json-values"),
                 )
                 .arg(
                     Arg::new("json-values")
                         .long("json-values")
                         .help("JSON array of rows, e.g. '[[\"a\",\"b\"],[\"c\",\"d\"]]'")
                         .value_name("JSON")
-                        .required_unless_present("values"),
+                        .required_unless_present("values")
+                        .conflicts_with("values"),
                 )
                 .arg(
                     Arg::new("range")
@@ -539,5 +541,29 @@ mod tests {
             result.is_err(),
             "+append should require --values or --json-values"
         );
+    }
+
+    #[test]
+    fn test_append_rejects_values_and_json_values_together() {
+        let helper = SheetsHelper;
+        let cmd = helper.inject_commands(
+            Command::new("sheets"),
+            &crate::discovery::RestDescription::default(),
+        );
+
+        let err = cmd
+            .try_get_matches_from([
+                "sheets",
+                "+append",
+                "--spreadsheet",
+                "123",
+                "--values",
+                "a,b",
+                "--json-values",
+                r#"["c","d"]"#,
+            ])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }
