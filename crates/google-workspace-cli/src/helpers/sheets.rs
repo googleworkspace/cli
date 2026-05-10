@@ -535,12 +535,11 @@ mod tests {
             &crate::discovery::RestDescription::default(),
         );
 
-        let result = cmd.try_get_matches_from(["sheets", "+append", "--spreadsheet", "123"]);
+        let err = cmd
+            .try_get_matches_from(["sheets", "+append", "--spreadsheet", "123"])
+            .unwrap_err();
 
-        assert!(
-            result.is_err(),
-            "+append should require --values or --json-values"
-        );
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
