@@ -424,7 +424,7 @@ pub fn active_backend_name() -> &'static str {
 
 /// Returns the path for encrypted credentials.
 pub fn encrypted_credentials_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("credentials.enc")
+    crate::auth_commands::profile_dir().join("credentials.enc")
 }
 
 /// Saves credentials JSON to an encrypted file.

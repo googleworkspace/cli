@@ -32,7 +32,7 @@ const CACHE_TTL_SECS: u64 = 86400;
 
 /// Returns the path to the timezone cache file.
 fn cache_path() -> PathBuf {
-    crate::auth_commands::config_dir().join(CACHE_FILENAME)
+    crate::auth_commands::profile_dir().join(CACHE_FILENAME)
 }
 
 /// Remove the cached timezone file. Called on auth login/logout to
