@@ -145,6 +145,10 @@ fn visit_dirs(dir: &Path, files: &mut Vec<serde_json::Value>) -> Result<(), GwsE
             let entry = entry.context("Failed to read entry")?;
             let path = entry.path();
             if path.is_dir() {
+                let dirname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if dirname.starts_with('.') || dirname == "node_modules" {
+                    continue;
+                }
                 visit_dirs(&path, files)?;
             } else if let Some(file_obj) = process_file(&path)? {
                 files.push(file_obj);
@@ -169,13 +173,8 @@ fn process_file(path: &Path) -> Result<Option<serde_json::Value>, GwsError> {
             filename.trim_end_matches(".js").trim_end_matches(".gs"),
         ),
         "html" => ("HTML", filename.trim_end_matches(".html")),
-        "json" => {
-            if filename == "appsscript.json" {
-                ("JSON", "appsscript")
-            } else {
-                return Ok(None);
-            }
-        }
+        "json" if filename == "appsscript.json" => ("JSON", "appsscript"),
+        "json" => return Ok(None),
         _ => return Ok(None),
     };
 
@@ -276,6 +275,14 @@ mod tests {
         // Ignored file
         let f3 = dir.path().join("ignore.txt");
         File::create(&f3).unwrap();
+
+        let hidden = dir.path().join(".hidden");
+        fs::create_dir(&hidden).unwrap();
+        File::create(hidden.join("secret.gs")).unwrap();
+
+        let node_modules = dir.path().join("node_modules");
+        fs::create_dir(&node_modules).unwrap();
+        File::create(node_modules.join("dep.gs")).unwrap();
 
         let mut files = Vec::new();
         visit_dirs(dir.path(), &mut files).unwrap();
