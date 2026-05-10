@@ -220,10 +220,16 @@ fn urlencode(s: &str) -> String {
     percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
-/// Returns the public base URL of the server (uses `localhost` even when bound to `0.0.0.0`).
+/// Returns the public base URL of the server.
+///
+/// Uses `localhost` for both `0.0.0.0` and `127.0.0.1` binds so that the
+/// RFC 9728 `resource` field matches the canonical URL clients use to connect
+/// (e.g. `http://localhost:3000/mcp`). Without this, Claude Code's MCP
+/// Authorization spec validation fails because `http://127.0.0.1:3000` ≠
+/// `http://localhost:3000`.
 fn server_base(port: u16, bind: &str) -> String {
     match bind {
-        "0.0.0.0" => format!("http://localhost:{port}"),
+        "0.0.0.0" | "127.0.0.1" => format!("http://localhost:{port}"),
         "::" => format!("http://[::1]:{port}"),
         other if other.contains(':') => format!("http://[{other}]:{port}"),
         other => format!("http://{other}:{port}"),
@@ -854,6 +860,6 @@ mod tests {
         assert_eq!(server_base(3000, "::"), "http://[::1]:3000");
         assert_eq!(server_base(3000, "::1"), "http://[::1]:3000");
         assert_eq!(server_base(3000, "0.0.0.0"), "http://localhost:3000");
-        assert_eq!(server_base(3000, "127.0.0.1"), "http://127.0.0.1:3000");
+        assert_eq!(server_base(3000, "127.0.0.1"), "http://localhost:3000");
     }
 }
