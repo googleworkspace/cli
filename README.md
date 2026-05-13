@@ -341,6 +341,11 @@ gws gmail +send --to alice@example.com --subject "Hello" --body "Hi there"
 # Reply to a message
 gws gmail +reply --message-id MESSAGE_ID --body "Thanks!"
 
+# Gmail web URL IDs such as FMfcgz... are browser sync IDs, not API IDs.
+# Search/list first when you need the API message or thread ID.
+gws gmail users messages list \
+  --params '{"userId":"me","q":"from:alice@example.com subject:\"Quarterly report\"","maxResults":10}'
+
 # Append a row to a spreadsheet
 gws sheets +append --spreadsheet SPREADSHEET_ID --values "Alice,95"
 
