@@ -264,6 +264,7 @@ pub const MINIMAL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
@@ -289,6 +290,7 @@ pub const FULL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
@@ -1550,6 +1552,10 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
         label: "Gmail",
     },
     ScopeEntry {
+        scope: "https://www.googleapis.com/auth/gmail.settings.basic",
+        label: "Gmail Settings",
+    },
+    ScopeEntry {
         scope: "https://www.googleapis.com/auth/calendar",
         label: "Google Calendar",
     },
@@ -1745,6 +1751,9 @@ mod tests {
         let scopes = run_resolve_scopes(ScopeMode::Default, None);
         assert_eq!(scopes.len(), DEFAULT_SCOPES.len());
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
+        assert!(
+            scopes.contains(&"https://www.googleapis.com/auth/gmail.settings.basic".to_string())
+        );
     }
 
     #[test]
@@ -1789,6 +1798,9 @@ mod tests {
     fn resolve_scopes_full_returns_full_scopes() {
         let scopes = run_resolve_scopes(ScopeMode::Full, None);
         assert_eq!(scopes.len(), FULL_SCOPES.len());
+        assert!(
+            scopes.contains(&"https://www.googleapis.com/auth/gmail.settings.basic".to_string())
+        );
     }
 
     #[test]
