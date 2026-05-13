@@ -45,6 +45,9 @@ gws gmail +read --id 18f1a2b3c4d --format json | jq '.body'
 
 - Converts HTML-only messages to plain text automatically.
 - Handles multipart/alternative and base64 decoding.
+- The `--id` value must be a Gmail API message ID. Opaque Gmail web URL IDs
+  such as `FMfcgz...` are browser sync IDs and are not accepted by the Gmail
+  API; search or list messages first when you only have a browser URL.
 
 ## See Also
 

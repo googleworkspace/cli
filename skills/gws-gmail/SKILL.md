@@ -59,3 +59,17 @@ gws schema gmail.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Gmail IDs
+
+Gmail API methods require API message or thread IDs, not browser URL sync IDs.
+Recent Gmail web URLs often end with opaque IDs such as `FMfcgz...`; passing
+those values to `users.messages.get` or `users.threads.get` returns
+`Invalid id value`.
+
+To act on a message you are viewing in Gmail, first locate the API ID with a
+query you can verify:
+
+```bash
+gws gmail users messages list --params '{"userId":"me","q":"from:alice@example.com subject:\"Quarterly report\"","maxResults":10}'
+gws gmail users messages get --params '{"userId":"me","id":"API_MESSAGE_ID"}'
+```
