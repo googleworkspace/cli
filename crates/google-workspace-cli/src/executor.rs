@@ -243,6 +243,7 @@ async fn build_http_request(
 #[allow(clippy::too_many_arguments)]
 async fn handle_json_response(
     body_text: &str,
+    method_id: &str,
     pagination: &PaginationConfig,
     sanitize_template: Option<&str>,
     sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
@@ -254,6 +255,7 @@ async fn handle_json_response(
 ) -> Result<bool, GwsError> {
     if let Ok(mut json_val) = serde_json::from_str::<Value>(body_text) {
         *pages_fetched += 1;
+        normalize_json_response(method_id, &mut json_val);
 
         // Run Model Armor sanitization if --sanitize is enabled
         if let Some(template) = sanitize_template {
@@ -334,6 +336,27 @@ async fn handle_json_response(
     }
 
     Ok(false)
+}
+
+fn normalize_json_response(method_id: &str, json_val: &mut Value) {
+    if method_id == "gmail.users.messages.attachments.get" {
+        pad_gmail_attachment_data(json_val);
+    }
+}
+
+fn pad_gmail_attachment_data(json_val: &mut Value) {
+    let Some(data) = json_val.get_mut("data") else {
+        return;
+    };
+    let Some(raw) = data.as_str() else {
+        return;
+    };
+
+    let padding = (4 - raw.len() % 4) % 4;
+    if padding > 0 {
+        let padded = format!("{}{}", raw, "=".repeat(padding));
+        *data = Value::String(padded);
+    }
 }
 
 /// Handle a binary response by streaming it to a file.
@@ -497,6 +520,7 @@ pub async fn execute_method(
 
             let should_continue = handle_json_response(
                 &body_text,
+                method_id,
                 pagination,
                 sanitize_template,
                 sanitize_mode,
@@ -2284,6 +2308,42 @@ fn test_get_value_type_helper() {
     assert_eq!(get_value_type(&json!("string")), "string");
     assert_eq!(get_value_type(&json!([1, 2])), "array");
     assert_eq!(get_value_type(&json!({"a": 1})), "object");
+}
+
+#[test]
+fn test_pad_gmail_attachment_data_adds_missing_padding() {
+    let mut value = json!({
+        "data": "aGVsbG8",
+        "size": 5
+    });
+
+    normalize_json_response("gmail.users.messages.attachments.get", &mut value);
+
+    assert_eq!(value["data"], "aGVsbG8=");
+}
+
+#[test]
+fn test_pad_gmail_attachment_data_leaves_padded_value_unchanged() {
+    let mut value = json!({
+        "data": "aGVsbG8=",
+        "size": 5
+    });
+
+    normalize_json_response("gmail.users.messages.attachments.get", &mut value);
+
+    assert_eq!(value["data"], "aGVsbG8=");
+}
+
+#[test]
+fn test_pad_gmail_attachment_data_ignores_other_methods() {
+    let mut value = json!({
+        "data": "aGVsbG8",
+        "size": 5
+    });
+
+    normalize_json_response("gmail.users.messages.get", &mut value);
+
+    assert_eq!(value["data"], "aGVsbG8");
 }
 
 #[tokio::test]
