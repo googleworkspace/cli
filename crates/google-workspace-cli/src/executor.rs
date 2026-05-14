@@ -384,6 +384,50 @@ async fn handle_binary_response(
     Ok(None)
 }
 
+fn extract_download_uri(json_val: &Value) -> Option<&str> {
+    [
+        "/response/downloadUri",
+        "/response/downloadUrl",
+        "/metadata/downloadUri",
+        "/metadata/downloadUrl",
+        "/downloadUri",
+        "/downloadUrl",
+    ]
+    .into_iter()
+    .find_map(|path| json_val.pointer(path).and_then(|v| v.as_str()))
+}
+
+fn is_google_download_uri(uri: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(uri) else {
+        return false;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+
+    host == "storage.googleapis.com"
+        || host.ends_with(".googleapis.com")
+        || host.ends_with(".googleusercontent.com")
+}
+
+fn extract_google_download_uri(body_text: &str) -> Result<Option<String>, GwsError> {
+    let Ok(json_val) = serde_json::from_str::<Value>(body_text) else {
+        return Ok(None);
+    };
+    let Some(uri) = extract_download_uri(&json_val) else {
+        return Ok(None);
+    };
+    if !is_google_download_uri(uri) {
+        return Err(GwsError::Validation(
+            "Refusing to follow non-Google downloadUri from API response".to_string(),
+        ));
+    }
+    Ok(Some(uri.to_string()))
+}
+
 /// Executes an API method call.
 ///
 /// This is the core function of the CLI that handles:
@@ -494,6 +538,46 @@ pub async fn execute_method(
                 .text()
                 .await
                 .context("Failed to read response body")?;
+
+            if output_path.is_some() && method.id.as_deref() == Some("drive.files.download") {
+                if let Some(download_uri) = extract_google_download_uri(&body_text)? {
+                    let mut download_request = client.get(download_uri);
+                    if let Some(token) = token {
+                        if auth_method == AuthMethod::OAuth {
+                            download_request = download_request.bearer_auth(token);
+                        }
+                    }
+                    let download_response = download_request
+                        .send()
+                        .await
+                        .context("HTTP download request failed")?;
+                    let download_status = download_response.status();
+                    let download_content_type = download_response
+                        .headers()
+                        .get("content-type")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("application/octet-stream")
+                        .to_string();
+
+                    if !download_status.is_success() {
+                        let error_body = download_response.text().await.unwrap_or_default();
+                        return handle_error_response(download_status, &error_body, &auth_method);
+                    }
+
+                    if let Some(res) = handle_binary_response(
+                        download_response,
+                        &download_content_type,
+                        output_path,
+                        output_format,
+                        capture_output,
+                    )
+                    .await?
+                    {
+                        captured_values.push(res);
+                    }
+                    break;
+                }
+            }
 
             let should_continue = handle_json_response(
                 &body_text,
@@ -1207,6 +1291,35 @@ mod tests {
         assert_eq!(AuthMethod::OAuth, AuthMethod::OAuth);
         assert_eq!(AuthMethod::None, AuthMethod::None);
         assert_ne!(AuthMethod::OAuth, AuthMethod::None);
+    }
+
+    #[test]
+    fn test_extract_download_uri_from_drive_operation_response() {
+        let operation = json!({
+            "done": true,
+            "response": {
+                "downloadUri": "https://www.googleapis.com/download/drive/v3/files/abc?alt=media"
+            }
+        });
+
+        assert_eq!(
+            extract_download_uri(&operation),
+            Some("https://www.googleapis.com/download/drive/v3/files/abc?alt=media")
+        );
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_rejects_non_google_url() {
+        let operation = json!({
+            "done": true,
+            "response": {
+                "downloadUri": "https://example.com/file.csv"
+            }
+        })
+        .to_string();
+
+        let err = extract_google_download_uri(&operation).unwrap_err();
+        assert!(err.to_string().contains("non-Google downloadUri"));
     }
 
     #[test]
