@@ -293,6 +293,8 @@ pub const FULL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+    "https://www.googleapis.com/auth/admin.reports.usage.readonly",
     "https://www.googleapis.com/auth/pubsub",
     "https://www.googleapis.com/auth/cloud-platform",
 ];
@@ -306,6 +308,8 @@ const READONLY_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/presentations.readonly",
     "https://www.googleapis.com/auth/tasks.readonly",
+    "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+    "https://www.googleapis.com/auth/admin.reports.usage.readonly",
 ];
 
 pub fn config_dir() -> PathBuf {
@@ -841,6 +845,7 @@ fn map_service_to_scope_prefixes(service: &str) -> Vec<&str> {
         "slides" => vec!["presentations"],
         "docs" => vec!["documents"],
         "people" => vec!["contacts", "directory"],
+        "admin-reports" => vec!["admin.reports"],
         s => vec![s],
     }
 }
@@ -1566,6 +1571,14 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
         label: "Google Tasks",
     },
     ScopeEntry {
+        scope: "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+        label: "Admin Reports Audit",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/admin.reports.usage.readonly",
+        label: "Admin Reports Usage",
+    },
+    ScopeEntry {
         scope: "https://www.googleapis.com/auth/pubsub",
         label: "Cloud Pub/Sub",
     },
@@ -1595,6 +1608,7 @@ fn is_app_only_scope(url: &str) -> bool {
 /// They are excluded from the "Recommended" preset to avoid login failures.
 ///
 /// Affected scope families:
+/// - `admin.reports.*`  — Admin Reports API audit and usage reports
 /// - `apps.*`            — Alert Center, Groups Settings, Licensing, Reseller
 /// - `cloud-identity.*`  — Cloud Identity: devices, groups, inbound SSO, policies
 /// - `ediscovery`        — Google Vault
@@ -1604,7 +1618,8 @@ fn is_workspace_admin_scope(url: &str) -> bool {
     let short = url
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(url);
-    short.starts_with("apps.")
+    short.starts_with("admin.reports.")
+        || short.starts_with("apps.")
         || short.starts_with("cloud-identity.")
         || short.starts_with("chat.admin.")
         || short.starts_with("classroom.")
@@ -1789,6 +1804,18 @@ mod tests {
     fn resolve_scopes_full_returns_full_scopes() {
         let scopes = run_resolve_scopes(ScopeMode::Full, None);
         assert_eq!(scopes.len(), FULL_SCOPES.len());
+    }
+
+    #[test]
+    fn admin_reports_scopes_are_available_in_presets_and_picker() {
+        for scope in [
+            "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+            "https://www.googleapis.com/auth/admin.reports.usage.readonly",
+        ] {
+            assert!(FULL_SCOPES.contains(&scope));
+            assert!(READONLY_SCOPES.contains(&scope));
+            assert!(SCOPE_ENTRIES.iter().any(|entry| entry.scope == scope));
+        }
     }
 
     #[test]
@@ -2232,6 +2259,19 @@ mod tests {
         ));
         assert!(scope_matches_service(
             "https://www.googleapis.com/auth/chat.messages",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_service_admin_reports() {
+        let services: HashSet<String> = ["admin-reports"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/admin.reports.usage.readonly",
             &services
         ));
     }
