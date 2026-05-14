@@ -30,6 +30,7 @@ use watch::handle_watch;
 pub(super) use crate::auth;
 pub(super) use crate::error::GwsError;
 pub(super) use crate::executor;
+pub(super) use crate::executor::retry_after_header;
 use crate::output::sanitize_for_terminal;
 pub(super) use anyhow::Context;
 pub(super) use base64::{engine::general_purpose::URL_SAFE, Engine as _};
@@ -447,13 +448,6 @@ pub(super) fn build_api_error(
         enable_url,
         retry_after,
     }
-}
-
-pub(super) fn retry_after_header(resp: &reqwest::Response) -> Option<String> {
-    resp.headers()
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string)
 }
 
 #[derive(Debug)]

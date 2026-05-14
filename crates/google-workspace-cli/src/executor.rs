@@ -462,11 +462,7 @@ pub async fn execute_method(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
+        let retry_after = retry_after_header(&response);
 
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
@@ -753,6 +749,13 @@ pub fn extract_enable_url(message: &str) -> Option<String> {
         })
         .filter(|s| s.starts_with("http"))?;
     Some(url.to_string())
+}
+
+pub fn retry_after_header(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
 }
 
 fn handle_error_response<T>(
