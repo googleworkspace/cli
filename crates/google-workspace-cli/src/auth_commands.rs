@@ -1608,7 +1608,7 @@ fn is_app_only_scope(url: &str) -> bool {
 /// They are excluded from the "Recommended" preset to avoid login failures.
 ///
 /// Affected scope families:
-/// - `admin.reports.*`  — Admin Reports API audit and usage reports
+/// - `admin.*`           — Admin SDK APIs (Directory, Reports, etc.)
 /// - `apps.*`            — Alert Center, Groups Settings, Licensing, Reseller
 /// - `cloud-identity.*`  — Cloud Identity: devices, groups, inbound SSO, policies
 /// - `ediscovery`        — Google Vault
@@ -1618,7 +1618,7 @@ fn is_workspace_admin_scope(url: &str) -> bool {
     let short = url
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(url);
-    short.starts_with("admin.reports.")
+    short.starts_with("admin.")
         || short.starts_with("apps.")
         || short.starts_with("cloud-identity.")
         || short.starts_with("chat.admin.")
@@ -2273,6 +2273,16 @@ mod tests {
         assert!(scope_matches_service(
             "https://www.googleapis.com/auth/admin.reports.usage.readonly",
             &services
+        ));
+    }
+
+    #[test]
+    fn workspace_admin_scope_detects_admin_family() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/admin.directory.user.readonly"
+        ));
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/admin.reports.audit.readonly"
         ));
     }
 
