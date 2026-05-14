@@ -235,6 +235,14 @@ fn urlencoding(s: &str) -> String {
     percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
+fn ensure_login_identity_scopes(scopes: &mut Vec<String>) {
+    for s in LOGIN_IDENTITY_SCOPES {
+        if !scopes.iter().any(|existing| existing == s) {
+            scopes.push((*s).to_string());
+        }
+    }
+}
+
 /// Mask a secret string by showing only the first 4 and last 4 characters.
 /// Strings with 8 or fewer characters are fully replaced with "***".
 ///
@@ -278,6 +286,9 @@ pub const MINIMAL_SCOPES: &[&str] = &[
 /// restricted_client`.  Use `--scopes` to add those scopes explicitly when you
 /// have a verified app or a GCP project with the APIs enabled and approved.
 pub const DEFAULT_SCOPES: &[&str] = MINIMAL_SCOPES;
+
+const LOGIN_IDENTITY_SCOPES: &[&str] =
+    &["openid", "https://www.googleapis.com/auth/userinfo.email"];
 
 /// Full scopes — all common Workspace APIs plus GCP platform access.
 ///
@@ -598,20 +609,9 @@ async fn handle_login_inner(
     // Remove restrictive scopes when broader alternatives are present.
     let mut scopes = filter_redundant_restrictive_scopes(scopes);
 
-    // Ensure openid + email + profile scopes are always present so we can
-    // identify the user via the userinfo endpoint after login, and so the
-    // Gmail helpers can fall back to the People API to populate the From
-    // display name when the send-as identity lacks one (Workspace accounts).
-    let identity_scopes = [
-        "openid",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile",
-    ];
-    for s in &identity_scopes {
-        if !scopes.iter().any(|existing| existing == s) {
-            scopes.push(s.to_string());
-        }
-    }
+    // Ensure the scopes needed to identify the signed-in account are present.
+    // Avoid forcing userinfo.profile because some OAuth clients cannot request it.
+    ensure_login_identity_scopes(&mut scopes);
 
     // Ensure config directory exists
     let config = config_dir();
@@ -2479,6 +2479,21 @@ mod tests {
         };
         let result = extract_scopes_from_doc(&doc, false);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn ensure_login_identity_scopes_does_not_force_profile_scope() {
+        let mut scopes = vec!["https://www.googleapis.com/auth/gmail.modify".to_string()];
+
+        ensure_login_identity_scopes(&mut scopes);
+
+        assert!(scopes.iter().any(|scope| scope == "openid"));
+        assert!(scopes
+            .iter()
+            .any(|scope| scope == "https://www.googleapis.com/auth/userinfo.email"));
+        assert!(!scopes
+            .iter()
+            .any(|scope| scope == "https://www.googleapis.com/auth/userinfo.profile"));
     }
 
     #[test]
