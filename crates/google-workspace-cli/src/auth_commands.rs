@@ -1618,7 +1618,8 @@ fn is_workspace_admin_scope(url: &str) -> bool {
     let short = url
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(url);
-    short.starts_with("admin.")
+    short == "admin"
+        || short.starts_with("admin.")
         || short.starts_with("apps.")
         || short.starts_with("cloud-identity.")
         || short.starts_with("chat.admin.")
@@ -2278,6 +2279,9 @@ mod tests {
 
     #[test]
     fn workspace_admin_scope_detects_admin_family() {
+        assert!(is_workspace_admin_scope(
+            "https://www.googleapis.com/auth/admin"
+        ));
         assert!(is_workspace_admin_scope(
             "https://www.googleapis.com/auth/admin.directory.user.readonly"
         ));
