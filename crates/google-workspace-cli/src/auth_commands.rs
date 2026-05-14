@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
@@ -349,14 +349,23 @@ fn service_account_token_cache_path() -> PathBuf {
     config_dir().join("sa_token_cache.json")
 }
 
+fn remove_file_if_exists(path: &Path) -> Result<bool, GwsError> {
+    // Remove directly instead of checking existence first; a pre-check would
+    // still be subject to the usual filesystem TOCTOU race.
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(GwsError::Validation(crate::output::sanitize_for_terminal(
+            &format!("Failed to remove {}: {e}", path.display()),
+        ))),
+    }
+}
+
 fn invalidate_token_caches() -> Result<Vec<String>, GwsError> {
     let mut removed = Vec::new();
 
     for path in [token_cache_path(), service_account_token_cache_path()] {
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-            })?;
+        if remove_file_if_exists(&path)? {
             removed.push(path.display().to_string());
         }
     }
@@ -1490,10 +1499,7 @@ fn handle_logout() -> Result<(), GwsError> {
     let mut removed = Vec::new();
 
     for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-            })?;
+        if remove_file_if_exists(path)? {
             removed.push(path.display().to_string());
         }
     }
