@@ -361,16 +361,18 @@ fn remove_file_if_exists(path: &Path) -> Result<bool, GwsError> {
     }
 }
 
-fn invalidate_token_caches() -> Result<Vec<String>, GwsError> {
+fn invalidate_token_caches() -> Vec<String> {
     let mut removed = Vec::new();
 
     for path in [token_cache_path(), service_account_token_cache_path()] {
-        if remove_file_if_exists(&path)? {
-            removed.push(path.display().to_string());
+        match remove_file_if_exists(&path) {
+            Ok(true) => removed.push(path.display().to_string()),
+            Ok(false) => {}
+            Err(e) => eprintln!("Warning: {e}"),
         }
     }
 
-    Ok(removed)
+    removed
 }
 
 /// Which scope set to use for login.
@@ -675,7 +677,7 @@ async fn handle_login_inner(
     // A successful login may change the active account or granted scopes.
     // Remove cached access tokens so the next API call mints a token from the
     // newly saved refresh token instead of reusing stale credentials.
-    let invalidated_token_caches = invalidate_token_caches()?;
+    let invalidated_token_caches = invalidate_token_caches();
 
     // Invalidate cached account timezone (may belong to the previous account).
     crate::timezone::invalidate_cache();
@@ -1499,8 +1501,10 @@ fn handle_logout() -> Result<(), GwsError> {
     let mut removed = Vec::new();
 
     for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
-        if remove_file_if_exists(path)? {
-            removed.push(path.display().to_string());
+        match remove_file_if_exists(path) {
+            Ok(true) => removed.push(path.display().to_string()),
+            Ok(false) => {}
+            Err(e) => eprintln!("Warning: {e}"),
         }
     }
 
@@ -1947,7 +1951,7 @@ mod tests {
         std::fs::write(&token_cache, "{}").unwrap();
         std::fs::write(&sa_token_cache, "{}").unwrap();
 
-        let removed = invalidate_token_caches().unwrap();
+        let removed = invalidate_token_caches();
 
         assert_eq!(removed.len(), 2);
         assert!(!token_cache.exists());
