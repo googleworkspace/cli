@@ -185,6 +185,7 @@ async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<Strin
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
+        let retry_after = super::retry_after_header(&resp);
         let body = resp
             .text()
             .await
@@ -193,6 +194,7 @@ async fn fetch_user_email(client: &reqwest::Client, token: &str) -> Result<Strin
             status,
             &body,
             "Failed to fetch user profile",
+            retry_after,
         ));
     }
 

@@ -385,6 +385,7 @@ pub(super) async fn fetch_message_metadata(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
+        let retry_after = retry_after_header(&resp);
         let body = resp
             .text()
             .await
@@ -393,6 +394,7 @@ pub(super) async fn fetch_message_metadata(
             status,
             &body,
             &format!("Failed to fetch message {message_id}"),
+            retry_after,
         ));
     }
 
@@ -407,7 +409,12 @@ pub(super) async fn fetch_message_metadata(
 /// Build a `GwsError::Api` from an HTTP error response body, parsing the
 /// Google JSON error format when possible. Modeled after the executor's
 /// `handle_error_response`, extracting message, reason, and enable URL.
-pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsError {
+pub(super) fn build_api_error(
+    status: u16,
+    body: &str,
+    context: &str,
+    retry_after: Option<String>,
+) -> GwsError {
     let err_json: Option<Value> = serde_json::from_str(body).ok();
     let err_obj = err_json.as_ref().and_then(|v| v.get("error"));
     let message = err_obj
@@ -438,8 +445,15 @@ pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsErro
         message: format!("{context}: {message}"),
         reason,
         enable_url,
-        retry_after: None,
+        retry_after,
     }
+}
+
+pub(super) fn retry_after_header(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
 
 #[derive(Debug)]
@@ -463,6 +477,7 @@ async fn fetch_send_as_identities(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
+        let retry_after = retry_after_header(&resp);
         let body = resp
             .text()
             .await
@@ -471,6 +486,7 @@ async fn fetch_send_as_identities(
             status,
             &body,
             "Failed to fetch sendAs settings",
+            retry_after,
         ));
     }
 
@@ -657,11 +673,17 @@ async fn fetch_profile_display_name(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
+        let retry_after = retry_after_header(&resp);
         let body = resp
             .text()
             .await
             .unwrap_or_else(|_| "(error body unreadable)".to_string());
-        return Err(build_api_error(status, &body, "People API request failed"));
+        return Err(build_api_error(
+            status,
+            &body,
+            "People API request failed",
+            retry_after,
+        ));
     }
 
     let body: Value = resp.json().await.map_err(|e| {
@@ -704,6 +726,7 @@ async fn fetch_attachment_data(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
+        let retry_after = retry_after_header(&resp);
         let err = resp
             .text()
             .await
@@ -712,6 +735,7 @@ async fn fetch_attachment_data(
             status,
             &err,
             &format!("Failed to fetch attachment {attachment_id} from message {message_id}"),
+            retry_after,
         ));
     }
 
@@ -3608,7 +3632,7 @@ mod tests {
     #[test]
     fn test_build_api_error_parses_google_json_format() {
         let body = r#"{"error":{"code":403,"message":"Insufficient Permission","errors":[{"reason":"insufficientPermissions","domain":"global","message":"Insufficient Permission"}]}}"#;
-        let err = build_api_error(403, body, "Test context");
+        let err = build_api_error(403, body, "Test context", None);
         match err {
             GwsError::Api {
                 code,
@@ -3629,7 +3653,7 @@ mod tests {
 
     #[test]
     fn test_build_api_error_falls_back_to_raw_body() {
-        let err = build_api_error(500, "Internal Server Error", "Test context");
+        let err = build_api_error(500, "Internal Server Error", "Test context", None);
         match err {
             GwsError::Api {
                 code,
@@ -3646,9 +3670,19 @@ mod tests {
     }
 
     #[test]
+    fn test_build_api_error_preserves_retry_after() {
+        let body = r#"{"error":{"code":429,"message":"Quota exceeded","errors":[{"reason":"rateLimitExceeded"}]}}"#;
+        let err = build_api_error(429, body, "ctx", Some("60".to_string()));
+        match err {
+            GwsError::Api { retry_after, .. } => assert_eq!(retry_after.as_deref(), Some("60")),
+            _ => panic!("Expected GwsError::Api"),
+        }
+    }
+
+    #[test]
     fn test_build_api_error_extracts_top_level_reason() {
         let body = r#"{"error":{"code":404,"message":"Not Found","reason":"notFound"}}"#;
-        let err = build_api_error(404, body, "ctx");
+        let err = build_api_error(404, body, "ctx", None);
         match err {
             GwsError::Api { reason, .. } => assert_eq!(reason, "notFound"),
             _ => panic!("Expected GwsError::Api"),
@@ -3658,7 +3692,7 @@ mod tests {
     #[test]
     fn test_build_api_error_access_not_configured_extracts_url() {
         let body = r#"{"error":{"code":403,"message":"People API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/people.googleapis.com/overview?project=123 then retry.","errors":[{"reason":"accessNotConfigured"}]}}"#;
-        let err = build_api_error(403, body, "ctx");
+        let err = build_api_error(403, body, "ctx", None);
         match err {
             GwsError::Api {
                 reason, enable_url, ..
