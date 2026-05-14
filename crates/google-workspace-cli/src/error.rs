@@ -120,6 +120,7 @@ mod tests {
             message: "bad".to_string(),
             reason: "r".to_string(),
             enable_url: None,
+            retry_after: None,
         };
         let label = error_label(&api_err);
         assert!(label.contains("error[api]:"));

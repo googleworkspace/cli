@@ -92,6 +92,7 @@ async fn fetch_account_timezone(client: &reqwest::Client, token: &str) -> Result
             message: body,
             reason: "timezone_fetch_failed".to_string(),
             enable_url: None,
+            retry_after: None,
         });
     }
 

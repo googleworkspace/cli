@@ -462,6 +462,11 @@ pub async fn execute_method(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
 
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
@@ -472,7 +477,7 @@ pub async fn execute_method(
                 latency_ms = latency_ms,
                 "API error"
             );
-            return handle_error_response(status, &error_body, &auth_method);
+            return handle_error_response(status, &error_body, &auth_method, retry_after);
         }
 
         tracing::debug!(
@@ -754,6 +759,7 @@ fn handle_error_response<T>(
     status: reqwest::StatusCode,
     error_body: &str,
     auth_method: &AuthMethod,
+    retry_after: Option<String>,
 ) -> Result<T, GwsError> {
     // If 401/403 and no auth was provided, give a helpful message
     if (status.as_u16() == 401 || status.as_u16() == 403) && *auth_method == AuthMethod::None {
@@ -800,6 +806,7 @@ fn handle_error_response<T>(
                 message,
                 reason,
                 enable_url,
+                retry_after,
             });
         }
     }
@@ -809,6 +816,7 @@ fn handle_error_response<T>(
         message: error_body.to_string(),
         reason: "httpError".to_string(),
         enable_url: None,
+        retry_after,
     })
 }
 
@@ -1947,6 +1955,7 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             "Unauthorized",
             &AuthMethod::None,
+            None,
         )
         .unwrap_err();
         match err {
@@ -1973,6 +1982,7 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             &json_err,
             &AuthMethod::OAuth,
+            None,
         )
         .unwrap_err();
         match err {
@@ -2008,6 +2018,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             &json_err,
             &AuthMethod::OAuth,
+            None,
         )
         .unwrap_err();
         match err {
@@ -2021,6 +2032,31 @@ mod tests {
                 assert_eq!(message, "Bad Request");
                 assert_eq!(reason, "bad");
             }
+            _ => panic!("Expected Api error"),
+        }
+    }
+
+    #[test]
+    fn test_handle_error_response_preserves_retry_after_header() {
+        let json_err = json!({
+            "error": {
+                "code": 429,
+                "message": "Quota exceeded",
+                "errors": [{ "reason": "rateLimitExceeded" }]
+            }
+        })
+        .to_string();
+
+        let err = handle_error_response::<()>(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            &json_err,
+            &AuthMethod::OAuth,
+            Some("120".to_string()),
+        )
+        .unwrap_err();
+
+        match err {
+            GwsError::Api { retry_after, .. } => assert_eq!(retry_after.as_deref(), Some("120")),
             _ => panic!("Expected Api error"),
         }
     }
@@ -2156,6 +2192,7 @@ fn test_handle_error_response_non_json() {
         reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         "Internal Server Error Text",
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
     match err {
@@ -2223,6 +2260,7 @@ fn test_handle_error_response_access_not_configured_with_url() {
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
 
@@ -2260,6 +2298,7 @@ fn test_handle_error_response_access_not_configured_errors_array() {
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
 

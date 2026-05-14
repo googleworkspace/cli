@@ -65,6 +65,7 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
             message: err,
             reason: "list_failed".to_string(),
             enable_url: None,
+            retry_after: None,
         });
     }
 

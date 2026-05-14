@@ -26,6 +26,8 @@ pub enum GwsError {
         reason: String,
         /// For `accessNotConfigured` errors: the GCP console URL to enable the API.
         enable_url: Option<String>,
+        /// Raw Retry-After response header, when provided by the API.
+        retry_after: Option<String>,
     },
 
     #[error("{0}")]
@@ -71,6 +73,7 @@ impl GwsError {
                 message,
                 reason,
                 enable_url,
+                retry_after,
             } => {
                 let mut error_obj = json!({
                     "code": code,
@@ -79,6 +82,9 @@ impl GwsError {
                 });
                 if let Some(url) = enable_url {
                     error_obj["enable_url"] = json!(url);
+                }
+                if let Some(value) = retry_after {
+                    error_obj["retry_after"] = json!(value);
                 }
                 json!({ "error": error_obj })
             }
@@ -125,6 +131,7 @@ mod tests {
             message: "Not Found".to_string(),
             reason: "notFound".to_string(),
             enable_url: None,
+            retry_after: None,
         };
         assert_eq!(err.exit_code(), GwsError::EXIT_CODE_API);
     }
@@ -185,12 +192,26 @@ mod tests {
             message: "Not Found".to_string(),
             reason: "notFound".to_string(),
             enable_url: None,
+            retry_after: None,
         };
         let json = err.to_json();
         assert_eq!(json["error"]["code"], 404);
         assert_eq!(json["error"]["message"], "Not Found");
         assert_eq!(json["error"]["reason"], "notFound");
         assert!(json["error"]["enable_url"].is_null());
+    }
+
+    #[test]
+    fn test_error_to_json_api_includes_retry_after() {
+        let err = GwsError::Api {
+            code: 429,
+            message: "Quota exceeded".to_string(),
+            reason: "rateLimitExceeded".to_string(),
+            enable_url: None,
+            retry_after: Some("120".to_string()),
+        };
+        let json = err.to_json();
+        assert_eq!(json["error"]["retry_after"], "120");
     }
 
     #[test]
@@ -236,6 +257,7 @@ mod tests {
             message: "Gmail API has not been used in project 549352339482 before or it is disabled.".to_string(),
             reason: "accessNotConfigured".to_string(),
             enable_url: Some("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=549352339482".to_string()),
+            retry_after: None,
         };
         let json = err.to_json();
         assert_eq!(json["error"]["code"], 403);
@@ -253,6 +275,7 @@ mod tests {
             message: "API not enabled.".to_string(),
             reason: "accessNotConfigured".to_string(),
             enable_url: None,
+            retry_after: None,
         };
         let json = err.to_json();
         assert_eq!(json["error"]["code"], 403);
