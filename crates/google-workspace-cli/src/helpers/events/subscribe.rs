@@ -215,13 +215,14 @@ pub(super) async fn handle_subscribe(
                 .context("Failed to create topic")?;
 
             if !resp.status().is_success() {
+                let retry_after = crate::executor::retry_after_header(&resp);
                 let body = resp.text().await.unwrap_or_default();
                 return Err(GwsError::Api {
                     code: 400,
                     message: format!("Failed to create Pub/Sub topic: {body}"),
                     reason: "pubsubError".to_string(),
                     enable_url: None,
-                    retry_after: None,
+                    retry_after,
                 });
             }
 
@@ -241,13 +242,14 @@ pub(super) async fn handle_subscribe(
                 .context("Failed to create subscription")?;
 
             if !resp.status().is_success() {
+                let retry_after = crate::executor::retry_after_header(&resp);
                 let body = resp.text().await.unwrap_or_default();
                 return Err(GwsError::Api {
                     code: 400,
                     message: format!("Failed to create Pub/Sub subscription: {body}"),
                     reason: "pubsubError".to_string(),
                     enable_url: None,
-                    retry_after: None,
+                    retry_after,
                 });
             }
 
@@ -417,13 +419,14 @@ async fn pull_loop(
         };
 
         if !resp.status().is_success() {
+            let retry_after = crate::executor::retry_after_header(&resp);
             let body = resp.text().await.unwrap_or_default();
             return Err(GwsError::Api {
                 code: 400,
                 message: format!("Pub/Sub pull failed: {body}"),
                 reason: "pubsubError".to_string(),
                 enable_url: None,
-                retry_after: None,
+                retry_after,
             });
         }
 

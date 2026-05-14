@@ -86,13 +86,14 @@ async fn fetch_account_timezone(client: &reqwest::Client, token: &str) -> Result
 
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = crate::executor::retry_after_header(&resp);
         let body = resp.text().await.unwrap_or_default();
         return Err(GwsError::Api {
             code: status.as_u16(),
             message: body,
             reason: "timezone_fetch_failed".to_string(),
             enable_url: None,
-            retry_after: None,
+            retry_after,
         });
     }
 

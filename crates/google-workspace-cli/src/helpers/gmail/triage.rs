@@ -59,13 +59,14 @@ pub async fn handle_triage(matches: &ArgMatches) -> Result<(), GwsError> {
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to list messages: {e}")))?;
 
     if !list_resp.status().is_success() {
+        let retry_after = super::retry_after_header(&list_resp);
         let err = list_resp.text().await.unwrap_or_default();
         return Err(GwsError::Api {
             code: 0,
             message: err,
             reason: "list_failed".to_string(),
             enable_url: None,
-            retry_after: None,
+            retry_after,
         });
     }
 

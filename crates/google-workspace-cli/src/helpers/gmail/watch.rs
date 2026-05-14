@@ -61,13 +61,14 @@ pub(super) async fn handle_watch(
                 .context("Failed to create topic")?;
 
             if !resp.status().is_success() {
+                let retry_after = super::retry_after_header(&resp);
                 let body = resp.text().await.unwrap_or_default();
                 return Err(GwsError::Api {
                     code: 400,
                     message: format!("Failed to create Pub/Sub topic: {body}"),
                     reason: "pubsubError".to_string(),
                     enable_url: None,
-                    retry_after: None,
+                    retry_after,
                 });
             }
 
@@ -127,13 +128,14 @@ pub(super) async fn handle_watch(
             .context("Failed to create subscription")?;
 
         if !resp.status().is_success() {
+            let retry_after = super::retry_after_header(&resp);
             let body = resp.text().await.unwrap_or_default();
             return Err(GwsError::Api {
                 code: 400,
                 message: format!("Failed to create Pub/Sub subscription: {body}"),
                 reason: "pubsubError".to_string(),
                 enable_url: None,
-                retry_after: None,
+                retry_after,
             });
         }
 
@@ -156,6 +158,7 @@ pub(super) async fn handle_watch(
             .await
             .context("Failed to call gmail.users.watch")?;
 
+        let retry_after = super::retry_after_header(&resp);
         let watch_resp: Value = resp
             .json()
             .await
@@ -170,7 +173,7 @@ pub(super) async fn handle_watch(
                 ),
                 reason: "gmailError".to_string(),
                 enable_url: None,
-                retry_after: None,
+                retry_after,
             });
         }
 
@@ -298,13 +301,14 @@ async fn watch_pull_loop(
         };
 
         if !resp.status().is_success() {
+            let retry_after = super::retry_after_header(&resp);
             let body = resp.text().await.unwrap_or_default();
             return Err(GwsError::Api {
                 code: 400,
                 message: format!("Pub/Sub pull failed: {body}"),
                 reason: "pubsubError".to_string(),
                 enable_url: None,
-                retry_after: None,
+                retry_after,
             });
         }
 

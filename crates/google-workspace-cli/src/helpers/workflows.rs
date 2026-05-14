@@ -245,13 +245,14 @@ async fn get_json(
 
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = crate::executor::retry_after_header(&resp);
         let body = resp.text().await.unwrap_or_default();
         return Err(GwsError::Api {
             code: status.as_u16(),
             message: body,
             reason: "workflow_request_failed".to_string(),
             enable_url: None,
-            retry_after: None,
+            retry_after,
         });
     }
 
@@ -512,13 +513,14 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
 
     if !resp.status().is_success() {
         let status = resp.status();
+        let retry_after = crate::executor::retry_after_header(&resp);
         let body = resp.text().await.unwrap_or_default();
         return Err(GwsError::Api {
             code: status.as_u16(),
             message: body,
             reason: "task_create_failed".to_string(),
             enable_url: None,
-            retry_after: None,
+            retry_after,
         });
     }
 
@@ -672,13 +674,14 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
 
     if !chat_resp.status().is_success() {
         let status = chat_resp.status();
+        let retry_after = crate::executor::retry_after_header(&chat_resp);
         let body = chat_resp.text().await.unwrap_or_default();
         return Err(GwsError::Api {
             code: status.as_u16(),
             message: body,
             reason: "chat_send_failed".to_string(),
             enable_url: None,
-            retry_after: None,
+            retry_after,
         });
     }
 
