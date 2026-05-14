@@ -264,7 +264,6 @@ pub const MINIMAL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
@@ -1758,7 +1757,7 @@ mod tests {
         assert_eq!(scopes.len(), DEFAULT_SCOPES.len());
         assert_eq!(scopes[0], "https://www.googleapis.com/auth/drive");
         assert!(
-            scopes.contains(&"https://www.googleapis.com/auth/gmail.settings.basic".to_string())
+            !scopes.contains(&"https://www.googleapis.com/auth/gmail.settings.basic".to_string())
         );
     }
 
