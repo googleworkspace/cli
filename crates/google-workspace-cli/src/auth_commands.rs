@@ -1499,17 +1499,25 @@ fn handle_logout() -> Result<(), GwsError> {
     let sa_token_cache = service_account_token_cache_path();
 
     let mut removed = Vec::new();
+    let mut failures = Vec::new();
 
     for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
         match remove_file_if_exists(path) {
             Ok(true) => removed.push(path.display().to_string()),
             Ok(false) => {}
-            Err(e) => eprintln!("Warning: {e}"),
+            Err(e) => failures.push(e.to_string()),
         }
     }
 
     // Invalidate cached account timezone (may belong to old account)
     crate::timezone::invalidate_cache();
+
+    if !failures.is_empty() {
+        return Err(GwsError::Validation(format!(
+            "Logout incomplete. Failed to remove one or more credential/cache files: {}",
+            failures.join("; ")
+        )));
+    }
 
     let output = if removed.is_empty() {
         json!({
