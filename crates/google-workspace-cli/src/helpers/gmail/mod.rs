@@ -1002,6 +1002,38 @@ pub(super) fn resolve_html_body(original: &OriginalMessage) -> String {
     }
 }
 
+fn html_to_plain_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut last_was_space = true;
+
+    for ch in html.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                if !last_was_space && !text.is_empty() {
+                    text.push(' ');
+                    last_was_space = true;
+                }
+            }
+            '>' if in_tag => in_tag = false,
+            _ if in_tag => {}
+            _ if ch.is_whitespace() => {
+                if !last_was_space && !text.is_empty() {
+                    text.push(' ');
+                    last_was_space = true;
+                }
+            }
+            _ => {
+                text.push(ch);
+                last_was_space = false;
+            }
+        }
+    }
+
+    text.trim().to_string()
+}
+
 /// Escape `&`, `<`, `>`, `"`, `'` for safe embedding in HTML.
 pub(super) fn html_escape(text: &str) -> String {
     // `&` must be replaced first to avoid double-escaping the other replacements.
@@ -1202,9 +1234,16 @@ pub(super) fn finalize_message(
     let (inline, regular): (Vec<_>, Vec<_>) = attachments.iter().partition(|a| a.is_inline());
 
     let mb = if html && !inline.is_empty() {
+        let alternative = MimePart::new(
+            "multipart/alternative",
+            vec![
+                MimePart::new("text/plain", html_to_plain_text(&body_str)),
+                MimePart::new("text/html", body_str.clone()),
+            ],
+        );
+
         // Build multipart/related: HTML body + inline image parts
-        let mut related_parts: Vec<MimePart<'_>> =
-            vec![MimePart::new("text/html", body_str.as_str())];
+        let mut related_parts: Vec<MimePart<'_>> = vec![alternative];
         for att in &inline {
             let cid = att
                 .content_id
@@ -1238,7 +1277,8 @@ pub(super) fn finalize_message(
         // only regular attachments should reach here. If any inline parts do arrive,
         // they are treated as regular attachments (defense-in-depth).
         let mb = if html {
-            mb.html_body(body_str)
+            mb.text_body(html_to_plain_text(&body_str))
+                .html_body(body_str)
         } else {
             mb.text_body(body_str)
         };
@@ -3078,7 +3118,10 @@ mod tests {
         let decoded = strip_qp_soft_breaks(&raw);
 
         assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("multipart/alternative"));
+        assert!(decoded.contains("text/plain"));
         assert!(decoded.contains("text/html"));
+        assert!(decoded.contains("Hello"));
         assert!(decoded.contains("<p>Hello</p>"));
         assert!(raw.contains("image.png"));
     }
@@ -3793,10 +3836,28 @@ mod tests {
         .unwrap();
 
         assert!(raw.contains("multipart/related"));
+        assert!(raw.contains("multipart/alternative"));
+        assert!(raw.contains("text/plain"));
         assert!(raw.contains("text/html"));
+        assert!(raw.contains("See"));
         assert!(raw.contains("Content-ID: <img1@example.com>"));
         // Should NOT be multipart/mixed since there are no regular attachments
         assert!(!raw.contains("multipart/mixed"));
+    }
+
+    #[test]
+    fn test_finalize_message_html_body_creates_multipart_alternative() {
+        let mb = mail_builder::MessageBuilder::new()
+            .to(MbAddress::new_address(None::<&str>, "test@example.com"))
+            .subject("test");
+        let raw = finalize_message(mb, "<p>Hello <strong>world</strong></p>", true, &[]).unwrap();
+        let decoded = strip_qp_soft_breaks(&raw);
+
+        assert!(raw.contains("multipart/alternative"));
+        assert!(decoded.contains("text/plain"));
+        assert!(decoded.contains("Hello world"));
+        assert!(decoded.contains("text/html"));
+        assert!(decoded.contains("<p>Hello <strong>world</strong></p>"));
     }
 
     #[test]
