@@ -1202,9 +1202,15 @@ pub(super) fn finalize_message(
     let (inline, regular): (Vec<_>, Vec<_>) = attachments.iter().partition(|a| a.is_inline());
 
     let mb = if html && !inline.is_empty() {
+        let plain_fallback = html_to_plain_text(&body_str);
         // Build multipart/related: HTML body + inline image parts
-        let mut related_parts: Vec<MimePart<'_>> =
-            vec![MimePart::new("text/html", body_str.as_str())];
+        let mut related_parts: Vec<MimePart<'_>> = vec![MimePart::new(
+            "multipart/alternative",
+            vec![
+                MimePart::new("text/plain", plain_fallback),
+                MimePart::new("text/html", body_str.clone()),
+            ],
+        )];
         for att in &inline {
             let cid = att
                 .content_id
@@ -1238,7 +1244,8 @@ pub(super) fn finalize_message(
         // only regular attachments should reach here. If any inline parts do arrive,
         // they are treated as regular attachments (defense-in-depth).
         let mb = if html {
-            mb.html_body(body_str)
+            mb.text_body(html_to_plain_text(&body_str))
+                .html_body(body_str)
         } else {
             mb.text_body(body_str)
         };
@@ -1249,6 +1256,56 @@ pub(super) fn finalize_message(
 
     mb.write_to_string()
         .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to serialize email: {e}")))
+}
+
+fn html_to_plain_text(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut tag = String::new();
+
+    for ch in html.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '>' if in_tag => {
+                let tag_name = tag
+                    .trim()
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if matches!(
+                    tag_name.as_str(),
+                    "br" | "p" | "div" | "li" | "tr" | "table" | "blockquote"
+                ) && !text.ends_with('\n')
+                {
+                    text.push('\n');
+                }
+                in_tag = false;
+            }
+            _ if in_tag => tag.push(ch),
+            _ => text.push(ch),
+        }
+    }
+
+    decode_basic_html_entities(&text)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn decode_basic_html_entities(text: &str) -> String {
+    text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 /// Parse an optional clap argument, trimming whitespace and treating

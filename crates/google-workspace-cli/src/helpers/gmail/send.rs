@@ -265,6 +265,9 @@ mod tests {
         assert!(extract_header(&raw, "Subject")
             .unwrap()
             .contains("HTML test"));
+        assert!(decoded.contains("multipart/alternative"));
+        assert!(decoded.contains("text/plain"));
+        assert!(decoded.contains("Hello world"));
         assert!(decoded.contains("<p>Hello <b>world</b></p>"));
         assert!(extract_header(&raw, "Cc").is_none());
     }
