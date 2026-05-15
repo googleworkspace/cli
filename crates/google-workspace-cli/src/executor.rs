@@ -25,7 +25,7 @@ use std::time::SystemTime;
 use anyhow::Context;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
-use reqwest::header::RETRY_AFTER;
+use reqwest::header::{HeaderMap, DATE, RETRY_AFTER};
 use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
@@ -466,11 +466,13 @@ pub async fn execute_method(
             .to_string();
 
         if !status.is_success() {
-            let retry_after_seconds = response
-                .headers()
+            let headers = response.headers();
+            let retry_after_reference_time =
+                parse_retry_after_reference_time(headers).unwrap_or_else(SystemTime::now);
+            let retry_after_seconds = headers
                 .get(RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
-                .and_then(|value| parse_retry_after_seconds(value, SystemTime::now()));
+                .and_then(|value| parse_retry_after_seconds(value, retry_after_reference_time));
             let error_body = response.text().await.unwrap_or_default();
             tracing::warn!(
                 api_method = method_id,
@@ -772,6 +774,14 @@ fn parse_retry_after_seconds(value: &str, now: SystemTime) -> Option<u64> {
         .with_timezone(&chrono::Utc);
     let now: chrono::DateTime<chrono::Utc> = now.into();
     Some((retry_at - now).num_seconds().max(0) as u64)
+}
+
+fn parse_retry_after_reference_time(headers: &HeaderMap) -> Option<SystemTime> {
+    let value = headers.get(DATE)?.to_str().ok()?;
+    let date = chrono::DateTime::parse_from_rfc2822(value)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    Some(date.into())
 }
 
 fn handle_error_response<T>(
@@ -2284,6 +2294,23 @@ fn test_parse_retry_after_seconds_http_date() {
         parse_retry_after_seconds(
             "Wed, 21 Oct 2015 07:28:00 GMT",
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_445_412_400),
+        ),
+        Some(80)
+    );
+}
+
+#[test]
+fn test_parse_retry_after_reference_time_uses_response_date() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::DATE,
+        reqwest::header::HeaderValue::from_static("Wed, 21 Oct 2015 07:26:40 GMT"),
+    );
+
+    assert_eq!(
+        parse_retry_after_seconds(
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+            parse_retry_after_reference_time(&headers).unwrap(),
         ),
         Some(80)
     );
