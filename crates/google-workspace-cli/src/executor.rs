@@ -505,7 +505,10 @@ pub async fn execute_method(
             .to_string();
 
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_default();
+            let error_body = response
+                .text()
+                .await
+                .context("Failed to read API error response body")?;
             tracing::warn!(
                 api_method = method_id,
                 http_method = %method.http_method,
@@ -538,12 +541,8 @@ pub async fn execute_method(
 
             if output_path.is_some() && method.id.as_deref() == Some("drive.files.download") {
                 if let Some(download_uri) = extract_google_download_uri(&body_text)? {
-                    let mut download_request = add_quota_project_header(client.get(download_uri));
-                    if let Some(token) = token {
-                        if auth_method == AuthMethod::OAuth {
-                            download_request = download_request.bearer_auth(token);
-                        }
-                    }
+                    let download_request =
+                        build_download_request(&client, &download_uri, token, &auth_method);
                     let download_response = download_request
                         .send()
                         .await
@@ -557,7 +556,10 @@ pub async fn execute_method(
                         .to_string();
 
                     if !download_status.is_success() {
-                        let error_body = download_response.text().await.unwrap_or_default();
+                        let error_body = download_response
+                            .text()
+                            .await
+                            .context("Failed to read Drive download error response body")?;
                         return handle_error_response(download_status, &error_body, &auth_method);
                     }
 
@@ -624,6 +626,23 @@ fn add_quota_project_header(request: reqwest::RequestBuilder) -> reqwest::Reques
     } else {
         request
     }
+}
+
+fn build_download_request(
+    client: &reqwest::Client,
+    download_uri: &str,
+    token: Option<&str>,
+    auth_method: &AuthMethod,
+) -> reqwest::RequestBuilder {
+    // Keep secondary Drive downloads on the same reqwest client so they use
+    // the same client-level configuration as API requests.
+    let mut request = add_quota_project_header(client.get(download_uri));
+    if let Some(token) = token {
+        if *auth_method == AuthMethod::OAuth {
+            request = request.bearer_auth(token);
+        }
+    }
+    request
 }
 
 fn build_url(
@@ -1348,6 +1367,44 @@ mod tests {
                 .get("x-goog-user-project")
                 .and_then(|value| value.to_str().ok()),
             Some("quota-project")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_keeps_client_auth_and_quota_headers() {
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://www.googleapis.com/download/drive/v3/files/abc?alt=media",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer access-token")
         );
     }
 
