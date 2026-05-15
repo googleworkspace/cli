@@ -841,6 +841,8 @@ fn map_service_to_scope_prefixes(service: &str) -> Vec<&str> {
         "slides" => vec!["presentations"],
         "docs" => vec!["documents"],
         "people" => vec!["contacts", "directory"],
+        "admin-directory" => vec!["admin.directory"],
+        "admin-reports" | "reports" => vec!["admin.reports"],
         s => vec![s],
     }
 }
@@ -2232,6 +2234,36 @@ mod tests {
         ));
         assert!(scope_matches_service(
             "https://www.googleapis.com/auth/chat.messages",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_admin_directory_service() {
+        let services: HashSet<String> = ["admin-directory"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/admin.directory.user.readonly",
+            &services
+        ));
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/admin.directory.group",
+            &services
+        ));
+        assert!(!scope_matches_service(
+            "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+            &services
+        ));
+    }
+
+    #[test]
+    fn scope_matches_admin_reports_service() {
+        let services: HashSet<String> = ["admin-reports"].iter().map(|s| s.to_string()).collect();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+            &services
+        ));
+        assert!(!scope_matches_service(
+            "https://www.googleapis.com/auth/admin.directory.user.readonly",
             &services
         ));
     }
