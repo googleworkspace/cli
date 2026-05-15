@@ -60,7 +60,8 @@ EXAMPLES:
 
 TIPS:
   MIME type is detected automatically.
-  Filename is inferred from the local path unless --name is given.",
+  Filename is inferred from the local path unless --name is given.
+  Shared Drive parents are supported automatically.",
                 ),
         );
         cmd
@@ -94,6 +95,7 @@ TIPS:
                 let metadata = build_metadata(&filename, parent_id.map(|s| s.as_str()));
 
                 let body_str = metadata.to_string();
+                let params_str = build_upload_params().to_string();
 
                 let scopes: Vec<&str> = create_method.scopes.iter().map(|s| s.as_str()).collect();
                 let (token, auth_method) = match auth::get_token(&scopes).await {
@@ -105,7 +107,7 @@ TIPS:
                 executor::execute_method(
                     doc,
                     create_method,
-                    None,
+                    Some(&params_str),
                     Some(&body_str),
                     token.as_deref(),
                     auth_method,
@@ -154,6 +156,12 @@ fn build_metadata(filename: &str, parent_id: Option<&str>) -> Value {
     metadata
 }
 
+fn build_upload_params() -> Value {
+    json!({
+        "supportsAllDrives": true
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +200,11 @@ mod tests {
         let meta = build_metadata("file.txt", Some("folder123"));
         assert_eq!(meta["name"], "file.txt");
         assert_eq!(meta["parents"][0], "folder123");
+    }
+
+    #[test]
+    fn test_build_upload_params_supports_shared_drives() {
+        let params = build_upload_params();
+        assert_eq!(params["supportsAllDrives"], true);
     }
 }

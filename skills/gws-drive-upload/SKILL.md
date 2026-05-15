@@ -43,6 +43,7 @@ gws drive +upload ./data.csv --name 'Sales Data.csv'
 
 - MIME type is detected automatically.
 - Filename is inferred from the local path unless --name is given.
+- Shared Drive parents are supported automatically.
 
 > [!CAUTION]
 > This is a **write** command — confirm with the user before executing.
