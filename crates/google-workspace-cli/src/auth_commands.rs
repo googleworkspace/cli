@@ -345,6 +345,23 @@ fn token_cache_path() -> PathBuf {
     config_dir().join("token_cache.json")
 }
 
+fn token_cache_paths() -> Vec<PathBuf> {
+    vec![token_cache_path(), config_dir().join("sa_token_cache.json")]
+}
+
+fn clear_token_caches() -> Result<Vec<PathBuf>, GwsError> {
+    let mut removed = Vec::new();
+    for path in token_cache_paths() {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| {
+                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
+            })?;
+            removed.push(path);
+        }
+    }
+    Ok(removed)
+}
+
 /// Which scope set to use for login.
 enum ScopeMode {
     /// Use the default scopes (MINIMAL_SCOPES).
@@ -643,6 +660,11 @@ async fn handle_login_inner(
     // Save encrypted credentials
     let enc_path = credential_store::save_encrypted(&creds_str)
         .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+
+    // Access tokens in the cache may belong to the previous account or scope set.
+    // Force the next API call to mint a token from the newly saved credentials.
+    let _ = clear_token_caches()?;
+    crate::timezone::invalidate_cache();
 
     let output = json!({
         "status": "success",
@@ -1456,12 +1478,10 @@ async fn handle_status() -> Result<(), GwsError> {
 fn handle_logout() -> Result<(), GwsError> {
     let plain_path = plain_credentials_path();
     let enc_path = credential_store::encrypted_credentials_path();
-    let token_cache = token_cache_path();
-    let sa_token_cache = config_dir().join("sa_token_cache.json");
 
     let mut removed = Vec::new();
 
-    for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
+    for path in [&enc_path, &plain_path] {
         if path.exists() {
             std::fs::remove_file(path).map_err(|e| {
                 GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
@@ -1469,6 +1489,11 @@ fn handle_logout() -> Result<(), GwsError> {
             removed.push(path.display().to_string());
         }
     }
+    removed.extend(
+        clear_token_caches()?
+            .into_iter()
+            .map(|path| path.display().to_string()),
+    );
 
     // Invalidate cached account timezone (may belong to old account)
     crate::timezone::invalidate_cache();
@@ -1898,6 +1923,33 @@ mod tests {
         let path = token_cache_path();
         assert!(path.ends_with("token_cache.json"));
         assert!(path.starts_with(config_dir()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn clear_token_caches_removes_user_and_service_account_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
+        }
+
+        let token_cache = dir.path().join("token_cache.json");
+        let sa_token_cache = dir.path().join("sa_token_cache.json");
+        let credentials = dir.path().join("credentials.enc");
+        std::fs::write(&token_cache, "{}").unwrap();
+        std::fs::write(&sa_token_cache, "{}").unwrap();
+        std::fs::write(&credentials, "{}").unwrap();
+
+        let removed = clear_token_caches().unwrap();
+
+        assert_eq!(removed.len(), 2);
+        assert!(!token_cache.exists());
+        assert!(!sa_token_cache.exists());
+        assert!(credentials.exists());
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
+        }
     }
 
     #[tokio::test]
