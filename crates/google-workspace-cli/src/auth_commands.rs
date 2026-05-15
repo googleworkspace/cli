@@ -670,7 +670,12 @@ async fn handle_login_inner(
 
     // Access tokens in the cache may belong to the previous account or scope set.
     // Force the next API call to mint a token from the newly saved credentials.
-    let _ = clear_token_caches()?;
+    if let Err(e) = clear_token_caches() {
+        eprintln!(
+            "Warning: failed to clear token caches: {}",
+            crate::output::sanitize_for_terminal(&e.to_string())
+        );
+    }
     crate::timezone::invalidate_cache();
 
     let output = json!({
