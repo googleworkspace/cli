@@ -413,9 +413,7 @@ fn is_google_download_uri(uri: &str) -> bool {
         return false;
     };
 
-    host == "storage.googleapis.com"
-        || host.ends_with(".googleapis.com")
-        || host.ends_with(".googleusercontent.com")
+    host == "googleapis.com" || host.ends_with(".googleapis.com")
 }
 
 fn extract_google_download_uri(body_text: &str) -> Result<Option<String>, GwsError> {
@@ -1394,6 +1392,20 @@ mod tests {
 
         let err = extract_google_download_uri(&operation).unwrap_err();
         assert!(err.to_string().contains("non-Google downloadUri"));
+    }
+
+    #[test]
+    fn test_is_google_download_uri_allows_googleapis_hosts_only() {
+        assert!(is_google_download_uri("https://googleapis.com/download"));
+        assert!(is_google_download_uri(
+            "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file"
+        ));
+        assert!(!is_google_download_uri(
+            "https://storage.googleapis.com.evil.example/file"
+        ));
+        assert!(!is_google_download_uri(
+            "https://drive.googleusercontent.com/file"
+        ));
     }
 
     #[test]
