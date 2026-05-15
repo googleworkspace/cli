@@ -187,10 +187,7 @@ async fn build_http_request(
         }
     }
 
-    // Set quota project from ADC for billing/quota attribution
-    if let Some(quota_project) = crate::auth::get_quota_project() {
-        request = request.header("x-goog-user-project", quota_project);
-    }
+    request = add_quota_project_header(request);
 
     let mut all_query_params = input.query_params.clone();
     if let Some(pt) = page_token {
@@ -541,7 +538,7 @@ pub async fn execute_method(
 
             if output_path.is_some() && method.id.as_deref() == Some("drive.files.download") {
                 if let Some(download_uri) = extract_google_download_uri(&body_text)? {
-                    let mut download_request = client.get(download_uri);
+                    let mut download_request = add_quota_project_header(client.get(download_uri));
                     if let Some(token) = token {
                         if auth_method == AuthMethod::OAuth {
                             download_request = download_request.bearer_auth(token);
@@ -619,6 +616,14 @@ pub async fn execute_method(
     }
 
     Ok(None)
+}
+
+fn add_quota_project_header(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    if let Some(quota_project) = crate::auth::get_quota_project() {
+        request.header("x-goog-user-project", quota_project)
+    } else {
+        request
+    }
 }
 
 fn build_url(
@@ -1320,6 +1325,30 @@ mod tests {
 
         let err = extract_google_download_uri(&operation).unwrap_err();
         assert!(err.to_string().contains("non-Google downloadUri"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_add_quota_project_header_uses_configured_project() {
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = add_quota_project_header(reqwest::Client::new().get("https://example.com"))
+            .build()
+            .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
     }
 
     #[test]
