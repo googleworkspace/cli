@@ -628,6 +628,19 @@ fn add_quota_project_header(request: reqwest::RequestBuilder) -> reqwest::Reques
     }
 }
 
+fn is_signed_download_uri(download_uri: &str) -> bool {
+    reqwest::Url::parse(download_uri)
+        .map(|url| {
+            url.query_pairs().any(|(key, _)| {
+                let key = key.as_ref();
+                key.eq_ignore_ascii_case("GoogleAccessId")
+                    || key.eq_ignore_ascii_case("Signature")
+                    || key.to_ascii_lowercase().starts_with("x-goog-")
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn build_download_request(
     client: &reqwest::Client,
     download_uri: &str,
@@ -638,7 +651,7 @@ fn build_download_request(
     // the same client-level configuration as API requests.
     let mut request = add_quota_project_header(client.get(download_uri));
     if let Some(token) = token {
-        if *auth_method == AuthMethod::OAuth {
+        if *auth_method == AuthMethod::OAuth && !is_signed_download_uri(download_uri) {
             request = request.bearer_auth(token);
         }
     }
@@ -1406,6 +1419,41 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("Bearer access-token")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_skips_bearer_for_signed_uri() {
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file?X-Goog-Signature=sig&X-Goog-Credential=credential",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+        assert!(request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .is_none());
     }
 
     #[test]
