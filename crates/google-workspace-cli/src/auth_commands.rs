@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
@@ -349,13 +349,20 @@ fn token_cache_paths() -> Vec<PathBuf> {
     vec![token_cache_path(), config_dir().join("sa_token_cache.json")]
 }
 
+fn remove_file_if_exists(path: &Path) -> Result<bool, GwsError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(GwsError::Validation(crate::output::sanitize_for_terminal(
+            &format!("Failed to remove {}: {e}", path.display()),
+        ))),
+    }
+}
+
 fn clear_token_caches() -> Result<Vec<PathBuf>, GwsError> {
     let mut removed = Vec::new();
     for path in token_cache_paths() {
-        if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-            })?;
+        if remove_file_if_exists(&path)? {
             removed.push(path);
         }
     }
@@ -1482,10 +1489,7 @@ fn handle_logout() -> Result<(), GwsError> {
     let mut removed = Vec::new();
 
     for path in [&enc_path, &plain_path] {
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| {
-                GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
-            })?;
+        if remove_file_if_exists(path)? {
             removed.push(path.display().to_string());
         }
     }
@@ -1950,6 +1954,25 @@ mod tests {
         unsafe {
             std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
         }
+    }
+
+    #[test]
+    fn remove_file_if_exists_ignores_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing-token-cache.json");
+
+        assert!(!remove_file_if_exists(&missing).unwrap());
+    }
+
+    #[test]
+    fn remove_file_if_exists_sanitizes_error_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad\u{1b}[31m-cache");
+        std::fs::create_dir(&path).unwrap();
+
+        let err = remove_file_if_exists(&path).unwrap_err().to_string();
+
+        assert!(!err.contains('\u{1b}'));
     }
 
     #[tokio::test]
