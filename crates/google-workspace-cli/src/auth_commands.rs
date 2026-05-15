@@ -1260,6 +1260,8 @@ async fn handle_status() -> Result<(), GwsError> {
         }
     }
 
+    add_oauth_env_status_fields(&mut output, has_config);
+
     // Show credential source by attempting actual resolution
     let has_token_env = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN")
         .ok()
@@ -1451,6 +1453,25 @@ async fn handle_status() -> Result<(), GwsError> {
         serde_json::to_string_pretty(&output).unwrap_or_default()
     );
     Ok(())
+}
+
+fn add_oauth_env_status_fields(output: &mut serde_json::Value, has_config: bool) {
+    let env_client_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let env_client_secret_set = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .is_some();
+
+    output["env_client_id_set"] = json!(env_client_id.is_some());
+    output["env_client_secret_set"] = json!(env_client_secret_set);
+    output["env_overrides_client_config"] =
+        json!(has_config && env_client_id.is_some() && env_client_secret_set);
+
+    if let Some(client_id) = env_client_id {
+        output["env_client_id"] = json!(mask_secret(&client_id));
+    }
 }
 
 fn handle_logout() -> Result<(), GwsError> {
@@ -1980,6 +2001,31 @@ mod tests {
         let args = vec!["status".to_string()];
         let result = handle_auth_command(&args).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn add_oauth_env_status_fields_marks_env_override() {
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_WORKSPACE_CLI_CLIENT_ID",
+                "1234567890abcdef.apps.googleusercontent.com",
+            );
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        }
+
+        let mut output = json!({});
+        add_oauth_env_status_fields(&mut output, true);
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
+
+        assert_eq!(output["env_client_id_set"], json!(true));
+        assert_eq!(output["env_client_secret_set"], json!(true));
+        assert_eq!(output["env_overrides_client_config"], json!(true));
+        assert_eq!(output["env_client_id"], json!("1234....com"));
     }
 
     #[test]
