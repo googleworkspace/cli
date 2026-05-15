@@ -394,6 +394,14 @@ fn extract_download_uri(json_val: &Value) -> Option<&str> {
     .find_map(|path| json_val.pointer(path).and_then(|v| v.as_str()))
 }
 
+fn is_drive_download_operation(json_val: &Value) -> bool {
+    json_val.get("done").is_some()
+        || json_val
+            .get("kind")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind == "drive#operation")
+}
+
 fn is_google_download_uri(uri: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(uri) else {
         return false;
@@ -414,6 +422,9 @@ fn extract_google_download_uri(body_text: &str) -> Result<Option<String>, GwsErr
     let Ok(json_val) = serde_json::from_str::<Value>(body_text) else {
         return Ok(None);
     };
+    if !is_drive_download_operation(&json_val) {
+        return Ok(None);
+    }
     let Some(uri) = extract_download_uri(&json_val) else {
         return Ok(None);
     };
@@ -1342,6 +1353,32 @@ mod tests {
         assert_eq!(
             extract_download_uri(&operation),
             Some("https://www.googleapis.com/download/drive/v3/files/abc?alt=media")
+        );
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_ignores_user_json_file_content() {
+        let file_content = json!({
+            "downloadUri": "https://www.googleapis.com/download/drive/v3/files/abc?alt=media"
+        })
+        .to_string();
+
+        assert_eq!(extract_google_download_uri(&file_content).unwrap(), None);
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_accepts_drive_operation_kind() {
+        let operation = json!({
+            "kind": "drive#operation",
+            "response": {
+                "downloadUrl": "https://www.googleapis.com/download/drive/v3/files/abc?alt=media"
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            extract_google_download_uri(&operation).unwrap(),
+            Some("https://www.googleapis.com/download/drive/v3/files/abc?alt=media".to_string())
         );
     }
 
