@@ -717,12 +717,7 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
 /// Resolve OAuth client credentials from env vars or saved config file.
 fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsError> {
     // 1. Try env vars first
-    let env_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let env_secret = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET")
-        .ok()
-        .filter(|value| !value.is_empty());
+    let (env_id, env_secret) = oauth_client_env_credentials();
 
     if let (Some(id), Some(secret)) = (env_id, env_secret) {
         // Still try to load project_id from config file for the scope picker
@@ -1278,9 +1273,8 @@ async fn handle_status() -> Result<(), GwsError> {
     } else {
         match resolve_client_credentials() {
             Ok((_, _, _)) => {
-                let has_env_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID").is_ok();
-                let has_env_secret = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET").is_ok();
-                if has_env_id && has_env_secret {
+                let (env_id, env_secret) = oauth_client_env_credentials();
+                if env_id.is_some() && env_secret.is_some() {
                     "environment_variables"
                 } else {
                     "client_secret.json"
@@ -1459,14 +1453,19 @@ async fn handle_status() -> Result<(), GwsError> {
     Ok(())
 }
 
-fn add_oauth_env_status_fields(output: &mut serde_json::Value, has_config: bool) {
+fn oauth_client_env_credentials() -> (Option<String>, Option<String>) {
     let env_client_id = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_ID")
         .ok()
         .filter(|value| !value.is_empty());
-    let env_client_secret_set = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET")
+    let env_client_secret = std::env::var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET")
         .ok()
-        .filter(|value| !value.is_empty())
-        .is_some();
+        .filter(|value| !value.is_empty());
+    (env_client_id, env_client_secret)
+}
+
+fn add_oauth_env_status_fields(output: &mut serde_json::Value, has_config: bool) {
+    let (env_client_id, env_client_secret) = oauth_client_env_credentials();
+    let env_client_secret_set = env_client_secret.is_some();
 
     output["env_client_id_set"] = json!(env_client_id.is_some());
     output["env_client_secret_set"] = json!(env_client_secret_set);
@@ -1997,6 +1996,25 @@ mod tests {
         let (id, secret, _) = result.unwrap();
         assert_eq!(id, "test-id");
         assert_eq!(secret, "test-secret");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn oauth_client_env_credentials_ignores_empty_values() {
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "");
+            std::env::set_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "test-secret");
+        }
+
+        let (client_id, client_secret) = oauth_client_env_credentials();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_ID");
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET");
+        }
+
+        assert!(client_id.is_none());
+        assert_eq!(client_secret.as_deref(), Some("test-secret"));
     }
 
     #[test]
