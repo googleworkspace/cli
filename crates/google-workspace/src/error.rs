@@ -19,7 +19,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum GwsError {
-    #[error("{message}")]
+    #[error("{message}{}", retry_after_display(*retry_after_seconds))]
     Api {
         code: u16,
         message: String,
@@ -41,6 +41,12 @@ pub enum GwsError {
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+fn retry_after_display(retry_after_seconds: Option<u64>) -> String {
+    retry_after_seconds
+        .map(|seconds| format!(" (retry after {seconds}s)"))
+        .unwrap_or_default()
 }
 
 impl GwsError {
@@ -282,5 +288,18 @@ mod tests {
         let json = err.to_json();
         assert_eq!(json["error"]["code"], 429);
         assert_eq!(json["error"]["retry_after_seconds"], 17);
+    }
+
+    #[test]
+    fn test_api_display_includes_retry_after_seconds() {
+        let err = GwsError::Api {
+            code: 429,
+            message: "Rate limit exceeded.".to_string(),
+            reason: "rateLimitExceeded".to_string(),
+            enable_url: None,
+            retry_after_seconds: Some(17),
+        };
+
+        assert_eq!(err.to_string(), "Rate limit exceeded. (retry after 17s)");
     }
 }
