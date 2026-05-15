@@ -293,6 +293,7 @@ pub const FULL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/contacts",
     "https://www.googleapis.com/auth/pubsub",
     "https://www.googleapis.com/auth/cloud-platform",
 ];
@@ -1566,6 +1567,10 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
         label: "Google Tasks",
     },
     ScopeEntry {
+        scope: "https://www.googleapis.com/auth/contacts",
+        label: "Google Contacts",
+    },
+    ScopeEntry {
         scope: "https://www.googleapis.com/auth/pubsub",
         label: "Cloud Pub/Sub",
     },
@@ -1789,6 +1794,7 @@ mod tests {
     fn resolve_scopes_full_returns_full_scopes() {
         let scopes = run_resolve_scopes(ScopeMode::Full, None);
         assert_eq!(scopes.len(), FULL_SCOPES.len());
+        assert!(scopes.contains(&"https://www.googleapis.com/auth/contacts".to_string()));
     }
 
     #[test]
@@ -2293,6 +2299,12 @@ mod tests {
                 "Unexpected scope with service + full filter: {scope}"
             );
         }
+    }
+
+    #[test]
+    fn resolve_scopes_services_people_full_includes_contacts_write() {
+        let scopes = run_resolve_scopes_with_services(ScopeMode::Full, None, &["people"]);
+        assert!(scopes.contains(&"https://www.googleapis.com/auth/contacts".to_string()));
     }
 
     #[test]
