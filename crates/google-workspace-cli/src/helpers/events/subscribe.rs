@@ -221,6 +221,7 @@ pub(super) async fn handle_subscribe(
                     message: format!("Failed to create Pub/Sub topic: {body}"),
                     reason: "pubsubError".to_string(),
                     enable_url: None,
+                    retry_after_seconds: None,
                 });
             }
 
@@ -246,6 +247,7 @@ pub(super) async fn handle_subscribe(
                     message: format!("Failed to create Pub/Sub subscription: {body}"),
                     reason: "pubsubError".to_string(),
                     enable_url: None,
+                    retry_after_seconds: None,
                 });
             }
 
@@ -421,6 +423,7 @@ async fn pull_loop(
                 message: format!("Pub/Sub pull failed: {body}"),
                 reason: "pubsubError".to_string(),
                 enable_url: None,
+                retry_after_seconds: None,
             });
         }
 

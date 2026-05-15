@@ -274,6 +274,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
             message: err,
             reason: "calendarList_failed".to_string(),
             enable_url: None,
+            retry_after_seconds: None,
         });
     }
 

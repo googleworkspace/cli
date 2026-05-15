@@ -438,6 +438,7 @@ pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsErro
         message: format!("{context}: {message}"),
         reason,
         enable_url,
+        retry_after_seconds: None,
     }
 }
 
@@ -3614,6 +3615,7 @@ mod tests {
                 message,
                 reason,
                 enable_url,
+                ..
             } => {
                 assert_eq!(code, 403);
                 assert!(message.contains("Test context"));

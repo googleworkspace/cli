@@ -20,10 +20,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use anyhow::Context;
 use futures_util::stream::TryStreamExt;
 use futures_util::StreamExt;
+use reqwest::header::RETRY_AFTER;
 use serde_json::{json, Map, Value};
 use tokio::io::AsyncWriteExt;
 
@@ -464,6 +466,11 @@ pub async fn execute_method(
             .to_string();
 
         if !status.is_success() {
+            let retry_after_seconds = response
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| parse_retry_after_seconds(value, SystemTime::now()));
             let error_body = response.text().await.unwrap_or_default();
             tracing::warn!(
                 api_method = method_id,
@@ -472,7 +479,7 @@ pub async fn execute_method(
                 latency_ms = latency_ms,
                 "API error"
             );
-            return handle_error_response(status, &error_body, &auth_method);
+            return handle_error_response(status, &error_body, &auth_method, retry_after_seconds);
         }
 
         tracing::debug!(
@@ -750,10 +757,28 @@ pub fn extract_enable_url(message: &str) -> Option<String> {
     Some(url.to_string())
 }
 
+fn parse_retry_after_seconds(value: &str, now: SystemTime) -> Option<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+
+    let retry_at = chrono::DateTime::parse_from_rfc2822(value)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    let now: chrono::DateTime<chrono::Utc> = now.into();
+    Some((retry_at - now).num_seconds().max(0) as u64)
+}
+
 fn handle_error_response<T>(
     status: reqwest::StatusCode,
     error_body: &str,
     auth_method: &AuthMethod,
+    retry_after_seconds: Option<u64>,
 ) -> Result<T, GwsError> {
     // If 401/403 and no auth was provided, give a helpful message
     if (status.as_u16() == 401 || status.as_u16() == 403) && *auth_method == AuthMethod::None {
@@ -800,6 +825,7 @@ fn handle_error_response<T>(
                 message,
                 reason,
                 enable_url,
+                retry_after_seconds,
             });
         }
     }
@@ -809,6 +835,7 @@ fn handle_error_response<T>(
         message: error_body.to_string(),
         reason: "httpError".to_string(),
         enable_url: None,
+        retry_after_seconds,
     })
 }
 
@@ -1947,6 +1974,7 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             "Unauthorized",
             &AuthMethod::None,
+            None,
         )
         .unwrap_err();
         match err {
@@ -1973,6 +2001,7 @@ mod tests {
             reqwest::StatusCode::UNAUTHORIZED,
             &json_err,
             &AuthMethod::OAuth,
+            None,
         )
         .unwrap_err();
         match err {
@@ -2008,6 +2037,7 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             &json_err,
             &AuthMethod::OAuth,
+            None,
         )
         .unwrap_err();
         match err {
@@ -2020,6 +2050,39 @@ mod tests {
                 assert_eq!(code, 400);
                 assert_eq!(message, "Bad Request");
                 assert_eq!(reason, "bad");
+            }
+            _ => panic!("Expected Api error"),
+        }
+    }
+
+    #[test]
+    fn test_handle_error_response_includes_retry_after() {
+        let json_err = json!({
+            "error": {
+                "code": 429,
+                "message": "Rate limit exceeded",
+                "errors": [{ "reason": "rateLimitExceeded" }]
+            }
+        })
+        .to_string();
+
+        let err = handle_error_response::<()>(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            &json_err,
+            &AuthMethod::OAuth,
+            Some(17),
+        )
+        .unwrap_err();
+        match err {
+            GwsError::Api {
+                code,
+                reason,
+                retry_after_seconds,
+                ..
+            } => {
+                assert_eq!(code, 429);
+                assert_eq!(reason, "rateLimitExceeded");
+                assert_eq!(retry_after_seconds, Some(17));
             }
             _ => panic!("Expected Api error"),
         }
@@ -2156,6 +2219,7 @@ fn test_handle_error_response_non_json() {
         reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         "Internal Server Error Text",
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
     match err {
@@ -2207,6 +2271,25 @@ fn test_extract_enable_url_trims_trailing_punctuation() {
 }
 
 #[test]
+fn test_parse_retry_after_seconds_delta() {
+    assert_eq!(
+        parse_retry_after_seconds("17", std::time::UNIX_EPOCH),
+        Some(17)
+    );
+}
+
+#[test]
+fn test_parse_retry_after_seconds_http_date() {
+    assert_eq!(
+        parse_retry_after_seconds(
+            "Wed, 21 Oct 2015 07:28:00 GMT",
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_445_412_400),
+        ),
+        Some(80)
+    );
+}
+
+#[test]
 fn test_handle_error_response_access_not_configured_with_url() {
     // Matches the top-level "reason" field format Google actually returns for this error
     let json_err = serde_json::json!({
@@ -2223,6 +2306,7 @@ fn test_handle_error_response_access_not_configured_with_url() {
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
 
@@ -2260,6 +2344,7 @@ fn test_handle_error_response_access_not_configured_errors_array() {
         reqwest::StatusCode::FORBIDDEN,
         &json_err,
         &AuthMethod::OAuth,
+        None,
     )
     .unwrap_err();
 
