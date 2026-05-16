@@ -412,16 +412,17 @@ fn parse_download_uri_host(uri: &str) -> Option<String> {
 }
 
 fn is_google_download_uri(uri: &str) -> bool {
-    matches!(
-        parse_download_uri_host(uri).as_deref(),
-        Some("googleapis.com" | "www.googleapis.com" | "storage.googleapis.com")
-    )
+    parse_download_uri_host(uri).as_deref().is_some_and(|host| {
+        host == "googleapis.com"
+            || host.ends_with(".googleapis.com")
+            || host.ends_with(".googleusercontent.com")
+    })
 }
 
 fn is_google_api_download_host(uri: &str) -> bool {
     matches!(
         parse_download_uri_host(uri).as_deref(),
-        Some("googleapis.com" | "www.googleapis.com")
+        Some("googleapis.com" | "www.googleapis.com" | "storage.googleapis.com")
     )
 }
 
@@ -1411,19 +1412,19 @@ mod tests {
     }
 
     #[test]
-    fn test_is_google_download_uri_allows_googleapis_hosts_only() {
+    fn test_is_google_download_uri_allows_google_download_hosts() {
         assert!(is_google_download_uri("https://googleapis.com/download"));
         assert!(is_google_download_uri(
             "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file"
         ));
-        assert!(!is_google_download_uri(
-            "https://storage.googleapis.com.evil.example/file"
+        assert!(is_google_download_uri(
+            "https://doc-0k-8s-docs.googleusercontent.com/document/export"
         ));
-        assert!(!is_google_download_uri(
+        assert!(is_google_download_uri(
             "https://attacker-bucket.storage.googleapis.com/file"
         ));
         assert!(!is_google_download_uri(
-            "https://drive.googleusercontent.com/file"
+            "https://storage.googleapis.com.evil.example/file"
         ));
     }
 
@@ -1520,7 +1521,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_build_download_request_never_sends_bearer_to_storage_host() {
+    fn test_build_download_request_sends_bearer_to_exact_storage_host() {
         let client = reqwest::Client::new();
 
         unsafe {
@@ -1530,6 +1531,44 @@ mod tests {
         let request = build_download_request(
             &client,
             "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer access-token")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_never_sends_bearer_to_storage_subdomain() {
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://attacker-bucket.storage.googleapis.com/file",
             Some("access-token"),
             &AuthMethod::OAuth,
         )
