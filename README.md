@@ -224,6 +224,10 @@ The repo ships 100+ Agent Skills (`SKILL.md` files) — one for every supported 
 npx skills add https://github.com/googleworkspace/cli
 
 # Or pick only what you need
+# gws-shared is required by all service skills — install it first
+npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-shared
+
+# Then install the specific service skills you need
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-drive
 npx skills add https://github.com/googleworkspace/cli/tree/main/skills/gws-gmail
 ```
