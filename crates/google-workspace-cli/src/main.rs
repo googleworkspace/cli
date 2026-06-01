@@ -50,6 +50,17 @@ async fn main() {
     // Load .env file if present (silently ignored if missing)
     let _ = dotenvy::dotenv();
 
+    // Windows: force UTF-8 console output to prevent CP-1252 mojibake of non-ASCII characters
+    #[cfg(target_os = "windows")]
+    {
+        extern "system" {
+            fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+        }
+        unsafe {
+            SetConsoleOutputCP(65001);
+        }
+    }
+
     // Initialize structured logging (no-op if env vars are unset)
     logging::init_logging();
 
