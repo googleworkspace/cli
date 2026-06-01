@@ -187,9 +187,12 @@ async fn build_http_request(
         }
     }
 
-    // Set quota project from ADC for billing/quota attribution
-    if let Some(quota_project) = crate::auth::get_quota_project() {
-        request = request.header("x-goog-user-project", quota_project);
+    // Only send quota project for ADC/service-account auth; OAuth users are not
+    // necessarily IAM members of the project, so the header causes 403 errors.
+    if *auth_method != AuthMethod::OAuth {
+        if let Some(quota_project) = crate::auth::get_quota_project() {
+            request = request.header("x-goog-user-project", quota_project);
+        }
     }
 
     let mut all_query_params = input.query_params.clone();
@@ -2397,5 +2400,44 @@ async fn test_get_does_not_set_content_length_zero() {
     assert!(
         built.headers().get("Content-Length").is_none(),
         "GET with no body should not have Content-Length header"
+    );
+}
+
+#[tokio::test]
+async fn test_oauth_auth_does_not_set_quota_project_header() {
+    // Arrange: even if get_quota_project() would return a value, OAuth requests
+    // must NOT send x-goog-user-project because OAuth users are not necessarily
+    // IAM members of the project and the header would trigger 403 errors.
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: None,
+        params: Map::new(),
+        query_params: Vec::new(),
+        is_upload: false,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        Some("fake-token"),
+        &AuthMethod::OAuth,
+        None,
+        0,
+        &None,
+    )
+    .await
+    .unwrap();
+
+    let built = request.build().unwrap();
+    assert!(
+        built.headers().get("x-goog-user-project").is_none(),
+        "OAuth requests must not include x-goog-user-project header"
     );
 }
