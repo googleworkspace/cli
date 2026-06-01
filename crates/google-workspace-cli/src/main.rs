@@ -325,10 +325,12 @@ pub fn parse_service_and_version(
     let mut service_arg = first_arg;
     let mut version_override: Option<String> = None;
 
-    // Check for --api-version flag anywhere in args
+    // Check for --api-version flag anywhere in args (space-separated or = form)
     for i in 0..args.len() {
         if args[i] == "--api-version" && i + 1 < args.len() {
             version_override = Some(args[i + 1].clone());
+        } else if let Some(ver) = args[i].strip_prefix("--api-version=") {
+            version_override = Some(ver.to_string());
         }
     }
 
@@ -754,6 +756,20 @@ mod tests {
             "list".to_string(),
         ];
         let result = parse_service_and_version(&args, "admob:v1");
+        assert_eq!(result.unwrap(), ("admob".to_string(), "v1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unlisted_with_equals_flag() {
+        // admob is not in the known services list; --api-version=v1 (equals form) should work
+        let args = vec![
+            "gws".to_string(),
+            "admob".to_string(),
+            "--api-version=v1".to_string(),
+            "accounts".to_string(),
+            "list".to_string(),
+        ];
+        let result = parse_service_and_version(&args, "admob");
         assert_eq!(result.unwrap(), ("admob".to_string(), "v1".to_string()));
     }
 }
