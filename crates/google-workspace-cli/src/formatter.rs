@@ -60,7 +60,13 @@ impl OutputFormat {
 /// Format a JSON value according to the specified output format.
 pub fn format_value(value: &Value, format: &OutputFormat) -> String {
     match format {
-        OutputFormat::Json => serde_json::to_string_pretty(value).unwrap_or_default(),
+        OutputFormat::Json => match serde_json::to_string_pretty(value) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to serialize response to JSON: {e}");
+                std::process::exit(1);
+            }
+        },
         OutputFormat::Table => format_table(value),
         OutputFormat::Yaml => format_yaml(value),
         OutputFormat::Csv => format_csv(value),
@@ -78,7 +84,13 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
 /// combined stream is a valid YAML multi-document file.
 pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_page: bool) -> String {
     match format {
-        OutputFormat::Json => serde_json::to_string(value).unwrap_or_default(),
+        OutputFormat::Json => match serde_json::to_string(value) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to serialize response to JSON: {e}");
+                std::process::exit(1);
+            }
+        },
         OutputFormat::Csv => format_csv_page(value, is_first_page),
         OutputFormat::Table => format_table_page(value, is_first_page),
         // Prefix every page with a YAML document separator so that the
@@ -472,6 +484,13 @@ mod tests {
         let output = format_value(&val, &OutputFormat::Json);
         assert!(output.contains("\"name\""));
         assert!(output.contains("\"test\""));
+    }
+
+    #[test]
+    fn test_format_value_json_non_empty() {
+        let val = json!({"key": "value"});
+        let result = format_value(&val, &OutputFormat::Json);
+        assert!(!result.is_empty());
     }
 
     #[test]
