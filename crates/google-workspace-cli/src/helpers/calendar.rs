@@ -415,6 +415,7 @@ async fn handle_agenda(matches: &ArgMatches) -> Result<(), GwsError> {
     println!(
         "{}",
         crate::formatter::format_value(&output, &output_format)
+            .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
     );
     Ok(())
 }

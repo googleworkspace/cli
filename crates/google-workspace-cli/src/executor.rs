@@ -303,11 +303,13 @@ async fn handle_json_response(
             println!(
                 "{}",
                 crate::formatter::format_value_paginated(&json_val, output_format, is_first_page)
+                    .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
             );
         } else {
             println!(
                 "{}",
                 crate::formatter::format_value(&json_val, output_format)
+                    .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
             );
         }
 
@@ -379,7 +381,11 @@ async fn handle_binary_response(
         return Ok(Some(result));
     }
 
-    println!("{}", crate::formatter::format_value(&result, output_format));
+    println!(
+        "{}",
+        crate::formatter::format_value(&result, output_format)
+            .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
+    );
 
     Ok(None)
 }
@@ -428,6 +434,7 @@ pub async fn execute_method(
         println!(
             "{}",
             crate::formatter::format_value(&dry_run_info, output_format)
+                .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
         );
         return Ok(None);
     }

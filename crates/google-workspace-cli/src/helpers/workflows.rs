@@ -259,12 +259,17 @@ async fn get_json(
         .map_err(|e| GwsError::Other(anyhow::anyhow!("JSON parse failed: {e}")))
 }
 
-fn format_and_print(value: &Value, matches: &ArgMatches) {
+fn format_and_print(value: &Value, matches: &ArgMatches) -> Result<(), GwsError> {
     let fmt = matches
         .get_one::<String>("format")
         .map(|s| crate::formatter::OutputFormat::from_str(s))
         .unwrap_or_default();
-    println!("{}", crate::formatter::format_value(value, &fmt));
+    println!(
+        "{}",
+        crate::formatter::format_value(value, &fmt)
+            .map_err(|e| GwsError::Other(anyhow::Error::from(e)))?
+    );
+    Ok(())
 }
 
 async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
@@ -361,7 +366,7 @@ async fn handle_standup_report(matches: &ArgMatches) -> Result<(), GwsError> {
         "date": now_in_tz.format("%Y-%m-%d").to_string(),
     });
 
-    format_and_print(&output, matches);
+    format_and_print(&output, matches)?;
     Ok(())
 }
 
@@ -405,7 +410,7 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
 
     if items.is_empty() {
         let output = json!({ "message": "No upcoming meetings found." });
-        format_and_print(&output, matches);
+        format_and_print(&output, matches)?;
         return Ok(());
     }
 
@@ -438,7 +443,7 @@ async fn handle_meeting_prep(matches: &ArgMatches) -> Result<(), GwsError> {
         "attendeeCount": attendee_list.len(),
     });
 
-    format_and_print(&output, matches);
+    format_and_print(&output, matches)?;
     Ok(())
 }
 
@@ -528,7 +533,7 @@ async fn handle_email_to_task(matches: &ArgMatches) -> Result<(), GwsError> {
         "sourceMessageId": message_id,
     });
 
-    format_and_print(&output, matches);
+    format_and_print(&output, matches)?;
     Ok(())
 }
 
@@ -613,7 +618,7 @@ async fn handle_weekly_digest(matches: &ArgMatches) -> Result<(), GwsError> {
         "periodEnd": time_max,
     });
 
-    format_and_print(&output, matches);
+    format_and_print(&output, matches)?;
     Ok(())
 }
 
@@ -686,7 +691,7 @@ async fn handle_file_announce(matches: &ArgMatches) -> Result<(), GwsError> {
         "space": space,
     });
 
-    format_and_print(&output, matches);
+    format_and_print(&output, matches)?;
     Ok(())
 }
 

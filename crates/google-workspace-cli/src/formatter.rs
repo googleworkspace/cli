@@ -58,18 +58,12 @@ impl OutputFormat {
 }
 
 /// Format a JSON value according to the specified output format.
-pub fn format_value(value: &Value, format: &OutputFormat) -> String {
+pub fn format_value(value: &Value, format: &OutputFormat) -> Result<String, serde_json::Error> {
     match format {
-        OutputFormat::Json => match serde_json::to_string_pretty(value) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{}", crate::output::sanitize_for_terminal(&format!("error: failed to serialize response to JSON: {e}")));
-                std::process::exit(1);
-            }
-        },
-        OutputFormat::Table => format_table(value),
-        OutputFormat::Yaml => format_yaml(value),
-        OutputFormat::Csv => format_csv(value),
+        OutputFormat::Json => serde_json::to_string_pretty(value),
+        OutputFormat::Table => Ok(format_table(value)),
+        OutputFormat::Yaml => Ok(format_yaml(value)),
+        OutputFormat::Csv => Ok(format_csv(value)),
     }
 }
 
@@ -82,20 +76,18 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
 /// For JSON the output is compact (one JSON object per line / NDJSON).
 /// For YAML each page is prefixed with a `---` document separator so the
 /// combined stream is a valid YAML multi-document file.
-pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_page: bool) -> String {
+pub fn format_value_paginated(
+    value: &Value,
+    format: &OutputFormat,
+    is_first_page: bool,
+) -> Result<String, serde_json::Error> {
     match format {
-        OutputFormat::Json => match serde_json::to_string(value) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{}", crate::output::sanitize_for_terminal(&format!("error: failed to serialize response to JSON: {e}")));
-                std::process::exit(1);
-            }
-        },
-        OutputFormat::Csv => format_csv_page(value, is_first_page),
-        OutputFormat::Table => format_table_page(value, is_first_page),
+        OutputFormat::Json => serde_json::to_string(value),
+        OutputFormat::Csv => Ok(format_csv_page(value, is_first_page)),
+        OutputFormat::Table => Ok(format_table_page(value, is_first_page)),
         // Prefix every page with a YAML document separator so that the
         // concatenated stream is parseable as a multi-document YAML file.
-        OutputFormat::Yaml => format!("---\n{}", format_yaml(value)),
+        OutputFormat::Yaml => Ok(format!("---\n{}", format_yaml(value))),
     }
 }
 
@@ -160,7 +152,7 @@ fn format_table_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         format_array_as_table(arr, emit_header)
     } else if let Value::Object(obj) = value {
-        // Single object: key/value table — flatten nested objects first
+        // Single object: key/value table â€” flatten nested objects first
         let mut output = String::new();
         let flat = flatten_object(obj, "");
         let max_key_len = flat.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
@@ -253,11 +245,11 @@ fn format_array_as_table(arr: &[Value], emit_header: bool) -> String {
         let _ = writeln!(output, "{}", header.join("  "));
 
         // Separator
-        let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+        let sep: Vec<String> = widths.iter().map(|w| "â”€".repeat(*w)).collect();
         let _ = writeln!(output, "{}", sep.join("  "));
     }
 
-    // Rows — truncate by char count to avoid panicking on multi-byte UTF-8.
+    // Rows â€” truncate by char count to avoid panicking on multi-byte UTF-8.
     for row in &rows {
         let cells: Vec<String> = row
             .iter()
@@ -267,7 +259,7 @@ fn format_array_as_table(arr: &[Value], emit_header: bool) -> String {
                 let truncated = if char_len > widths[i] {
                     // Safe char-boundary slice: take widths[i]-1 chars, then append ellipsis.
                     let truncated_str: String = c.chars().take(widths[i] - 1).collect();
-                    format!("{truncated_str}…")
+                    format!("{truncated_str}â€¦")
                 } else {
                     c.clone()
                 };
@@ -360,7 +352,7 @@ fn format_csv_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         arr.as_slice()
     } else {
-        // Single value — just output it
+        // Single value â€” just output it
         return value_to_cell(value);
     };
 
@@ -481,7 +473,7 @@ mod tests {
     #[test]
     fn test_format_json() {
         let val = json!({"name": "test"});
-        let output = format_value(&val, &OutputFormat::Json);
+        let output = format_value(&val, &OutputFormat::Json).unwrap();
         assert!(output.contains("\"name\""));
         assert!(output.contains("\"test\""));
     }
@@ -489,7 +481,7 @@ mod tests {
     #[test]
     fn test_format_value_json_non_empty() {
         let val = json!({"key": "value"});
-        let result = format_value(&val, &OutputFormat::Json);
+        let result = format_value(&val, &OutputFormat::Json).unwrap();
         assert!(!result.is_empty());
     }
 
@@ -501,19 +493,19 @@ mod tests {
                 {"id": "2", "name": "world.txt"}
             ]
         });
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("id"));
         assert!(output.contains("name"));
         assert!(output.contains("hello.txt"));
         assert!(output.contains("world.txt"));
         // Check separator line
-        assert!(output.contains("──"));
+        assert!(output.contains("â”€â”€"));
     }
 
     #[test]
     fn test_format_table_single_object() {
         let val = json!({"id": "abc", "name": "test"});
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("id"));
         assert!(output.contains("abc"));
     }
@@ -531,7 +523,7 @@ mod tests {
                 "usage": "500"
             }
         });
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         // Should contain dot-notation keys
         assert!(
             output.contains("user.displayName"),
@@ -558,7 +550,7 @@ mod tests {
             {"id": "1", "owner": {"name": "Alice"}},
             {"id": "2", "owner": {"name": "Bob"}}
         ]);
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(
             output.contains("owner.name"),
             "expected flattened column:\n{output}"
@@ -571,18 +563,18 @@ mod tests {
     fn test_format_table_multibyte_truncation_does_not_panic() {
         // Column width cap is 60 chars, so a long string with multi-byte chars
         // must be safely truncated without a byte-boundary panic.
-        let long_emoji = "😀".repeat(70); // each emoji is 4 bytes
+        let long_emoji = "ðŸ˜€".repeat(70); // each emoji is 4 bytes
         let val = json!([{"col": long_emoji}]);
         // Should not panic
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("col"), "column name must appear:\n{output}");
     }
 
     #[test]
     fn test_format_table_multibyte_exact_boundary() {
         // Multi-byte chars at various positions must not panic or produce garbled output.
-        let val = json!([{"name": "café résumé naïve"}]);
-        let output = format_value(&val, &OutputFormat::Table);
+        let val = json!([{"name": "cafÃ© rÃ©sumÃ© naÃ¯ve"}]);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("name"), "column must appear:\n{output}");
     }
 
@@ -594,7 +586,7 @@ mod tests {
                 {"id": "2", "name": "world"}
             ]
         });
-        let output = format_value(&val, &OutputFormat::Csv);
+        let output = format_value(&val, &OutputFormat::Csv).unwrap();
         assert!(output.contains("id,name"));
         assert!(output.contains("1,hello"));
         assert!(output.contains("2,world"));
@@ -610,7 +602,7 @@ mod tests {
                 ["Andrew", "Male", "1. Freshman"]
             ]
         });
-        let output = format_value(&val, &OutputFormat::Csv);
+        let output = format_value(&val, &OutputFormat::Csv).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "Student Name,Gender,Class Level");
         assert_eq!(lines[1], "Alexandra,Female,4. Senior");
@@ -619,9 +611,9 @@ mod tests {
 
     #[test]
     fn test_format_csv_flat_scalars() {
-        // Flat array of non-object, non-array values → one value per line
+        // Flat array of non-object, non-array values â†’ one value per line
         let val = json!(["apple", "banana", "cherry"]);
-        let output = format_value(&val, &OutputFormat::Csv);
+        let output = format_value(&val, &OutputFormat::Csv).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], "apple");
@@ -633,7 +625,7 @@ mod tests {
     fn test_format_csv_flat_scalars_with_escaping() {
         // Scalars that contain commas/quotes must be CSV-escaped
         let val = json!(["plain", "has,comma", "has\"quote"]);
-        let output = format_value(&val, &OutputFormat::Csv);
+        let output = format_value(&val, &OutputFormat::Csv).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], "plain");
@@ -651,7 +643,7 @@ mod tests {
     #[test]
     fn test_format_yaml() {
         let val = json!({"name": "test", "count": 42});
-        let output = format_value(&val, &OutputFormat::Yaml);
+        let output = format_value(&val, &OutputFormat::Yaml).unwrap();
         assert!(output.contains("name: \"test\""));
         assert!(output.contains("count: 42"));
     }
@@ -660,7 +652,7 @@ mod tests {
     fn test_format_table_empty_array() {
         let val = json!({"files": []});
         // No items to extract, falls back to single-object table
-        let output = format_value(&val, &OutputFormat::Table);
+        let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("files"));
     }
 
@@ -685,7 +677,7 @@ mod tests {
         // `drive#file` contains `#` which is a YAML comment marker; the
         // serialiser must quote it rather than emit a block scalar.
         let val = json!({"kind": "drive#file", "id": "123"});
-        let output = format_value(&val, &OutputFormat::Yaml);
+        let output = format_value(&val, &OutputFormat::Yaml).unwrap();
         // Must be a double-quoted string, not a block scalar (`|`).
         assert!(
             output.contains("kind: \"drive#file\""),
@@ -700,7 +692,7 @@ mod tests {
     #[test]
     fn test_format_yaml_colon_in_string_is_quoted() {
         let val = json!({"url": "https://example.com/path"});
-        let output = format_value(&val, &OutputFormat::Yaml);
+        let output = format_value(&val, &OutputFormat::Yaml).unwrap();
         assert!(
             output.contains("url: \"https://example.com/path\""),
             "expected double-quoted url, got:\n{output}"
@@ -711,7 +703,7 @@ mod tests {
     #[test]
     fn test_format_yaml_multiline_still_uses_block() {
         let val = json!({"body": "line one\nline two"});
-        let output = format_value(&val, &OutputFormat::Yaml);
+        let output = format_value(&val, &OutputFormat::Yaml).unwrap();
         // Multi-line content should still use block scalar.
         assert!(
             output.contains("body: |"),
@@ -729,7 +721,7 @@ mod tests {
                 {"id": "2", "name": "b.txt"}
             ]
         });
-        let output = format_value_paginated(&val, &OutputFormat::Csv, true);
+        let output = format_value_paginated(&val, &OutputFormat::Csv, true).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "id,name", "first page must start with header");
         assert_eq!(lines[1], "1,a.txt");
@@ -742,7 +734,7 @@ mod tests {
                 {"id": "3", "name": "c.txt"}
             ]
         });
-        let output = format_value_paginated(&val, &OutputFormat::Csv, false);
+        let output = format_value_paginated(&val, &OutputFormat::Csv, false).unwrap();
         let lines: Vec<&str> = output.lines().collect();
         // The first (and only) line must be a data row, not the header.
         assert_eq!(lines[0], "3,c.txt", "continuation page must have no header");
@@ -759,12 +751,12 @@ mod tests {
                 {"id": "1", "name": "foo"}
             ]
         });
-        let output = format_value_paginated(&val, &OutputFormat::Table, true);
+        let output = format_value_paginated(&val, &OutputFormat::Table, true).unwrap();
         assert!(
             output.contains("id"),
             "table header must appear on first page"
         );
-        assert!(output.contains("──"), "separator must appear on first page");
+        assert!(output.contains("â”€â”€"), "separator must appear on first page");
     }
 
     #[test]
@@ -774,10 +766,10 @@ mod tests {
                 {"id": "2", "name": "bar"}
             ]
         });
-        let output = format_value_paginated(&val, &OutputFormat::Table, false);
+        let output = format_value_paginated(&val, &OutputFormat::Table, false).unwrap();
         assert!(output.contains("bar"), "data row must be present");
         assert!(
-            !output.contains("──"),
+            !output.contains("â”€â”€"),
             "separator must be absent on continuation pages"
         );
     }
@@ -785,8 +777,8 @@ mod tests {
     #[test]
     fn test_format_value_paginated_yaml_has_document_separator() {
         let val = json!({"files": [{"id": "1", "name": "foo"}]});
-        let first = format_value_paginated(&val, &OutputFormat::Yaml, true);
-        let second = format_value_paginated(&val, &OutputFormat::Yaml, false);
+        let first = format_value_paginated(&val, &OutputFormat::Yaml, true).unwrap();
+        let second = format_value_paginated(&val, &OutputFormat::Yaml, false).unwrap();
         assert!(
             first.starts_with("---\n"),
             "first YAML page must start with ---"
