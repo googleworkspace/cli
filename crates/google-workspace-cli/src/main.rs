@@ -340,8 +340,16 @@ pub fn parse_service_and_version(
         }
     }
 
-    let (api_name, default_version) = services::resolve_service(service_arg)?;
-    let version = version_override.unwrap_or(default_version);
+    let (api_name, version) = match services::resolve_service(service_arg) {
+        Ok((name, default_ver)) => (name, version_override.unwrap_or(default_ver)),
+        Err(e) => {
+            if let Some(ver) = version_override {
+                (service_arg.to_string(), ver)
+            } else {
+                return Err(e);
+            }
+        }
+    };
     Ok((api_name, version))
 }
 
@@ -734,5 +742,18 @@ mod tests {
     fn test_select_scope_empty() {
         let scopes: Vec<String> = vec![];
         assert_eq!(select_scope(&scopes), None);
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unlisted_with_colon() {
+        // admob is not in the known services list, but admob:v1 should work
+        let args = vec![
+            "gws".to_string(),
+            "admob:v1".to_string(),
+            "accounts".to_string(),
+            "list".to_string(),
+        ];
+        let result = parse_service_and_version(&args, "admob:v1");
+        assert_eq!(result.unwrap(), ("admob".to_string(), "v1".to_string()));
     }
 }
