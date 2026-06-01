@@ -346,7 +346,18 @@ pub fn parse_service_and_version(
         Ok((name, default_ver)) => (name, version_override.unwrap_or(default_ver)),
         Err(e) => {
             if let Some(ver) = version_override {
-                (service_arg.to_string(), ver)
+                let is_valid = |s: &str| {
+                    !s.is_empty()
+                        && s.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+                };
+                if is_valid(service_arg) && is_valid(&ver) {
+                    (service_arg.to_string(), ver)
+                } else {
+                    return Err(GwsError::Validation(
+                        "Invalid service name or version: only alphanumeric characters, underscores, hyphens, and dots are allowed.".to_string()
+                    ));
+                }
             } else {
                 return Err(e);
             }
@@ -771,5 +782,33 @@ mod tests {
         ];
         let result = parse_service_and_version(&args, "admob");
         assert_eq!(result.unwrap(), ("admob".to_string(), "v1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_service_and_version_rejects_path_traversal_in_service() {
+        let args = vec![
+            "gws".to_string(),
+            "../evil:v1".to_string(),
+        ];
+        let result = parse_service_and_version(&args, "../evil:v1");
+        assert!(result.is_err(), "path traversal in service name must be rejected");
+    }
+
+    #[test]
+    fn test_parse_service_and_version_rejects_path_traversal_in_version() {
+        let args = vec![
+            "gws".to_string(),
+            "admob".to_string(),
+            "--api-version=../evil".to_string(),
+        ];
+        let result = parse_service_and_version(&args, "admob");
+        assert!(result.is_err(), "path traversal in version must be rejected");
+    }
+
+    #[test]
+    fn test_parse_service_and_version_rejects_special_chars_in_service() {
+        let args = vec!["gws".to_string(), "svc?foo:v1".to_string()];
+        let result = parse_service_and_version(&args, "svc?foo:v1");
+        assert!(result.is_err(), "special chars in service name must be rejected");
     }
 }
