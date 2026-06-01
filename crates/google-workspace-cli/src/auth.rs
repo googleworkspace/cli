@@ -126,6 +126,15 @@ fn adc_well_known_path() -> Option<PathBuf> {
     })
 }
 
+/// What kind of credential provided the token.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CredentialKind {
+    /// Browser-based OAuth 2.0 user credential (from `gws auth login`)
+    UserOAuth,
+    /// Service-account key credential
+    ServiceAccount,
+}
+
 /// Types of credentials we support
 #[derive(Debug)]
 enum Credential {
@@ -227,6 +236,30 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
 
     let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
     get_token_inner(scopes, creds, &token_cache).await
+}
+
+/// Like [`get_token`] but also returns the [`CredentialKind`] so callers can
+/// decide whether to include the `x-goog-user-project` quota header.
+pub async fn get_token_with_kind(scopes: &[&str]) -> anyhow::Result<(String, CredentialKind)> {
+    if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
+        if !token.is_empty() {
+            return Ok((token, CredentialKind::UserOAuth));
+        }
+    }
+
+    let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
+    let config_dir = crate::auth_commands::config_dir();
+    let enc_path = credential_store::encrypted_credentials_path();
+    let default_path = config_dir.join("credentials.json");
+    let token_cache = config_dir.join("token_cache.json");
+
+    let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
+    let kind = match &creds {
+        Credential::ServiceAccount(_) => CredentialKind::ServiceAccount,
+        Credential::AuthorizedUser(_) => CredentialKind::UserOAuth,
+    };
+    let token = get_token_inner(scopes, creds, &token_cache).await?;
+    Ok((token, kind))
 }
 
 /// Check if HTTP proxy environment variables are set

@@ -34,8 +34,10 @@ use crate::output::sanitize_for_terminal;
 /// Tracks what authentication method was used for the request.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthMethod {
-    /// OAuth2 bearer token from credentials file
+    /// OAuth2 bearer token from a user credential (`gws auth login`)
     OAuth,
+    /// Bearer token from a service-account key
+    ServiceAccount,
     /// No authentication was provided
     None,
 }
@@ -182,14 +184,14 @@ async fn build_http_request(
     };
 
     if let Some(token) = token {
-        if *auth_method == AuthMethod::OAuth {
+        if matches!(*auth_method, AuthMethod::OAuth | AuthMethod::ServiceAccount) {
             request = request.bearer_auth(token);
         }
     }
 
-    // Only send quota project for ADC/service-account auth; OAuth users are not
-    // necessarily IAM members of the project, so the header causes 403 errors.
-    if *auth_method != AuthMethod::OAuth {
+    // Only send quota project for service-account auth; OAuth users may not be
+    // IAM members of the project, so the header would trigger 403 errors.
+    if *auth_method == AuthMethod::ServiceAccount {
         if let Some(quota_project) = crate::auth::get_quota_project() {
             request = request.header("x-goog-user-project", quota_project);
         }

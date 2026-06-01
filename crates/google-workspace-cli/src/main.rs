@@ -262,8 +262,14 @@ async fn run() -> Result<(), GwsError> {
     let scopes: Vec<&str> = select_scope(&method.scopes).into_iter().collect();
 
     // Authenticate: try OAuth, fail with error if credentials exist but are broken
-    let (token, auth_method) = match auth::get_token(&scopes).await {
-        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+    let (token, auth_method) = match auth::get_token_with_kind(&scopes).await {
+        Ok((t, kind)) => {
+            let method = match kind {
+                auth::CredentialKind::ServiceAccount => executor::AuthMethod::ServiceAccount,
+                auth::CredentialKind::UserOAuth => executor::AuthMethod::OAuth,
+            };
+            (Some(t), method)
+        }
         Err(e) => {
             // If credentials were found but failed (e.g. decryption error, invalid token),
             // propagate the error instead of silently falling back to unauthenticated.
