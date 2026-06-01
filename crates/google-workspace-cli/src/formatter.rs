@@ -63,7 +63,7 @@ pub fn format_value(value: &Value, format: &OutputFormat) -> String {
         OutputFormat::Json => match serde_json::to_string_pretty(value) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("error: failed to serialize response to JSON: {e}");
+                eprintln!("{}", crate::output::sanitize_for_terminal(&format!("error: failed to serialize response to JSON: {e}")));
                 std::process::exit(1);
             }
         },
@@ -87,7 +87,7 @@ pub fn format_value_paginated(value: &Value, format: &OutputFormat, is_first_pag
         OutputFormat::Json => match serde_json::to_string(value) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("error: failed to serialize response to JSON: {e}");
+                eprintln!("{}", crate::output::sanitize_for_terminal(&format!("error: failed to serialize response to JSON: {e}")));
                 std::process::exit(1);
             }
         },
