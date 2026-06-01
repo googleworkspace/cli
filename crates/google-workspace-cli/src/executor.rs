@@ -31,16 +31,7 @@ use crate::discovery::{RestDescription, RestMethod};
 use crate::error::GwsError;
 use crate::output::sanitize_for_terminal;
 
-/// Tracks what authentication method was used for the request.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AuthMethod {
-    /// OAuth2 bearer token from a user credential (`gws auth login`)
-    OAuth,
-    /// Bearer token from a service-account key
-    ServiceAccount,
-    /// No authentication was provided
-    None,
-}
+pub use crate::auth::AuthMethod;
 
 /// Source for media upload content.
 ///

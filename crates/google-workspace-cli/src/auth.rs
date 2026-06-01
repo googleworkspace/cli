@@ -126,13 +126,15 @@ fn adc_well_known_path() -> Option<PathBuf> {
     })
 }
 
-/// What kind of credential provided the token.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CredentialKind {
-    /// Browser-based OAuth 2.0 user credential (from `gws auth login`)
-    UserOAuth,
-    /// Service-account key credential
+/// Tracks what authentication method was used for the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMethod {
+    /// OAuth2 bearer token from a user credential (`gws auth login`)
+    OAuth,
+    /// Bearer token from a service-account key
     ServiceAccount,
+    /// No authentication was provided
+    None,
 }
 
 /// Types of credentials we support
@@ -238,12 +240,12 @@ pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
     get_token_inner(scopes, creds, &token_cache).await
 }
 
-/// Like [`get_token`] but also returns the [`CredentialKind`] so callers can
+/// Like [`get_token`] but also returns the [`AuthMethod`] so callers can
 /// decide whether to include the `x-goog-user-project` quota header.
-pub async fn get_token_with_kind(scopes: &[&str]) -> anyhow::Result<(String, CredentialKind)> {
+pub async fn get_token_with_kind(scopes: &[&str]) -> anyhow::Result<(String, AuthMethod)> {
     if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
         if !token.is_empty() {
-            return Ok((token, CredentialKind::UserOAuth));
+            return Ok((token, AuthMethod::OAuth));
         }
     }
 
@@ -255,8 +257,8 @@ pub async fn get_token_with_kind(scopes: &[&str]) -> anyhow::Result<(String, Cre
 
     let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
     let kind = match &creds {
-        Credential::ServiceAccount(_) => CredentialKind::ServiceAccount,
-        Credential::AuthorizedUser(_) => CredentialKind::UserOAuth,
+        Credential::ServiceAccount(_) => AuthMethod::ServiceAccount,
+        Credential::AuthorizedUser(_) => AuthMethod::OAuth,
     };
     let token = get_token_inner(scopes, creds, &token_cache).await?;
     Ok((token, kind))
