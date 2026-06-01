@@ -388,7 +388,11 @@ fn build_login_subcommand() -> clap::Command {
                 .short('s')
                 .long("services")
                 .help(
-                    "Comma-separated service names to limit scope picker (e.g. drive,gmail,sheets)",
+                    "Comma-separated service names to limit scope picker (e.g. drive,gmail,sheets). \
+                     Unknown names are rejected with an error. \
+                     Valid names: drive, sheets, gmail, calendar, admin-reports, reports, docs, \
+                     slides, tasks, people, chat, classroom, forms, keep, meet, events, \
+                     modelarmor, workflow, wf, script",
                 )
                 .value_name("services"),
         )
@@ -572,11 +576,50 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     }
 }
 
+/// Validate that all service names in the filter are known aliases.
+///
+/// Returns an error listing the unknown names and all valid options when any
+/// unknown service is found, so users get actionable feedback instead of a
+/// silent empty scope list.
+fn validate_service_names(services: &HashSet<String>) -> Result<(), GwsError> {
+    let valid_aliases: Vec<&str> = crate::services::SERVICES
+        .iter()
+        .flat_map(|e| e.aliases.iter().copied())
+        .collect();
+
+    let unknown: Vec<&String> = services
+        .iter()
+        .filter(|s| !valid_aliases.contains(&s.as_str()))
+        .collect();
+
+    if !unknown.is_empty() {
+        let mut sorted_unknown: Vec<&String> = unknown;
+        sorted_unknown.sort();
+        let mut valid_sorted: Vec<&str> = valid_aliases.clone();
+        valid_sorted.sort();
+        return Err(GwsError::Validation(format!(
+            "Unknown service name(s): {}. Valid names: {}",
+            sorted_unknown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            valid_sorted.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 /// Inner login implementation that takes already-parsed options.
 async fn handle_login_inner(
     scope_mode: ScopeMode,
     services_filter: Option<HashSet<String>>,
 ) -> Result<(), GwsError> {
+    // Validate service names early to give clear errors before any OAuth flow.
+    if let Some(ref services) = services_filter {
+        validate_service_names(services)?;
+    }
+
     // Resolve client_id and client_secret:
     // 1. Env vars (highest priority)
     // 2. Saved client_secret.json from `gws auth setup` or manual download
@@ -2257,12 +2300,38 @@ mod tests {
     }
 
     #[test]
-    fn resolve_scopes_services_filter_unknown_service_ignored() {
-        let scopes =
-            run_resolve_scopes_with_services(ScopeMode::Default, None, &["drive", "nonexistent"]);
-        assert!(!scopes.is_empty());
-        // Should contain drive scope but not be affected by nonexistent
-        assert!(scopes.iter().any(|s| s.contains("/auth/drive")));
+    fn validate_service_names_rejects_unknown() {
+        let mut services = HashSet::new();
+        services.insert("driev".to_string()); // typo
+        assert!(validate_service_names(&services).is_err());
+        let err = validate_service_names(&services).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Unknown service name(s)"), "msg: {msg}");
+        assert!(msg.contains("driev"), "msg: {msg}");
+        assert!(msg.contains("Valid names"), "msg: {msg}");
+    }
+
+    #[test]
+    fn validate_service_names_accepts_known() {
+        let mut services = HashSet::new();
+        services.insert("drive".to_string());
+        services.insert("gmail".to_string());
+        assert!(validate_service_names(&services).is_ok());
+    }
+
+    #[test]
+    fn validate_service_names_accepts_multi_alias() {
+        // "reports" and "admin-reports" are both valid aliases for the same service
+        let mut services = HashSet::new();
+        services.insert("reports".to_string());
+        services.insert("wf".to_string());
+        assert!(validate_service_names(&services).is_ok());
+    }
+
+    #[test]
+    fn validate_service_names_empty_set_is_ok() {
+        let services = HashSet::new();
+        assert!(validate_service_names(&services).is_ok());
     }
 
     #[test]
