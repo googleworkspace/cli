@@ -371,10 +371,35 @@ fn create_reply_raw_message(
     finalize_message(mb, body, envelope.html, attachments)
 }
 
+fn wrap_line(line: &str, max_len: usize) -> Vec<String> {
+    if line.len() <= max_len {
+        return vec![line.to_string()];
+    }
+    // word-wrap at max_len, breaking on spaces
+    let mut result = Vec::new();
+    let mut current = String::new();
+    for word in line.split(' ') {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= max_len {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            result.push(current.clone());
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
 fn format_quoted_original(original: &OriginalMessage) -> String {
     let quoted_body: String = original
         .body_text
         .lines()
+        .flat_map(|line| wrap_line(line, 73))
         .map(|line| format!("> {}", line))
         .collect::<Vec<_>>()
         .join("\r\n");
@@ -1298,6 +1323,54 @@ mod tests {
         assert!(quoted.starts_with("alice@example.com wrote:"));
         assert!(!quoted.contains("On "));
         assert!(quoted.contains("> Hello"));
+    }
+
+    #[test]
+    fn test_format_quoted_original_long_lines_do_not_exceed_75_chars() {
+        // Lines near 70–75 chars would exceed 76 chars after "> " prefix without pre-wrapping.
+        let long_line = "This is a fairly long line of text that sits right around seventy-four characters.";
+        assert!(long_line.len() > 73);
+        let original = OriginalMessage {
+            from: Mailbox::parse("alice@example.com"),
+            date: Some("Mon, 1 Jan 2026 00:00:00 +0000".to_string()),
+            body_text: long_line.to_string(),
+            ..Default::default()
+        };
+        let quoted = format_quoted_original(&original);
+        for line in quoted.lines() {
+            assert!(
+                line.len() <= 76,
+                "Line exceeds 76 chars ({} chars): {:?}",
+                line.len(),
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_word_wrap_preserves_short_lines() {
+        let short = "Hello, world!";
+        let wrapped = wrap_line(short, 73);
+        assert_eq!(wrapped, vec!["Hello, world!"]);
+    }
+
+    #[test]
+    fn test_word_wrap_breaks_long_line() {
+        // Build a line that is >73 chars
+        let line = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13";
+        assert!(line.len() > 73);
+        let wrapped = wrap_line(line, 73);
+        assert!(wrapped.len() > 1, "Long line should be split into multiple chunks");
+        for chunk in &wrapped {
+            assert!(
+                chunk.len() <= 73,
+                "Chunk exceeds 73 chars ({} chars): {:?}",
+                chunk.len(),
+                chunk
+            );
+        }
+        // Reassembling should recover the original
+        assert_eq!(wrapped.join(" "), line);
     }
 
     // --- end-to-end --to behavioral tests ---
