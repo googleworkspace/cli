@@ -428,6 +428,16 @@ fn auth_command() -> clap::Command {
         .subcommand(clap::Command::new("logout").about("Clear saved credentials and token cache"))
 }
 
+/// Returns true if the args slice contains `--help` or `-h`.
+///
+/// Used to detect help requests for subcommands before entering any
+/// OAuth/setup flow, guarding against cases where clap's `DisplayHelp`
+/// error is not propagated (e.g. `disable_help_flag`) or where the
+/// subcommand dispatch would otherwise proceed to network I/O.
+fn args_request_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--help" || a == "-h")
+}
+
 /// Handle `gws auth <subcommand>`.
 pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     let matches = match auth_command()
@@ -447,6 +457,13 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
     };
 
     match matches.subcommand() {
+        Some(("login", _)) if args_request_help(args) => {
+            // Print login-specific help without starting any OAuth flow.
+            build_login_subcommand()
+                .print_help()
+                .map_err(|e| GwsError::Validation(format!("Failed to print help: {e}")))?;
+            Ok(())
+        }
         Some(("login", sub_m)) => {
             let (scope_mode, services_filter) = parse_login_args(sub_m);
 
@@ -454,11 +471,22 @@ pub async fn handle_auth_command(args: &[String]) -> Result<(), GwsError> {
         }
         Some(("setup", sub_m)) => {
             // Collect remaining args and delegate to setup's own clap parser.
+            // setup uses disable_help_flag(true) + trailing_var_arg so --help/-h
+            // lands in the captured args; parse_setup_args handles it internally.
             let setup_args: Vec<String> = sub_m
                 .get_many::<String>("args")
                 .map(|vals| vals.cloned().collect())
                 .unwrap_or_default();
             crate::setup::run_setup(&setup_args).await
+        }
+        Some(("status", _)) if args_request_help(args) => {
+            // Print status-specific help without querying credentials or the network.
+            auth_command()
+                .find_subcommand_mut("status")
+                .unwrap()
+                .print_help()
+                .map_err(|e| GwsError::Validation(format!("Failed to print help: {e}")))?;
+            Ok(())
         }
         Some(("status", _)) => handle_status().await,
         Some(("export", sub_m)) => {
@@ -1931,6 +1959,80 @@ mod tests {
             GwsError::Validation(msg) => assert!(msg.contains("frobnicate")),
             other => panic!("Expected Validation error, got: {other:?}"),
         }
+    }
+
+    // ── help flag on subcommands does not trigger OAuth/setup flow ─────────
+
+    #[tokio::test]
+    async fn handle_auth_command_login_help_returns_ok_without_oauth() {
+        // `gws auth login --help` must print help and return Ok, never touch OAuth.
+        let args = vec!["login".to_string(), "--help".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "login --help should return Ok, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_login_help_short_returns_ok_without_oauth() {
+        // `gws auth login -h` must print help and return Ok, never touch OAuth.
+        let args = vec!["login".to_string(), "-h".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "login -h should return Ok, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_status_help_returns_ok_without_network() {
+        // `gws auth status --help` must print help and return Ok, never call the network.
+        let args = vec!["status".to_string(), "--help".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "status --help should return Ok, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_status_help_short_returns_ok_without_network() {
+        // `gws auth status -h` must print help and return Ok, never call the network.
+        let args = vec!["status".to_string(), "-h".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "status -h should return Ok, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_setup_help_returns_ok_without_gcloud() {
+        // `gws auth setup --help` must print help and return Ok, never invoke gcloud.
+        let args = vec!["setup".to_string(), "--help".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "setup --help should return Ok, got: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_command_setup_help_short_returns_ok_without_gcloud() {
+        // `gws auth setup -h` must print help and return Ok, never invoke gcloud.
+        let args = vec!["setup".to_string(), "-h".to_string()];
+        let result = handle_auth_command(&args).await;
+        assert!(result.is_ok(), "setup -h should return Ok, got: {result:?}");
+    }
+
+    #[test]
+    fn args_request_help_detects_long_flag() {
+        assert!(args_request_help(&["--help".to_string()]));
+    }
+
+    #[test]
+    fn args_request_help_detects_short_flag() {
+        assert!(args_request_help(&["-h".to_string()]));
+    }
+
+    #[test]
+    fn args_request_help_returns_false_for_unrelated_args() {
+        assert!(!args_request_help(&["--scopes".to_string(), "drive".to_string()]));
+        assert!(!args_request_help(&[]));
+    }
+
+    #[test]
+    fn args_request_help_detects_flag_among_others() {
+        assert!(args_request_help(&[
+            "--readonly".to_string(),
+            "--help".to_string()
+        ]));
     }
 
     #[test]
