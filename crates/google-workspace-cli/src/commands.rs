@@ -61,7 +61,7 @@ pub fn build_cli(doc: &RestDescription) -> Command {
         resource_names.sort();
         for name in resource_names {
             let resource = &doc.resources[name];
-            if let Some(cmd) = build_resource_command(name, resource) {
+            if let Some(cmd) = build_resource_command(&doc.name, name, resource) {
                 root = root.subcommand(cmd);
             }
         }
@@ -72,7 +72,10 @@ pub fn build_cli(doc: &RestDescription) -> Command {
 
 /// Recursively builds a Command for a resource.
 /// Returns None if the resource has no methods or sub-resources.
-fn build_resource_command(name: &str, resource: &RestResource) -> Option<Command> {
+///
+/// `service_name` is the top-level API service (e.g. `"drive"`) used to inject
+/// service-specific help text into selected commands.
+fn build_resource_command(service_name: &str, name: &str, resource: &RestResource) -> Option<Command> {
     let mut cmd = Command::new(name.to_string())
         .about(format!("Operations on the '{name}' resource"))
         .subcommand_required(true)
@@ -109,6 +112,32 @@ fn build_resource_command(name: &str, resource: &RestResource) -> Option<Command
                     .help("Output file path for binary responses")
                     .value_name("PATH"),
             );
+
+        // Inject service-specific after_help notes for commands that are
+        // commonly confused with similar-sounding operations.
+        if service_name == "drive" && name == "files" && method_name == "export" {
+            method_cmd = method_cmd.after_help(
+                "NOTE: This command exports Google Workspace native files only \
+(Google Docs, Sheets, Slides, etc.) to a portable format such as PDF, DOCX, or CSV.\n\
+It will return a 500 backendError if used on binary files (PDFs, images, \
+Office documents, or any non-Workspace MIME type).\n\
+\n\
+To download a binary file already stored in Drive, use:\n\
+  gws drive files get --params '{\"alt\": \"media\", \"fileId\": \"FILE_ID\"}' --output FILE_ID.pdf\n\
+\n\
+EXAMPLES:\n\
+  # Export a Google Doc to PDF\n\
+  gws drive files export --params '{\"fileId\": \"DOC_ID\", \"mimeType\": \"application/pdf\"}' \\\n\
+    --output report.pdf\n\
+\n\
+  # Export a Google Sheet to CSV\n\
+  gws drive files export --params '{\"fileId\": \"SHEET_ID\", \"mimeType\": \"text/csv\"}' \\\n\
+    --output data.csv\n\
+\n\
+  # Download a binary PDF stored in Drive (use 'get', not 'export')\n\
+  gws drive files get --params '{\"alt\": \"media\", \"fileId\": \"FILE_ID\"}' --output file.pdf",
+            );
+        }
 
         // Only add --json flag if the method accepts a request body
         if method.request.is_some() {
@@ -168,7 +197,7 @@ fn build_resource_command(name: &str, resource: &RestResource) -> Option<Command
     sub_names.sort();
     for sub_name in sub_names {
         let sub_resource = &resource.resources[sub_name];
-        if let Some(sub_cmd) = build_resource_command(sub_name, sub_resource) {
+        if let Some(sub_cmd) = build_resource_command(service_name, sub_name, sub_resource) {
             has_children = true;
             cmd = cmd.subcommand(sub_cmd);
         }
@@ -277,6 +306,80 @@ mod tests {
         assert!(
             sanitize_arg.is_some(),
             "--sanitize arg should be present on root command"
+        );
+    }
+
+    /// Build a minimal drive.files doc that includes an `export` method and
+    /// verify that the generated command carries the clarifying after_help note.
+    #[test]
+    fn test_drive_files_export_after_help() {
+        let mut methods = HashMap::new();
+        methods.insert(
+            "export".to_string(),
+            RestMethod {
+                id: Some("drive.files.export".to_string()),
+                description: Some(
+                    "Exports a Google Workspace document to the requested MIME type".to_string(),
+                ),
+                http_method: "GET".to_string(),
+                path: "files/{fileId}/export".to_string(),
+                parameters: HashMap::new(),
+                parameter_order: vec![],
+                request: None,
+                response: None,
+                scopes: vec!["https://www.googleapis.com/auth/drive.readonly".to_string()],
+                flat_path: None,
+                supports_media_download: true,
+                supports_media_upload: false,
+                media_upload: None,
+            },
+        );
+
+        let mut resources = HashMap::new();
+        resources.insert(
+            "files".to_string(),
+            RestResource {
+                methods,
+                resources: HashMap::new(),
+            },
+        );
+
+        let doc = RestDescription {
+            name: "drive".to_string(),
+            version: "v3".to_string(),
+            title: None,
+            description: None,
+            root_url: "".to_string(),
+            service_path: "".to_string(),
+            base_url: None,
+            schemas: HashMap::new(),
+            resources,
+            parameters: HashMap::new(),
+            auth: None,
+        };
+
+        let cmd = build_cli(&doc);
+        let files_cmd = cmd.find_subcommand("files").expect("files subcommand missing");
+        let export_cmd = files_cmd
+            .find_subcommand("export")
+            .expect("export subcommand missing");
+
+        let after_help = export_cmd
+            .get_after_help()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        assert!(
+            after_help.contains("backendError"),
+            "after_help should mention backendError: {after_help}"
+        );
+        assert!(
+            after_help.contains("alt"),
+            "after_help should mention alt=media pattern: {after_help}"
+        );
+        assert!(
+            after_help.contains("get"),
+            "after_help should direct users to the 'get' command: {after_help}"
         );
     }
 }
