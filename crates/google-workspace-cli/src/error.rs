@@ -67,7 +67,7 @@ pub fn print_error_json(err: &GwsError) {
     let json = err.to_json();
     println!(
         "{}",
-        serde_json::to_string_pretty(&json).unwrap_or_default()
+        serde_json::to_string(&json).unwrap_or_default()
     );
 
     // Print a colored summary to stderr. For accessNotConfigured errors,
@@ -149,5 +149,32 @@ mod tests {
 
         let input3 = "hello\x07bell\x08backspace";
         assert_eq!(sanitize_for_terminal(input3), "hellobellbackspace");
+    }
+
+    #[test]
+    fn test_print_error_json_is_single_line() {
+        // Verify that the JSON serialized from each error variant contains no
+        // newline characters, preserving NDJSON stream compatibility.
+        let errors = vec![
+            GwsError::Api {
+                code: 403,
+                message: "Forbidden".to_string(),
+                reason: "forbidden".to_string(),
+                enable_url: Some("https://example.com".to_string()),
+            },
+            GwsError::Auth("token expired".to_string()),
+            GwsError::Validation("bad argument".to_string()),
+            GwsError::Discovery("schema missing".to_string()),
+            GwsError::Other(anyhow::anyhow!("unexpected")),
+        ];
+
+        for err in &errors {
+            let json = err.to_json();
+            let output = serde_json::to_string(&json).unwrap_or_default();
+            assert!(
+                !output.contains('\n'),
+                "error JSON must be a single line for NDJSON compatibility, got:\n{output}"
+            );
+        }
     }
 }
