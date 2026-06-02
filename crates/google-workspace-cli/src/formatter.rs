@@ -152,7 +152,7 @@ fn format_table_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         format_array_as_table(arr, emit_header)
     } else if let Value::Object(obj) = value {
-        // Single object: key/value table â€” flatten nested objects first
+        // Single object: key/value table — flatten nested objects first
         let mut output = String::new();
         let flat = flatten_object(obj, "");
         let max_key_len = flat.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
@@ -245,11 +245,11 @@ fn format_array_as_table(arr: &[Value], emit_header: bool) -> String {
         let _ = writeln!(output, "{}", header.join("  "));
 
         // Separator
-        let sep: Vec<String> = widths.iter().map(|w| "â”€".repeat(*w)).collect();
+        let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
         let _ = writeln!(output, "{}", sep.join("  "));
     }
 
-    // Rows â€” truncate by char count to avoid panicking on multi-byte UTF-8.
+    // Rows — truncate by char count to avoid panicking on multi-byte UTF-8.
     for row in &rows {
         let cells: Vec<String> = row
             .iter()
@@ -259,7 +259,7 @@ fn format_array_as_table(arr: &[Value], emit_header: bool) -> String {
                 let truncated = if char_len > widths[i] {
                     // Safe char-boundary slice: take widths[i]-1 chars, then append ellipsis.
                     let truncated_str: String = c.chars().take(widths[i] - 1).collect();
-                    format!("{truncated_str}â€¦")
+                    format!("{truncated_str}…")
                 } else {
                     c.clone()
                 };
@@ -352,7 +352,7 @@ fn format_csv_page(value: &Value, emit_header: bool) -> String {
     } else if let Value::Array(arr) = value {
         arr.as_slice()
     } else {
-        // Single value â€” just output it
+        // Single value — just output it
         return value_to_cell(value);
     };
 
@@ -499,7 +499,7 @@ mod tests {
         assert!(output.contains("hello.txt"));
         assert!(output.contains("world.txt"));
         // Check separator line
-        assert!(output.contains("â”€â”€"));
+        assert!(output.contains("──"));
     }
 
     #[test]
@@ -563,7 +563,7 @@ mod tests {
     fn test_format_table_multibyte_truncation_does_not_panic() {
         // Column width cap is 60 chars, so a long string with multi-byte chars
         // must be safely truncated without a byte-boundary panic.
-        let long_emoji = "ðŸ˜€".repeat(70); // each emoji is 4 bytes
+        let long_emoji = "😀".repeat(70); // each emoji is 4 bytes
         let val = json!([{"col": long_emoji}]);
         // Should not panic
         let output = format_value(&val, &OutputFormat::Table).unwrap();
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn test_format_table_multibyte_exact_boundary() {
         // Multi-byte chars at various positions must not panic or produce garbled output.
-        let val = json!([{"name": "cafÃ© rÃ©sumÃ© naÃ¯ve"}]);
+        let val = json!([{"name": "café résumé naïve"}]);
         let output = format_value(&val, &OutputFormat::Table).unwrap();
         assert!(output.contains("name"), "column must appear:\n{output}");
     }
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_format_csv_flat_scalars() {
-        // Flat array of non-object, non-array values â†’ one value per line
+        // Flat array of non-object, non-array values → one value per line
         let val = json!(["apple", "banana", "cherry"]);
         let output = format_value(&val, &OutputFormat::Csv).unwrap();
         let lines: Vec<&str> = output.lines().collect();
@@ -756,7 +756,7 @@ mod tests {
             output.contains("id"),
             "table header must appear on first page"
         );
-        assert!(output.contains("â”€â”€"), "separator must appear on first page");
+        assert!(output.contains("──"), "separator must appear on first page");
     }
 
     #[test]
@@ -769,7 +769,7 @@ mod tests {
         let output = format_value_paginated(&val, &OutputFormat::Table, false).unwrap();
         assert!(output.contains("bar"), "data row must be present");
         assert!(
-            !output.contains("â”€â”€"),
+            !output.contains("──"),
             "separator must be absent on continuation pages"
         );
     }
