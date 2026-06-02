@@ -342,16 +342,25 @@ pub fn parse_service_and_version(
         }
     }
 
+    let is_valid_api_token = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    };
+
     let (api_name, version) = match services::resolve_service(service_arg) {
-        Ok((name, default_ver)) => (name, version_override.unwrap_or(default_ver)),
+        Ok((name, default_ver)) => {
+            let ver = version_override.unwrap_or(default_ver);
+            if !is_valid_api_token(&ver) {
+                return Err(GwsError::Validation(
+                    "Invalid version override: only alphanumeric characters, underscores, hyphens, and dots are allowed.".to_string()
+                ));
+            }
+            (name, ver)
+        }
         Err(e) => {
             if let Some(ver) = version_override {
-                let is_valid = |s: &str| {
-                    !s.is_empty()
-                        && s.chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
-                };
-                if is_valid(service_arg) && is_valid(&ver) {
+                if is_valid_api_token(service_arg) && is_valid_api_token(&ver) {
                     (service_arg.to_string(), ver)
                 } else {
                     return Err(GwsError::Validation(
@@ -810,5 +819,20 @@ mod tests {
         let args = vec!["gws".to_string(), "svc?foo:v1".to_string()];
         let result = parse_service_and_version(&args, "svc?foo:v1");
         assert!(result.is_err(), "special chars in service name must be rejected");
+    }
+
+    #[test]
+    fn test_parse_service_and_version_rejects_malicious_version_override_for_listed_service() {
+        // drive IS a known listed service; a malicious version override must still be rejected
+        let args = vec![
+            "gws".to_string(),
+            "drive".to_string(),
+            "--api-version=../evil".to_string(),
+        ];
+        let result = parse_service_and_version(&args, "drive");
+        assert!(
+            result.is_err(),
+            "path traversal in version_override must be rejected even for listed services"
+        );
     }
 }
