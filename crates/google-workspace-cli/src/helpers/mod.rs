@@ -25,6 +25,7 @@ pub mod gmail;
 pub mod modelarmor;
 pub mod script;
 pub mod sheets;
+pub mod tasks;
 pub mod workflows;
 
 /// Base URL for the Google Cloud Pub/Sub v1 API.
@@ -120,6 +121,7 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "drive" => Some(Box::new(drive::DriveHelper)),
         "calendar" => Some(Box::new(calendar::CalendarHelper)),
         "script" | "apps-script" => Some(Box::new(script::ScriptHelper)),
+        "tasks" => Some(Box::new(tasks::TasksHelper)),
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
         "modelarmor" => Some(Box::new(modelarmor::ModelArmorHelper)),
         "workflow" => Some(Box::new(workflows::WorkflowHelper)),
