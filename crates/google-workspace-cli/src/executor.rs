@@ -495,6 +495,13 @@ pub async fn execute_method(
                 .await
                 .context("Failed to read response body")?;
 
+            let body_text =
+                if method_id == "gmail.users.messages.attachments.get" {
+                    pad_attachment_data(body_text)
+                } else {
+                    body_text
+                };
+
             let should_continue = handle_json_response(
                 &body_text,
                 pagination,
@@ -1184,6 +1191,30 @@ pub fn mime_to_extension(mime: &str) -> &str {
     } else {
         "bin"
     }
+}
+
+/// Re-pad the `data` field in a `gmail.users.messages.attachments.get` response.
+///
+/// Google's API returns unpadded base64url strings (RFC 4648 §5). Standard decoders
+/// in Python, Node.js, and other languages require `=` padding; without it they raise
+/// an error when `len % 4 != 0`. This function parses the JSON response, appends the
+/// correct number of `=` characters to the `data` field if the field is present, and
+/// re-serialises. If the field is already correctly padded the formula `(4 - len%4)%4`
+/// yields 0, so no extra `=` characters are added.
+fn pad_attachment_data(body: String) -> String {
+    let mut val: Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => return body,
+    };
+
+    if let Some(obj) = val.as_object_mut() {
+        if let Some(Value::String(data)) = obj.get_mut("data") {
+            let padding = (4 - data.len() % 4) % 4;
+            data.push_str(&"=".repeat(padding));
+        }
+    }
+
+    serde_json::to_string(&val).unwrap_or_else(|_| body)
 }
 
 #[cfg(test)]
@@ -2023,6 +2054,65 @@ mod tests {
             }
             _ => panic!("Expected Api error"),
         }
+    }
+
+    #[test]
+    fn test_pad_attachment_data_no_padding_needed() {
+        // "abcd" has length 4, so (4 - 4%4)%4 = 0 — no padding added
+        let input = r#"{"attachmentId":"id1","size":3,"data":"abcd"}"#.to_string();
+        let result = pad_attachment_data(input);
+        let val: Value = serde_json::from_str(&result).unwrap();
+        let data = val["data"].as_str().unwrap();
+        assert_eq!(data.len() % 4, 0, "already-padded data must not gain extra '='");
+        assert!(!data.ends_with("=="), "no extra padding for length-4 input");
+    }
+
+    #[test]
+    fn test_pad_attachment_data_pads_two() {
+        // "ab" has length 2, needs 2 '=' chars
+        let input = r#"{"attachmentId":"id1","size":1,"data":"ab"}"#.to_string();
+        let result = pad_attachment_data(input);
+        let val: Value = serde_json::from_str(&result).unwrap();
+        let data = val["data"].as_str().unwrap();
+        assert_eq!(data, "ab==");
+        assert_eq!(data.len() % 4, 0);
+    }
+
+    #[test]
+    fn test_pad_attachment_data_pads_one() {
+        // "abc" has length 3, needs 1 '=' char
+        let input = r#"{"attachmentId":"id1","size":2,"data":"abc"}"#.to_string();
+        let result = pad_attachment_data(input);
+        let val: Value = serde_json::from_str(&result).unwrap();
+        let data = val["data"].as_str().unwrap();
+        assert_eq!(data, "abc=");
+        assert_eq!(data.len() % 4, 0);
+    }
+
+    #[test]
+    fn test_pad_attachment_data_already_padded_not_double_padded() {
+        // "YWJj" is properly padded (length 4); should not gain extra '='
+        let input = r#"{"attachmentId":"id1","size":3,"data":"YWJj"}"#.to_string();
+        let result = pad_attachment_data(input);
+        let val: Value = serde_json::from_str(&result).unwrap();
+        let data = val["data"].as_str().unwrap();
+        assert_eq!(data, "YWJj", "already-padded data must be unchanged");
+    }
+
+    #[test]
+    fn test_pad_attachment_data_missing_data_field_is_noop() {
+        // Responses without a `data` field (shouldn't happen per spec, but must not panic)
+        let input = r#"{"attachmentId":"id1","size":0}"#.to_string();
+        let result = pad_attachment_data(input);
+        let val: Value = serde_json::from_str(&result).unwrap();
+        assert!(val.get("data").is_none());
+    }
+
+    #[test]
+    fn test_pad_attachment_data_invalid_json_passthrough() {
+        let input = "not json at all".to_string();
+        let result = pad_attachment_data(input.clone());
+        assert_eq!(result, input);
     }
 }
 
