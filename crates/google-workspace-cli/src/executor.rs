@@ -180,12 +180,19 @@ async fn build_http_request(
         }
     }
 
-    // Only send quota project for service-account auth; OAuth users may not be
-    // IAM members of the project, so the header would trigger 403 errors.
-    if *auth_method == AuthMethod::ServiceAccount {
-        if let Some(quota_project) = crate::auth::get_quota_project() {
-            request = request.header("x-goog-user-project", quota_project);
-        }
+    // For service-account auth, always forward the quota project (env var, config, or ADC).
+    // For OAuth, only send when GOOGLE_WORKSPACE_PROJECT_ID is explicitly set — the user
+    // has opted in, so we honour it even though OAuth users may not be IAM members of every
+    // project.  Omit the header entirely when neither condition is met to avoid 403 errors.
+    let quota_project = match auth_method {
+        AuthMethod::ServiceAccount => crate::auth::get_quota_project(),
+        AuthMethod::OAuth => std::env::var("GOOGLE_WORKSPACE_PROJECT_ID")
+            .ok()
+            .filter(|s| !s.is_empty()),
+        AuthMethod::None => None,
+    };
+    if let Some(quota_project) = quota_project {
+        request = request.header("x-goog-user-project", quota_project);
     }
 
     let mut all_query_params = input.query_params.clone();
@@ -2396,11 +2403,16 @@ async fn test_get_does_not_set_content_length_zero() {
     );
 }
 
+/// Mutex to serialise tests that mutate GOOGLE_WORKSPACE_PROJECT_ID so they
+/// don't race with each other when the test binary runs its threads in parallel.
+static QUOTA_PROJECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[tokio::test]
-async fn test_oauth_auth_does_not_set_quota_project_header() {
-    // Arrange: even if get_quota_project() would return a value, OAuth requests
-    // must NOT send x-goog-user-project because OAuth users are not necessarily
-    // IAM members of the project and the header would trigger 403 errors.
+async fn test_oauth_auth_does_not_set_quota_project_header_by_default() {
+    let _guard = QUOTA_PROJECT_ENV_MUTEX.lock().unwrap();
+    // Without GOOGLE_WORKSPACE_PROJECT_ID set, OAuth requests must omit x-goog-user-project
+    // because OAuth users are not necessarily IAM members of the project.
+    std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
     let client = reqwest::Client::new();
     let method = RestMethod {
         http_method: "GET".to_string(),
@@ -2431,6 +2443,49 @@ async fn test_oauth_auth_does_not_set_quota_project_header() {
     let built = request.build().unwrap();
     assert!(
         built.headers().get("x-goog-user-project").is_none(),
-        "OAuth requests must not include x-goog-user-project header"
+        "OAuth requests must not include x-goog-user-project header when env var is not set"
+    );
+}
+
+#[tokio::test]
+async fn test_oauth_auth_sends_quota_project_when_env_var_explicitly_set() {
+    let _guard = QUOTA_PROJECT_ENV_MUTEX.lock().unwrap();
+    // When GOOGLE_WORKSPACE_PROJECT_ID is explicitly set, OAuth requests should
+    // honour it and send x-goog-user-project (the user opted in).
+    std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "my-explicit-project");
+    let client = reqwest::Client::new();
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "files".to_string(),
+        ..Default::default()
+    };
+    let input = ExecutionInput {
+        full_url: "https://example.com/files".to_string(),
+        body: None,
+        params: Map::new(),
+        query_params: Vec::new(),
+        is_upload: false,
+    };
+
+    let request = build_http_request(
+        &client,
+        &method,
+        &input,
+        Some("fake-token"),
+        &AuthMethod::OAuth,
+        None,
+        0,
+        &None,
+    )
+    .await
+    .unwrap();
+
+    std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+
+    let built = request.build().unwrap();
+    assert_eq!(
+        built.headers().get("x-goog-user-project").and_then(|v| v.to_str().ok()),
+        Some("my-explicit-project"),
+        "OAuth requests must include x-goog-user-project when GOOGLE_WORKSPACE_PROJECT_ID is set"
     );
 }
