@@ -289,6 +289,7 @@ pub const FULL_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
@@ -857,14 +858,20 @@ fn filter_redundant_restrictive_scopes(scopes: Vec<String>) -> Vec<String> {
     // broader scopes. Each entry maps a restrictive scope to the broader scopes
     // that make it redundant. The restrictive scope is removed only if at least
     // one of its broader alternatives is already in the list.
-    const RESTRICTIVE_SCOPES: &[(&str, &[&str])] = &[(
-        "https://www.googleapis.com/auth/gmail.metadata",
-        &[
-            "https://mail.google.com/",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/gmail.readonly",
-        ],
-    )];
+    const RESTRICTIVE_SCOPES: &[(&str, &[&str])] = &[
+        (
+            "https://www.googleapis.com/auth/gmail.metadata",
+            &[
+                "https://mail.google.com/",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/gmail.readonly",
+            ],
+        ),
+        (
+            "https://www.googleapis.com/auth/gmail.settings.basic",
+            &["https://mail.google.com/"],
+        ),
+    ];
 
     let scope_set: std::collections::HashSet<String> = scopes.iter().cloned().collect();
 
@@ -1548,6 +1555,10 @@ const SCOPE_ENTRIES: &[ScopeEntry] = &[
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/gmail.modify",
         label: "Gmail",
+    },
+    ScopeEntry {
+        scope: "https://www.googleapis.com/auth/gmail.settings.basic",
+        label: "Gmail Settings",
     },
     ScopeEntry {
         scope: "https://www.googleapis.com/auth/calendar",
@@ -2358,6 +2369,57 @@ mod tests {
         ];
         let result = filter_redundant_restrictive_scopes(scopes.clone());
         assert_eq!(result, scopes);
+    }
+
+    // ── gmail.settings.basic scope tests ────────────────────────────────
+
+    #[test]
+    fn full_scopes_includes_gmail_settings_basic() {
+        assert!(
+            FULL_SCOPES.contains(&"https://www.googleapis.com/auth/gmail.settings.basic"),
+            "FULL_SCOPES must include gmail.settings.basic"
+        );
+    }
+
+    #[test]
+    fn scope_entries_includes_gmail_settings_basic() {
+        assert!(
+            SCOPE_ENTRIES
+                .iter()
+                .any(|e| e.scope == "https://www.googleapis.com/auth/gmail.settings.basic"),
+            "SCOPE_ENTRIES must include gmail.settings.basic"
+        );
+    }
+
+    #[test]
+    fn filter_restrictive_removes_settings_basic_when_full_gmail_present() {
+        let scopes = vec![
+            "https://mail.google.com/".to_string(),
+            "https://www.googleapis.com/auth/gmail.settings.basic".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes);
+        assert_eq!(result, vec!["https://mail.google.com/"]);
+    }
+
+    #[test]
+    fn filter_restrictive_keeps_settings_basic_when_no_full_gmail() {
+        let scopes = vec![
+            "https://www.googleapis.com/auth/gmail.modify".to_string(),
+            "https://www.googleapis.com/auth/gmail.settings.basic".to_string(),
+        ];
+        let result = filter_redundant_restrictive_scopes(scopes.clone());
+        assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn resolve_scopes_full_includes_gmail_settings_basic() {
+        let scopes = run_resolve_scopes(ScopeMode::Full, None);
+        assert!(
+            scopes
+                .iter()
+                .any(|s| s == "https://www.googleapis.com/auth/gmail.settings.basic"),
+            "Full scope mode must include gmail.settings.basic"
+        );
     }
 
     #[test]
