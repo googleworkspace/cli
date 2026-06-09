@@ -18,11 +18,17 @@ use crate::discovery::{RestDescription, RestResource};
 
 /// Builds the full CLI command tree from a Discovery Document.
 pub fn build_cli(doc: &RestDescription) -> Command {
+    build_cli_for_service(doc, &doc.name)
+}
+
+/// Builds the full CLI command tree with the user-facing service name in help usage.
+pub fn build_cli_for_service(doc: &RestDescription, service_name: &str) -> Command {
     let about_text = doc
         .description
         .clone()
         .unwrap_or_else(|| "Google Workspace CLI".to_string());
     let mut root = Command::new("gws")
+        .bin_name(format!("gws {service_name}"))
         .about(about_text)
         .subcommand_required(true)
         .arg_required_else_help(true)
@@ -277,6 +283,35 @@ mod tests {
         assert!(
             sanitize_arg.is_some(),
             "--sanitize arg should be present on root command"
+        );
+    }
+
+    #[test]
+    fn test_help_usage_includes_service_name() {
+        let doc = make_doc();
+
+        let service_help = build_cli(&doc)
+            .try_get_matches_from(["gws", "--help"])
+            .unwrap_err();
+        assert_eq!(service_help.kind(), clap::error::ErrorKind::DisplayHelp);
+        let service_help = service_help.to_string();
+        assert!(
+            service_help.contains("Usage: gws drive [OPTIONS] <COMMAND>"),
+            "{service_help}"
+        );
+
+        let resource_help = build_cli(&doc)
+            .try_get_matches_from(["gws", "files", "--help"])
+            .unwrap_err();
+        assert_eq!(resource_help.kind(), clap::error::ErrorKind::DisplayHelp);
+        let resource_help = resource_help.to_string();
+        assert!(
+            resource_help.contains("Usage: gws drive files [OPTIONS] <COMMAND>"),
+            "{resource_help}"
+        );
+        assert!(
+            !resource_help.contains("Usage: gws files [OPTIONS] <COMMAND>"),
+            "{resource_help}"
         );
     }
 }
