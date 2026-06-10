@@ -258,15 +258,19 @@ fn parse_message_headers(headers: &[Value]) -> ParsedMessageHeaders {
         let name = header.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let value = header.get("value").and_then(|v| v.as_str()).unwrap_or("");
 
-        match name {
-            "From" => parsed.from = value.to_string(),
-            "Reply-To" => append_address_list_header_value(&mut parsed.reply_to, value),
-            "To" => append_address_list_header_value(&mut parsed.to, value),
-            "Cc" => append_address_list_header_value(&mut parsed.cc, value),
-            "Subject" => parsed.subject = value.to_string(),
-            "Date" => parsed.date = value.to_string(),
-            "Message-ID" | "Message-Id" => parsed.message_id = value.to_string(),
-            "References" => append_header_value(&mut parsed.references, value),
+        // RFC 5322 §1.2.2: header field names are case-insensitive. Some MTAs
+        // (notably Microsoft Exchange / Outlook) emit non-canonical casing such
+        // as "CC", and the Gmail API preserves the original casing. Match on the
+        // lowercased name so those headers are not silently dropped (issue #642).
+        match name.to_ascii_lowercase().as_str() {
+            "from" => parsed.from = value.to_string(),
+            "reply-to" => append_address_list_header_value(&mut parsed.reply_to, value),
+            "to" => append_address_list_header_value(&mut parsed.to, value),
+            "cc" => append_address_list_header_value(&mut parsed.cc, value),
+            "subject" => parsed.subject = value.to_string(),
+            "date" => parsed.date = value.to_string(),
+            "message-id" => parsed.message_id = value.to_string(),
+            "references" => append_header_value(&mut parsed.references, value),
             _ => {}
         }
     }
@@ -2158,6 +2162,39 @@ mod tests {
         let original = parse_original_message(&msg).unwrap();
         // Bare ID (no angle brackets) should be preserved as-is
         assert_eq!(original.message_id, "bare-id@example.com");
+    }
+
+    #[test]
+    fn test_parse_original_message_case_insensitive_headers() {
+        // RFC 5322 §1.2.2: header names are case-insensitive. Microsoft Exchange /
+        // Outlook commonly emit non-canonical casing such as "CC", and the Gmail API
+        // preserves it. These must still be recognized so reply-all does not silently
+        // drop recipients (issue #642).
+        let msg = json!({
+            "threadId": "t1",
+            "snippet": "",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "FROM", "value": "alice@example.com" },
+                    { "name": "TO", "value": "bob@example.com" },
+                    { "name": "CC", "value": "carol@example.com" },
+                    { "name": "cc", "value": "dave@example.com" },
+                    { "name": "Subject", "value": "Hi" },
+                    { "name": "message-id", "value": "<min@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("text") }
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        assert_eq!(original.from.email, "alice@example.com");
+        assert_eq!(original.to.len(), 1);
+        assert_eq!(original.to[0].email, "bob@example.com");
+        let cc = original.cc.expect("CC recipients must not be dropped");
+        assert_eq!(cc.len(), 2);
+        assert_eq!(cc[0].email, "carol@example.com");
+        assert_eq!(cc[1].email, "dave@example.com");
+        assert_eq!(original.message_id, "min@example.com");
     }
 
     #[test]
