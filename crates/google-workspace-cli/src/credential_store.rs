@@ -210,14 +210,32 @@ fn resolve_key(
                         if decoded.len() == 32 {
                             let mut arr = [0u8; 32];
                             arr.copy_from_slice(&decoded);
-                            // Cleanup insecure file fallback if it still exists.
-                            // TOCTOU race condition is a known limitation.
-                            if let Err(e) = std::fs::remove_file(key_file) {
-                                if e.kind() != std::io::ErrorKind::NotFound {
+                            // Mirror the keyring's key to the .encryption_key file
+                            // so the file stays a durable fallback for headless/CI envs.
+                            // Per the function docstring, the file is never deleted.
+                            // Uses save_key_file (atomic_write with 0o600 + fsync) and
+                            // ensure_key_dir (0o700 on parent) to keep file permissions
+                            // restrictive and the write race-free.
+                            // Per Gemini code review, only write when the existing file
+                            // content does not already match the keyring key — avoids
+                            // unnecessary fsync + disk wear on every CLI invocation.
+                            let needs_write = match read_key_file(key_file) {
+                                Some(existing) => existing != arr,
+                                None => true,
+                            };
+                            if needs_write {
+                                if let Err(e) = ensure_key_dir(key_file) {
                                     eprintln!(
-                                        "Warning: failed to remove legacy key file at '{}': {}",
+                                        "Warning: failed to set up key directory '{}': {}",
                                         key_file.display(),
-                                        e
+                                        sanitize_for_terminal(&e.to_string())
+                                    );
+                                }
+                                if let Err(e) = save_key_file(key_file, b64_key.trim()) {
+                                    eprintln!(
+                                        "Warning: failed to mirror keyring key to '{}': {}",
+                                        key_file.display(),
+                                        sanitize_for_terminal(&e.to_string())
                                     );
                                 }
                             }
@@ -243,12 +261,32 @@ fn resolve_key(
                     sanitize_for_terminal(&e.to_string())
                 );
             }
-            if let Err(e) = std::fs::remove_file(key_file) {
-                if e.kind() != std::io::ErrorKind::NotFound {
+            // Mirror the new key to the .encryption_key file as a durable fallback
+            // for headless/CI environments. Per the function docstring, the file
+            // is never deleted. Uses save_key_file (atomic_write with 0o600 + fsync)
+            // and ensure_key_dir (0o700 on parent) to keep file permissions
+            // restrictive and the write race-free.
+            // Per Gemini code review, only write when the existing file content does
+            // not already match — avoids unnecessary fsync + disk wear on every
+            // CLI invocation. (For a freshly generated key, the file should never
+            // match, so this is a defensive check that costs only one file read.)
+            let needs_write = match read_key_file(key_file) {
+                Some(existing) => existing != key,
+                None => true,
+            };
+            if needs_write {
+                if let Err(e) = ensure_key_dir(key_file) {
                     eprintln!(
-                        "Warning: failed to remove legacy key file at '{}': {}",
+                        "Warning: failed to set up key directory '{}': {}",
                         key_file.display(),
-                        e
+                        sanitize_for_terminal(&e.to_string())
+                    );
+                }
+                if let Err(e) = save_key_file(key_file, b64_key.trim()) {
+                    eprintln!(
+                        "Warning: failed to mirror keyring key to '{}': {}",
+                        key_file.display(),
+                        sanitize_for_terminal(&e.to_string())
                     );
                 }
             }
@@ -581,31 +619,39 @@ mod tests {
 
     #[test]
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    fn keyring_backend_cleans_up_legacy_file_on_success() {
+    fn keyring_backend_mirrors_legacy_file_on_success() {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
 
-        // Create a legacy fallback file
-        std::fs::write(&key_file, STANDARD.encode([99u8; 32])).unwrap();
+        // Create a legacy fallback file with a stale key
+        let stale_key = [99u8; 32];
+        std::fs::write(&key_file, STANDARD.encode(stale_key)).unwrap();
         assert!(key_file.exists());
 
-        // Keyring has a valid key
+        // Keyring has a valid (different) key
         let expected = [7u8; 32];
+        assert_ne!(stale_key, expected, "stale key must differ for this test");
         let mock = MockKeyring::with_password(&STANDARD.encode(expected));
 
         let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
 
         assert_eq!(result, expected);
         assert!(
-            !key_file.exists(),
-            "Legacy file must be deleted upon successful keyring read"
+            key_file.exists(),
+            "Legacy file must NOT be deleted — it serves as a durable fallback"
+        );
+        let synced = read_key_file(&key_file).unwrap();
+        assert_eq!(
+            synced, expected,
+            "Legacy file must be updated to mirror the keyring key"
         );
     }
 
     #[test]
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    fn keyring_backend_cleans_up_legacy_file_on_generation() {
+    fn keyring_backend_mirrors_legacy_file_on_generation() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(".encryption_key");
 
@@ -618,8 +664,13 @@ mod tests {
 
         assert_eq!(result.len(), 32);
         assert!(
-            !key_file.exists(),
-            "Legacy file must be deleted upon successful keyring generation"
+            key_file.exists(),
+            "Legacy file must NOT be deleted — it serves as a durable fallback"
+        );
+        let synced = read_key_file(&key_file).unwrap();
+        assert_eq!(
+            synced, result,
+            "Legacy file must be updated to mirror the newly-generated keyring key"
         );
     }
 
@@ -642,6 +693,61 @@ mod tests {
 
     // ---- Backend::Keyring tests (Linux fallback behavior) ----
 
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn keyring_backend_skips_write_when_file_already_has_correct_key() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        // Pre-populate the file with the SAME key the keyring will return
+        let expected = [42u8; 32];
+        std::fs::write(&key_file, STANDARD.encode(expected)).unwrap();
+        let original_mtime = std::fs::metadata(&key_file).unwrap().modified().unwrap();
+
+        // Keyring has the same key
+        let mock = MockKeyring::with_password(&STANDARD.encode(expected));
+
+        // Brief sleep to ensure mtime would change if the file were rewritten
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+
+        // File mtime should be unchanged (no write happened)
+        let new_mtime = std::fs::metadata(&key_file).unwrap().modified().unwrap();
+        assert_eq!(
+            original_mtime, new_mtime,
+            "File should not be rewritten when its content already matches the keyring key"
+        );
+        // File content should be unchanged
+        let synced = read_key_file(&key_file).unwrap();
+        assert_eq!(synced, expected);
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn keyring_backend_writes_when_file_has_stale_key() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let dir = tempfile::tempdir().unwrap();
+        let key_file = dir.path().join(".encryption_key");
+
+        // Pre-populate the file with a DIFFERENT (stale) key
+        let stale_key = [99u8; 32];
+        std::fs::write(&key_file, STANDARD.encode(stale_key)).unwrap();
+
+        // Keyring has a different valid key
+        let expected = [7u8; 32];
+        assert_ne!(stale_key, expected);
+        let mock = MockKeyring::with_password(&STANDARD.encode(expected));
+
+        let result = resolve_key(KeyringBackend::Keyring, &mock, &key_file).unwrap();
+        assert_eq!(result, expected);
+        // File should be updated to the new key
+        let synced = read_key_file(&key_file).unwrap();
+        assert_eq!(synced, expected, "file should be updated when stale");
+    }
     #[test]
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     fn keyring_backend_creates_file_backup_when_missing() {
