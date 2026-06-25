@@ -136,6 +136,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         version: "v1",
         description: "Manage Google Apps Script projects",
     },
+    ServiceEntry {
+        aliases: &["chromewebstore"],
+        api_name: "chromewebstore",
+        version: "v1.1",
+        description: "Manage Chrome Web Store items (upload and publish extensions)",
+    },
 ];
 
 /// Resolves a service alias to (api_name, version).
@@ -173,6 +179,10 @@ mod tests {
         assert_eq!(
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("chromewebstore").unwrap(),
+            ("chromewebstore".to_string(), "v1.1".to_string())
         );
     }
 
