@@ -25,6 +25,7 @@ Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JS
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
+- [Updating](#updating)
 - [Quick Start](#quick-start)
 - [Why gws?](#why-gws)
 - [Authentication](#authentication)
@@ -69,6 +70,25 @@ On macOS and Linux, you can also install via [Homebrew](https://brew.sh/):
 ```bash
 brew install googleworkspace-cli
 ```
+
+## Updating
+
+Use the same package manager or install method you used originally:
+
+```bash
+# Homebrew
+brew update && brew upgrade googleworkspace-cli
+
+# npm
+npm update -g @googleworkspace/cli
+
+# Cargo
+cargo install --git https://github.com/googleworkspace/cli --locked --force
+```
+
+If you installed a pre-built binary manually, download the latest archive from
+[GitHub Releases](https://github.com/googleworkspace/cli/releases) and replace
+the `gws` binary in your `$PATH`.
 
 ## Quick Start
 
