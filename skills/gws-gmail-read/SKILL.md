@@ -45,6 +45,11 @@ gws gmail +read --id 18f1a2b3c4d --format json | jq '.body'
 
 - Converts HTML-only messages to plain text automatically.
 - Handles multipart/alternative and base64 decoding.
+- Gmail API IDs are not durable Gmail web permalinks. For an API-derivable
+  browser link, read the `Message-ID` header with `--headers` and use a Gmail
+  search URL like `https://mail.google.com/mail/u/0/#search/rfc822msgid:<id>`;
+  there is no supported offline conversion from API hex IDs to Gmail's opaque
+  web permalink IDs.
 
 ## See Also
 

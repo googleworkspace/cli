@@ -357,6 +357,15 @@ gws workflow +standup-report
 gws calendar +agenda --today --timezone America/New_York
 ```
 
+> **Gmail message links:** Gmail API message and thread IDs are not durable
+> Gmail web permalinks. The common `https://mail.google.com/mail/u/0/#all/<id>`
+> form depends on Gmail's loaded web app resolving an internal alias and can fail
+> from a cold browser load. If you need an API-derivable browser link, use a
+> `rfc822msgid:<Message-ID>` Gmail search URL instead; there is currently no
+> supported offline conversion from Gmail API IDs to the opaque web IDs used in
+> Gmail permalinks. See issue #858 and the inverse web-URL-to-API-ID discussion in
+> issue #790.
+
 ### Model Armor (Response Sanitization)
 
 Integrate [Google Cloud Model Armor](https://cloud.google.com/security/products/model-armor) to scan API responses for prompt injection before they reach your agent.

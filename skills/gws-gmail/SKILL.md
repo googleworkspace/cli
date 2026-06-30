@@ -59,3 +59,22 @@ gws schema gmail.<resource>.<method>
 
 Use `gws schema` output to build your `--params` and `--json` flags.
 
+## Gmail message links
+
+Gmail API `id` and `threadId` values are not durable Gmail web permalinks. The
+common `https://mail.google.com/mail/u/0/#all/<id>` form relies on a loaded,
+signed-in Gmail web app resolving an internal alias and can fail from a cold
+browser load.
+
+If you need a browser link that can be derived from API data, read the
+`Message-ID` header and use a Gmail search URL such as:
+
+```text
+https://mail.google.com/mail/u/0/#search/rfc822msgid:<message-id@example.com>
+```
+
+That search URL is not a direct permalink, but it is the supported API-derivable
+option today. There is currently no supported offline conversion from Gmail API
+hex IDs to the opaque web IDs used in Gmail permalinks. See issue #858 and the
+inverse web-URL-to-API-ID discussion in issue #790.
+
