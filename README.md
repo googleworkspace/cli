@@ -243,6 +243,25 @@ The `gws-shared` skill includes an `install` block so OpenClaw auto-installs the
 
 </details>
 
+<details>
+<summary>Autohand Code setup</summary>
+
+Autohand Code reads skills from `~/.autohand/skills/` globally or `.autohand/skills/` in a workspace.
+
+```bash
+# Symlink all skills globally (stays in sync with repo)
+mkdir -p ~/.autohand/skills/
+ln -s $(pwd)/skills/gws-* ~/.autohand/skills/
+
+# Or install selected skills for one workspace
+mkdir -p .autohand/skills/
+cp -r skills/gws-drive skills/gws-gmail .autohand/skills/
+```
+
+Authenticate `gws` first with `gws auth setup` or `gws auth login`, then ask Autohand to use a skill by name, for example `Use gws-drive to list recent files`. Autohand also provides `autohand --skill-install` for cataloged skills, with `--project` for workspace-level installs; use the direct copy or symlink path above until these skills are listed in that catalog.
+
+</details>
+
 ## Gemini CLI Extension
 
 1. Authenticate the CLI first:
