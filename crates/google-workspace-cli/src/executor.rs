@@ -2405,6 +2405,7 @@ async fn test_get_does_not_set_content_length_zero() {
 
 /// Mutex to serialise tests that mutate GOOGLE_WORKSPACE_PROJECT_ID so they
 /// don't race with each other when the test binary runs its threads in parallel.
+#[cfg(test)]
 static QUOTA_PROJECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
@@ -2484,7 +2485,10 @@ async fn test_oauth_auth_sends_quota_project_when_env_var_explicitly_set() {
 
     let built = request.build().unwrap();
     assert_eq!(
-        built.headers().get("x-goog-user-project").and_then(|v| v.to_str().ok()),
+        built
+            .headers()
+            .get("x-goog-user-project")
+            .and_then(|v| v.to_str().ok()),
         Some("my-explicit-project"),
         "OAuth requests must include x-goog-user-project when GOOGLE_WORKSPACE_PROJECT_ID is set"
     );
