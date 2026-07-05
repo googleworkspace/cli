@@ -168,10 +168,35 @@ fn normalize_non_existing(path: &Path) -> Result<PathBuf, GwsError> {
 }
 
 /// Percent-encode a value for use as a single URL path segment (e.g., file ID,
-/// calendar ID, message ID). All non-alphanumeric characters are encoded.
+/// calendar ID, message ID). RFC 3986 unreserved characters (`A-Z`, `a-z`,
+/// `0-9`, `-`, `.`, `_`, `~`) are left intact; everything else that can alter
+/// URL structure is encoded.
 pub fn encode_path_segment(s: &str) -> String {
-    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-    utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
+    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+
+    const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'<')
+        .add(b'>')
+        .add(b'?')
+        .add(b'`')
+        .add(b'{')
+        .add(b'}')
+        .add(b'/')
+        .add(b':')
+        .add(b';')
+        .add(b'=')
+        .add(b'@')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'|');
+
+    utf8_percent_encode(s, PATH_SEGMENT_ENCODE_SET).to_string()
 }
 
 /// Percent-encode a value for use in URI path templates where `/` should stay
@@ -406,7 +431,13 @@ mod tests {
         // Calendar IDs are often email addresses
         let encoded = encode_path_segment("user@gmail.com");
         assert!(!encoded.contains('@'));
-        assert!(!encoded.contains('.'));
+        assert!(encoded.contains('.'));
+    }
+
+    #[test]
+    fn test_encode_path_segment_preserves_unreserved_script_id() {
+        let script_id = "1-ukYIb8XjT9KQlsj6_NbryM5UJXBwAMeY5GKtSBA05csXty3iY7DhO-P";
+        assert_eq!(encode_path_segment(script_id), script_id);
     }
 
     #[test]
