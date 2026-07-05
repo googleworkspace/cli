@@ -23,6 +23,75 @@ use serde_json::json;
 use crate::credential_store;
 use crate::error::GwsError;
 
+/// Self-contained HTML page shown in the browser after the OAuth callback
+/// succeeds. No external requests, no JavaScript; honors the system
+/// light/dark preference and reduced-motion setting.
+const AUTH_SUCCESS_PAGE: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gws &mdash; signed in</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f9f8; --card: #ffffff; --text: #1f2823; --muted: #5f6b64;
+    --green: #188038; --green-ink: #ffffff;
+    --term-bg: #f1f3f2; --term-cmd: #5f6b64; --term-ok: #188038;
+    --edge: rgba(31, 40, 35, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0e0d; --card: #161a18; --text: #e4e8e5; --muted: #9aa59e;
+      --green: #81c995; --green-ink: #06220f;
+      --term-bg: #0f1211; --term-cmd: #9aa59e; --term-ok: #81c995;
+      --edge: rgba(228, 232, 229, 0.08);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  }
+  main {
+    background: var(--card); border: 1px solid var(--edge);
+    border-radius: 16px; padding: 40px 36px 32px; max-width: 420px;
+    width: 100%; text-align: center; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  }
+  .check {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--green);
+    display: inline-grid; place-items: center; animation: pop 0.24s ease-out;
+  }
+  .check svg { width: 28px; height: 28px; stroke: var(--green-ink); }
+  @keyframes pop { from { transform: scale(0.6); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .check { animation: none; } }
+  h1 { font-size: 1.35rem; font-weight: 600; margin: 18px 0 6px; letter-spacing: -0.01em; }
+  p { color: var(--muted); font-size: 0.95rem; }
+  .term {
+    margin-top: 24px; background: var(--term-bg); border: 1px solid var(--edge);
+    border-radius: 10px; padding: 14px 16px; text-align: left;
+    font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .term .cmd { color: var(--term-cmd); }
+  .term .ok { color: var(--term-ok); }
+</style>
+</head>
+<body>
+<main>
+  <div class="check" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>
+  </div>
+  <h1>You&rsquo;re signed in</h1>
+  <p>You can close this tab and return to your terminal.</p>
+  <div class="term" role="status">
+    <div class="cmd">$ gws auth login</div>
+    <div class="ok">&#10003; authentication successful &mdash; credentials saved</div>
+  </div>
+</main>
+</body>
+</html>"#;
+
 /// Response from Google's token endpoint
 #[derive(Debug, Deserialize)]
 struct OAuthTokenResponse {
@@ -143,8 +212,9 @@ async fn login_with_proxy_support(
     let code = extract_authorization_code(&request_line)?;
 
     // Send success response to browser
-    let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
-        <html><body><h1>Success!</h1><p>You may now close this window.</p></body></html>";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{AUTH_SUCCESS_PAGE}"
+    );
     let _ = stream.write_all(response.as_bytes());
 
     // Exchange code for tokens using reqwest (proxy-aware)
