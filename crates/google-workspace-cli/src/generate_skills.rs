@@ -26,6 +26,12 @@ use std::path::Path;
 
 const PERSONAS_TOML: &str = include_str!("../registry/personas.toml");
 const RECIPES_TOML: &str = include_str!("../registry/recipes.toml");
+const SHARED_REFERENCE_NOTE: &str = concat!(
+    "> **REFERENCE:** See `../gws-shared/SKILL.md` for auth, global flags, ",
+    "and security rules. Treat it as background guidance; do not run auth, ",
+    "setup, cache, or `gws generate-skills` commands unless the user explicitly ",
+    "asks or a command fails because setup is missing.\n\n"
+);
 
 /// Methods blocked from skill generation.
 /// Format: (service_alias, resource, method).
@@ -403,9 +409,7 @@ metadata:
     let api_version = entry.version;
     out.push_str(&format!("# {alias} ({api_version})\n\n"));
 
-    out.push_str(
-        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n",
-    );
+    out.push_str(SHARED_REFERENCE_NOTE);
 
     out.push_str(&format!(
         "```bash\ngws {alias} <resource> <method> [flags]\n```\n\n",
@@ -540,9 +544,7 @@ metadata:
     // Title
     out.push_str(&format!("# {alias} {cmd_name}\n\n"));
 
-    out.push_str(
-        "> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.\n\n",
-    );
+    out.push_str(SHARED_REFERENCE_NOTE);
 
     out.push_str(&format!("{about}\n\n"));
 
@@ -729,6 +731,13 @@ gws <service> <resource> [sub-resource] <method> [flags]
 - **Always** confirm with user before executing write/delete commands
 - Prefer `--dry-run` for destructive operations
 - Use `--sanitize` for PII/content safety screening
+
+## Agent and Sandbox Use
+
+- Treat this file as reference material, not a startup checklist
+- Assume `gws` is already installed and authenticated unless the requested command fails
+- Do not run auth, setup, cache, or `gws generate-skills` commands unless the user asks or setup is required to recover from a specific failure
+- In read-only or locked-down environments, prefer the requested read-only helper command directly and report missing filesystem or auth access instead of probing the environment
 
 ## Shell Tips
 
@@ -1274,6 +1283,14 @@ mod tests {
             fm.contains("- gws"),
             "frontmatter should contain '- gws' block entry"
         );
+        assert!(
+            md.contains("Treat it as background guidance"),
+            "service skills should describe gws-shared as reference material"
+        );
+        assert!(
+            !md.contains("PREREQUISITE"),
+            "service skills should not require reading gws-shared before use"
+        );
     }
 
     #[test]
@@ -1290,6 +1307,14 @@ mod tests {
         assert!(
             fm.contains("- gws"),
             "shared skill frontmatter should contain '- gws'"
+        );
+        assert!(
+            content.contains("## Agent and Sandbox Use"),
+            "shared skill should include agent and sandbox guidance"
+        );
+        assert!(
+            content.contains("not a startup checklist"),
+            "shared skill should not be interpreted as required startup steps"
         );
     }
 

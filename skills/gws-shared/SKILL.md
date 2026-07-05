@@ -59,6 +59,13 @@ gws <service> <resource> [sub-resource] <method> [flags]
 - Prefer `--dry-run` for destructive operations
 - Use `--sanitize` for PII/content safety screening
 
+## Agent and Sandbox Use
+
+- Treat this file as reference material, not a startup checklist
+- Assume `gws` is already installed and authenticated unless the requested command fails
+- Do not run auth, setup, cache, or `gws generate-skills` commands unless the user asks or setup is required to recover from a specific failure
+- In read-only or locked-down environments, prefer the requested read-only helper command directly and report missing filesystem or auth access instead of probing the environment
+
 ## Shell Tips
 
 - **zsh `!` expansion:** Sheet ranges like `Sheet1!A1` contain `!` which zsh interprets as history expansion. Use double quotes with escaped inner quotes instead of single quotes:
