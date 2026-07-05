@@ -155,8 +155,12 @@ async fn run() -> Result<(), GwsError> {
             .map_err(|e| GwsError::Discovery(format!("{e:#}")))?
     };
 
-    // Build the dynamic command tree (all commands shown regardless of auth state)
-    let cli = commands::build_cli(&doc);
+    // Build the dynamic command tree (all commands shown regardless of auth state).
+    // Clap only sees the service-specific subcommand tree after we strip the
+    // service name from argv below, so teach it the full binary invocation for
+    // help/usage rendering. Otherwise nested help text for commands such as
+    // `gws sheets spreadsheets --help` incorrectly starts at `gws spreadsheets`.
+    let cli = commands::build_cli(&doc).bin_name(format!("gws {first_arg}"));
 
     // Re-parse args (skip argv[0] which is the binary, and argv[1] which is the service name)
     // Filter out --api-version and its value
