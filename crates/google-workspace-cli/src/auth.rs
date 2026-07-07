@@ -80,37 +80,40 @@ async fn refresh_token_with_reqwest(
     Ok(token_response.access_token)
 }
 
-/// Returns the project ID to be used for quota and billing (sets the `x-goog-user-project` header).
+/// Returns the project ID to be used for quota and billing (sets the `x-goog-user-project`
+/// header), based on the authentication method in use.
 ///
 /// Priority:
-/// 1. `GOOGLE_WORKSPACE_PROJECT_ID` environment variable.
-/// 2. `project_id` from the OAuth client configuration (`client_secret.json`).
-/// 3. `quota_project_id` from Application Default Credentials (ADC).
-pub fn get_quota_project() -> Option<String> {
-    // 1. Explicit environment variable (highest priority)
+/// 1. `GOOGLE_WORKSPACE_PROJECT_ID` environment variable (explicit opt-in, any method).
+/// 2. For [`AuthMethod::ServiceAccount`] only: `quota_project_id` from Application Default
+///    Credentials (ADC). The OAuth client configuration (`client_secret.json`) is deliberately
+///    NOT consulted here — the service account may not be an IAM member of that project.
+/// 3. For [`AuthMethod::OAuth`] and [`AuthMethod::None`]: no further fallback. Omit the header
+///    to avoid 403 errors for users who are not IAM members of the OAuth client's project.
+pub fn get_quota_project_for_method(method: AuthMethod) -> Option<String> {
+    // 1. Explicit environment variable (highest priority, any auth method)
     if let Ok(project_id) = std::env::var("GOOGLE_WORKSPACE_PROJECT_ID") {
         if !project_id.is_empty() {
             return Some(project_id);
         }
     }
 
-    // 2. Project ID from the OAuth client configuration (set via `gws auth setup`)
-    if let Ok(config) = crate::oauth_config::load_client_config() {
-        if !config.project_id.is_empty() {
-            return Some(config.project_id);
+    match method {
+        AuthMethod::ServiceAccount => {
+            // 2. Fallback to Application Default Credentials (ADC). Service accounts are
+            // members of their own project by construction, so this is safe to forward.
+            let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
+                .ok()
+                .map(PathBuf::from)
+                .or_else(adc_well_known_path)?;
+            let content = std::fs::read_to_string(path).ok()?;
+            let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+            json.get("quota_project_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
         }
+        AuthMethod::OAuth | AuthMethod::None => None,
     }
-
-    // 3. Fallback to Application Default Credentials (ADC)
-    let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(adc_well_known_path)?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    json.get("quota_project_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }
 
 /// Returns the well-known Application Default Credentials path:
@@ -946,18 +949,31 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_get_quota_project_priority_env_var() {
+    fn test_get_quota_project_for_method_env_var_wins_for_service_account() {
         let _env_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_PROJECT_ID", "priority-env");
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
-        let _config_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
         let _home_guard = EnvVarGuard::set("HOME", "/missing/home");
 
-        assert_eq!(get_quota_project(), Some("priority-env".to_string()));
+        assert_eq!(
+            get_quota_project_for_method(AuthMethod::ServiceAccount),
+            Some("priority-env".to_string())
+        );
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_get_quota_project_priority_config() {
+    fn test_get_quota_project_for_method_env_var_wins_for_oauth() {
+        let _env_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_PROJECT_ID", "priority-env");
+
+        assert_eq!(
+            get_quota_project_for_method(AuthMethod::OAuth),
+            Some("priority-env".to_string())
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_quota_project_for_method_service_account_ignores_oauth_client_config() {
         let tmp = tempfile::tempdir().unwrap();
         let _config_guard = EnvVarGuard::set(
             "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
@@ -967,15 +983,19 @@ mod tests {
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
         let _home_guard = EnvVarGuard::set("HOME", "/missing/home");
 
-        // Save a client config with a project ID
+        // Save a client config with a project ID — this must NOT be used as the service
+        // account's quota project, since the service account may not be an IAM member of it.
         crate::oauth_config::save_client_config("id", "secret", "config-project").unwrap();
 
-        assert_eq!(get_quota_project(), Some("config-project".to_string()));
+        assert_eq!(
+            get_quota_project_for_method(AuthMethod::ServiceAccount),
+            None
+        );
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_get_quota_project_priority_adc_fallback() {
+    fn test_get_quota_project_for_method_oauth_ignores_adc_and_config_without_env_var() {
         let tmp = tempfile::tempdir().unwrap();
         let adc_dir = tmp.path().join(".config").join("gcloud");
         std::fs::create_dir_all(&adc_dir).unwrap();
@@ -987,30 +1007,38 @@ mod tests {
 
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
-        let _config_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
 
-        assert_eq!(get_quota_project(), Some("adc-project".to_string()));
+        assert_eq!(get_quota_project_for_method(AuthMethod::OAuth), None);
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_get_quota_project_reads_adc() {
+    fn test_get_quota_project_for_method_none_returns_none() {
+        let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
+
+        assert_eq!(get_quota_project_for_method(AuthMethod::None), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_quota_project_for_method_service_account_reads_adc() {
         let tmp = tempfile::tempdir().unwrap();
         let adc_dir = tmp.path().join(".config").join("gcloud");
         std::fs::create_dir_all(&adc_dir).unwrap();
         std::fs::write(
             adc_dir.join("application_default_credentials.json"),
-            r#"{"quota_project_id": "my-project-123"}"#,
+            r#"{"quota_project_id": "adc-project"}"#,
         )
         .unwrap();
 
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
-        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
-        // Isolate from local environment
         let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
-        let _config_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
 
-        assert_eq!(get_quota_project(), Some("my-project-123".to_string()));
+        assert_eq!(
+            get_quota_project_for_method(AuthMethod::ServiceAccount),
+            Some("adc-project".to_string())
+        );
     }
 }

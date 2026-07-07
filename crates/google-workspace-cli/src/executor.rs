@@ -180,18 +180,12 @@ async fn build_http_request(
         }
     }
 
-    // For service-account auth, always forward the quota project (env var, config, or ADC).
-    // For OAuth, only send when GOOGLE_WORKSPACE_PROJECT_ID is explicitly set — the user
-    // has opted in, so we honour it even though OAuth users may not be IAM members of every
-    // project.  Omit the header entirely when neither condition is met to avoid 403 errors.
-    let quota_project = match auth_method {
-        AuthMethod::ServiceAccount => crate::auth::get_quota_project(),
-        AuthMethod::OAuth => std::env::var("GOOGLE_WORKSPACE_PROJECT_ID")
-            .ok()
-            .filter(|s| !s.is_empty()),
-        AuthMethod::None => None,
-    };
-    if let Some(quota_project) = quota_project {
+    // Set the quota project based on the authentication method to avoid 403 errors. For
+    // service-account auth, this forwards the quota project from the environment or ADC —
+    // but never from the OAuth client configuration (client_secret.json), since the service
+    // account may not be an IAM member of that project. For OAuth, we only send it when
+    // GOOGLE_WORKSPACE_PROJECT_ID is explicitly set (the user has opted in).
+    if let Some(quota_project) = crate::auth::get_quota_project_for_method(*auth_method) {
         request = request.header("x-goog-user-project", quota_project);
     }
 
