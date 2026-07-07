@@ -2403,13 +2403,52 @@ async fn test_get_does_not_set_content_length_zero() {
     );
 }
 
+/// RAII guard that saves the current value of an environment variable and
+/// restores it when dropped, so tests that mutate it stay panic-safe.
+#[cfg(test)]
+struct EnvVarGuard {
+    name: String,
+    original: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvVarGuard {
+    fn set(name: &str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let original = std::env::var_os(name);
+        std::env::set_var(name, value);
+        Self {
+            name: name.to_string(),
+            original,
+        }
+    }
+
+    fn remove(name: &str) -> Self {
+        let original = std::env::var_os(name);
+        std::env::remove_var(name);
+        Self {
+            name: name.to_string(),
+            original,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(v) => std::env::set_var(&self.name, v),
+            None => std::env::remove_var(&self.name),
+        }
+    }
+}
+
 #[cfg(test)]
 #[tokio::test]
 #[serial_test::serial]
 async fn test_oauth_auth_does_not_set_quota_project_header_by_default() {
     // Without GOOGLE_WORKSPACE_PROJECT_ID set, OAuth requests must omit x-goog-user-project
     // because OAuth users are not necessarily IAM members of the project.
-    std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+    let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
     let client = reqwest::Client::new();
     let method = RestMethod {
         http_method: "GET".to_string(),
@@ -2450,7 +2489,7 @@ async fn test_oauth_auth_does_not_set_quota_project_header_by_default() {
 async fn test_oauth_auth_sends_quota_project_when_env_var_explicitly_set() {
     // When GOOGLE_WORKSPACE_PROJECT_ID is explicitly set, OAuth requests should
     // honour it and send x-goog-user-project (the user opted in).
-    std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "my-explicit-project");
+    let _env_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_PROJECT_ID", "my-explicit-project");
     let client = reqwest::Client::new();
     let method = RestMethod {
         http_method: "GET".to_string(),
@@ -2477,8 +2516,6 @@ async fn test_oauth_auth_sends_quota_project_when_env_var_explicitly_set() {
     )
     .await
     .unwrap();
-
-    std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
 
     let built = request.build().unwrap();
     assert_eq!(

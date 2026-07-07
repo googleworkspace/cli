@@ -223,21 +223,7 @@ impl AccessTokenProvider for FakeTokenProvider {
 ///    - Well-known ADC path: `~/.config/gcloud/application_default_credentials.json`
 ///      (populated by `gcloud auth application-default login`)
 pub async fn get_token(scopes: &[&str]) -> anyhow::Result<String> {
-    // 0. Direct token from env var (highest priority, bypasses all credential loading)
-    if let Ok(token) = std::env::var("GOOGLE_WORKSPACE_CLI_TOKEN") {
-        if !token.is_empty() {
-            return Ok(token);
-        }
-    }
-
-    let creds_file = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE").ok();
-    let config_dir = crate::auth_commands::config_dir();
-    let enc_path = credential_store::encrypted_credentials_path();
-    let default_path = config_dir.join("credentials.json");
-    let token_cache = config_dir.join("token_cache.json");
-
-    let creds = load_credentials_inner(creds_file.as_deref(), &enc_path, &default_path).await?;
-    get_token_inner(scopes, creds, &token_cache).await
+    get_token_with_kind(scopes).await.map(|(token, _)| token)
 }
 
 /// Like [`get_token`] but also returns the [`AuthMethod`] so callers can
