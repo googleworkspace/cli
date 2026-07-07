@@ -2403,14 +2403,10 @@ async fn test_get_does_not_set_content_length_zero() {
     );
 }
 
-/// Mutex to serialise tests that mutate GOOGLE_WORKSPACE_PROJECT_ID so they
-/// don't race with each other when the test binary runs its threads in parallel.
 #[cfg(test)]
-static QUOTA_PROJECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[tokio::test]
+#[serial_test::serial]
 async fn test_oauth_auth_does_not_set_quota_project_header_by_default() {
-    let _guard = QUOTA_PROJECT_ENV_MUTEX.lock().unwrap();
     // Without GOOGLE_WORKSPACE_PROJECT_ID set, OAuth requests must omit x-goog-user-project
     // because OAuth users are not necessarily IAM members of the project.
     std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
@@ -2448,9 +2444,10 @@ async fn test_oauth_auth_does_not_set_quota_project_header_by_default() {
     );
 }
 
+#[cfg(test)]
 #[tokio::test]
+#[serial_test::serial]
 async fn test_oauth_auth_sends_quota_project_when_env_var_explicitly_set() {
-    let _guard = QUOTA_PROJECT_ENV_MUTEX.lock().unwrap();
     // When GOOGLE_WORKSPACE_PROJECT_ID is explicitly set, OAuth requests should
     // honour it and send x-goog-user-project (the user opted in).
     std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "my-explicit-project");
