@@ -21,7 +21,11 @@
 
 use std::collections::HashMap;
 
+use anyhow::Context;
 use serde::Deserialize;
+
+/// Environment variable for overriding Discovery-derived API request endpoints.
+pub const API_ENDPOINT_BASE_URL_ENV: &str = "GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL";
 
 /// Top-level Discovery REST Description document.
 #[derive(Debug, Deserialize, Default)]
@@ -183,6 +187,70 @@ pub struct JsonSchemaProperty {
     pub additional_properties: Option<Box<JsonSchemaProperty>>,
 }
 
+/// Returns the configured API endpoint base URL, if one was provided.
+pub fn api_endpoint_base_url_from_env() -> Option<String> {
+    std::env::var(API_ENDPOINT_BASE_URL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Rewrites Discovery API endpoints to use a configured endpoint origin.
+///
+/// Only the scheme, host, and port are replaced. Existing paths from the
+/// Discovery document are preserved so service-specific routing remains
+/// Discovery-driven. Discovery fetch URLs themselves are not rewritten.
+pub fn rewrite_api_urls_for_endpoint_base_url(
+    mut doc: RestDescription,
+    endpoint_base_url: Option<&str>,
+) -> anyhow::Result<RestDescription> {
+    let endpoint_base_url = match endpoint_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value,
+        None => return Ok(doc),
+    };
+
+    let endpoint_origin = parse_endpoint_base_url_origin(endpoint_base_url)?;
+    doc.root_url = rewrite_url_origin(&doc.root_url, &endpoint_origin)?;
+    if let Some(base_url) = doc.base_url.as_mut() {
+        let rewritten_base_url = rewrite_url_origin(base_url, &endpoint_origin)?;
+        *base_url = rewritten_base_url;
+    }
+
+    Ok(doc)
+}
+
+fn parse_endpoint_base_url_origin(endpoint_base_url: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(endpoint_base_url)
+        .with_context(|| format!("Invalid {API_ENDPOINT_BASE_URL_ENV}: {endpoint_base_url}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("{API_ENDPOINT_BASE_URL_ENV} must use http or https");
+    }
+    Ok(url)
+}
+
+fn rewrite_url_origin(url: &str, endpoint_origin: &reqwest::Url) -> anyhow::Result<String> {
+    let mut rewritten = reqwest::Url::parse(url)
+        .with_context(|| format!("Discovery document contains an invalid API URL: {url}"))?;
+    rewritten
+        .set_scheme(endpoint_origin.scheme())
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Invalid endpoint base URL scheme: {}",
+                endpoint_origin.scheme()
+            )
+        })?;
+    rewritten
+        .set_host(endpoint_origin.host_str())
+        .context("Failed to apply endpoint host to Discovery API URL")?;
+    rewritten
+        .set_port(endpoint_origin.port())
+        .map_err(|_| anyhow::anyhow!("Failed to apply endpoint port to Discovery API URL"))?;
+    Ok(rewritten.to_string())
+}
+
 /// Fetches and caches a Google Discovery Document.
 ///
 /// When `cache_dir` is `Some`, the document is cached on disk with a 24-hour
@@ -210,7 +278,10 @@ pub async fn fetch_discovery_document(
                     let data = tokio::fs::read_to_string(&cache_file).await?;
                     let doc: RestDescription = serde_json::from_str(&data)?;
                     tracing::debug!(service = %service, version = %version, "Discovery cache hit");
-                    return Ok(doc);
+                    return rewrite_api_urls_for_endpoint_base_url(
+                        doc,
+                        api_endpoint_base_url_from_env().as_deref(),
+                    );
                 }
             }
         }
@@ -254,12 +325,52 @@ pub async fn fetch_discovery_document(
     }
 
     let doc: RestDescription = serde_json::from_str(&body)?;
-    Ok(doc)
+    rewrite_api_urls_for_endpoint_base_url(doc, api_endpoint_base_url_from_env().as_deref())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let original = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, original }
+        }
+
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn minimal_doc(root_url: &str, service_path: &str, base_url: Option<&str>) -> RestDescription {
+        RestDescription {
+            name: "drive".to_string(),
+            version: "v3".to_string(),
+            root_url: root_url.to_string(),
+            service_path: service_path.to_string(),
+            base_url: base_url.map(str::to_string),
+            ..RestDescription::default()
+        }
+    }
 
     #[test]
     fn test_deserialize_rest_description() {
@@ -325,5 +436,197 @@ mod tests {
         assert_eq!(doc.service_path, ""); // default empty string
         assert!(doc.resources.is_empty());
         assert!(doc.schemas.is_empty());
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_none_noop() {
+        let doc = minimal_doc(
+            "https://www.googleapis.com/",
+            "drive/v3/",
+            Some("https://www.googleapis.com/drive/v3/"),
+        );
+
+        let doc = rewrite_api_urls_for_endpoint_base_url(doc, None).unwrap();
+
+        assert_eq!(doc.root_url, "https://www.googleapis.com/");
+        assert_eq!(doc.service_path, "drive/v3/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://www.googleapis.com/drive/v3/")
+        );
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_empty_string_noop() {
+        let doc = minimal_doc(
+            "https://www.googleapis.com/",
+            "drive/v3/",
+            Some("https://www.googleapis.com/drive/v3/"),
+        );
+
+        let doc = rewrite_api_urls_for_endpoint_base_url(doc, Some("  ")).unwrap();
+
+        assert_eq!(doc.root_url, "https://www.googleapis.com/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://www.googleapis.com/drive/v3/")
+        );
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_replaces_root_url_without_base_url() {
+        let doc = minimal_doc("https://www.googleapis.com/", "drive/v3/", None);
+
+        let doc = rewrite_api_urls_for_endpoint_base_url(
+            doc,
+            Some("https://proxy.example.com/api-gateway/"),
+        )
+        .unwrap();
+
+        assert_eq!(doc.root_url, "https://proxy.example.com/");
+        assert_eq!(doc.service_path, "drive/v3/");
+        assert!(doc.base_url.is_none());
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_replaces_base_url_and_preserves_paths() {
+        let doc = minimal_doc(
+            "https://www.googleapis.com/",
+            "drive/v3/",
+            Some("https://sheets.googleapis.com/v4/"),
+        );
+
+        let doc =
+            rewrite_api_urls_for_endpoint_base_url(doc, Some("http://proxy.example.com:8080"))
+                .unwrap();
+
+        assert_eq!(doc.root_url, "http://proxy.example.com:8080/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("http://proxy.example.com:8080/v4/")
+        );
+        assert_eq!(doc.service_path, "drive/v3/");
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_trailing_slash_is_normalized() {
+        let without_slash = rewrite_api_urls_for_endpoint_base_url(
+            minimal_doc(
+                "https://www.googleapis.com/",
+                "drive/v3/",
+                Some("https://www.googleapis.com/drive/v3/"),
+            ),
+            Some("https://proxy.example.com"),
+        )
+        .unwrap();
+        let with_slash = rewrite_api_urls_for_endpoint_base_url(
+            minimal_doc(
+                "https://www.googleapis.com/",
+                "drive/v3/",
+                Some("https://www.googleapis.com/drive/v3/"),
+            ),
+            Some("https://proxy.example.com/"),
+        )
+        .unwrap();
+
+        assert_eq!(without_slash.root_url, with_slash.root_url);
+        assert_eq!(without_slash.base_url, with_slash.base_url);
+        assert_eq!(without_slash.root_url, "https://proxy.example.com/");
+        assert_eq!(
+            without_slash.base_url.as_deref(),
+            Some("https://proxy.example.com/drive/v3/")
+        );
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_preserves_original_url_paths() {
+        let doc = minimal_doc(
+            "https://analyticsadmin.googleapis.com/v1beta/",
+            "",
+            Some("https://analyticsdata.googleapis.com/v1beta/"),
+        );
+
+        let doc = rewrite_api_urls_for_endpoint_base_url(
+            doc,
+            Some("https://proxy.example.com/proxy-prefix/"),
+        )
+        .unwrap();
+
+        assert_eq!(doc.root_url, "https://proxy.example.com/v1beta/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://proxy.example.com/v1beta/")
+        );
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_rejects_invalid_endpoint_base_url() {
+        let doc = minimal_doc("https://www.googleapis.com/", "drive/v3/", None);
+
+        let err =
+            rewrite_api_urls_for_endpoint_base_url(doc, Some("proxy.example.com")).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Invalid GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL"));
+    }
+
+    #[test]
+    fn test_rewrite_api_urls_for_endpoint_base_url_rejects_non_http_scheme() {
+        let doc = minimal_doc("https://www.googleapis.com/", "drive/v3/", None);
+
+        let err = rewrite_api_urls_for_endpoint_base_url(doc, Some("ftp://proxy.example.com"))
+            .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL must use http or https"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
+    async fn test_fetch_discovery_document_rewrites_cache_hit_without_mutating_cache() {
+        let _env_guard = EnvGuard::set(API_ENDPOINT_BASE_URL_ENV, "https://proxy.example.com/");
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cache_file = cache_dir.path().join("drive_v3.json");
+        let cached_json = r#"{
+            "name": "drive",
+            "version": "v3",
+            "rootUrl": "https://www.googleapis.com/",
+            "servicePath": "drive/v3/",
+            "baseUrl": "https://www.googleapis.com/drive/v3/"
+        }"#;
+        std::fs::write(&cache_file, cached_json).unwrap();
+
+        let doc = fetch_discovery_document("drive", "v3", Some(cache_dir.path()))
+            .await
+            .unwrap();
+
+        assert_eq!(doc.root_url, "https://proxy.example.com/");
+        assert_eq!(doc.service_path, "drive/v3/");
+        assert_eq!(
+            doc.base_url.as_deref(),
+            Some("https://proxy.example.com/drive/v3/")
+        );
+        assert_eq!(std::fs::read_to_string(&cache_file).unwrap(), cached_json);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_api_endpoint_base_url_from_env_handles_missing_empty_and_configured_values() {
+        let missing_guard = EnvGuard::remove(API_ENDPOINT_BASE_URL_ENV);
+        assert_eq!(api_endpoint_base_url_from_env(), None);
+        drop(missing_guard);
+
+        let empty_guard = EnvGuard::set(API_ENDPOINT_BASE_URL_ENV, "  ");
+        assert_eq!(api_endpoint_base_url_from_env(), None);
+        drop(empty_guard);
+
+        let value_guard = EnvGuard::set(API_ENDPOINT_BASE_URL_ENV, " https://proxy.example.com/ ");
+        assert_eq!(
+            api_endpoint_base_url_from_env().as_deref(),
+            Some("https://proxy.example.com/")
+        );
+        drop(value_guard);
     }
 }

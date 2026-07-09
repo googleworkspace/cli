@@ -208,6 +208,7 @@ See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md)
 | Variable | Description |
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override the config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL` | Optional HTTP(S) base URL override for Google API requests. Discovery documents are still fetched directly from Google. |
 
 ### OAuth Client
 

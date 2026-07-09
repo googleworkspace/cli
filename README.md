@@ -382,6 +382,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL` | Optional HTTP(S) base URL override for Google API requests |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
 | `GOOGLE_WORKSPACE_CLI_LOG` | Log level for stderr (e.g., `gws=debug`). Off by default. |
@@ -389,6 +390,20 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing and fallback for helper commands |
 
 Environment variables can also be set in a `.env` file (loaded via [dotenvy](https://crates.io/crates/dotenvy)).
+
+### API Endpoint Override
+
+Set `GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL` to override the base URL used for Discovery-driven Google API requests, for example when routing calls through an internal reverse proxy or API gateway:
+
+```bash
+export GOOGLE_WORKSPACE_CLI_API_ENDPOINT_BASE_URL=https://proxy.example.com/
+```
+
+Only API request endpoints from Discovery documents are rewritten. Discovery documents themselves are still fetched directly from Google, and cached Discovery JSON remains the original Google document so the endpoint override can be enabled or disabled without clearing the cache. The rewrite replaces the scheme, host, and port while preserving the Google API path, for example `https://www.googleapis.com/drive/v3/files` becomes `https://proxy.example.com/drive/v3/files`. Any path in the configured base URL itself is not prepended.
+
+This is separate from standard `http_proxy` / `https_proxy` forward proxy support and does not rewrite OAuth authorization or token endpoints.
+
+Some services share the same path prefix in Discovery, such as Analytics Admin and Analytics Data both using `/v1beta/`. In those cases, a proxy may need its own routing rules beyond path inspection.
 
 ## Exit Codes
 
