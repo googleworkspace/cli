@@ -494,3 +494,17 @@ steps = [
   "Write the report: `gws docs +write --document-id DOC_ID --text '## Sales Report - January 2025\n\n### Summary\nTotal deals: 45\nRevenue: $125,000\n\n### Top Deals\n1. Acme Corp - $25,000\n2. Widget Inc - $18,000'`",
   "Share with stakeholders: `gws drive permissions create --params '{\"fileId\": \"DOC_ID\"}' --json '{\"role\": \"reader\", \"type\": \"user\", \"emailAddress\": \"cfo@company.com\"}'`"
 ]
+
+[[recipes]]
+name = "suggest-doc-edits"
+title = "Suggest Edits on a Google Doc via Comments"
+description = "Propose edits on a Google Doc as review comments quoting the target text (the Docs API can't create suggestions)."
+category = "productivity"
+services = [ "docs", "drive" ]
+steps = [
+  "Note the API limitation: `documents.batchUpdate` makes direct edits only — tracked \"Suggesting-mode\" suggestions are UI-only (`suggestionsViewMode` exists only on the read path). Propose edits as comments instead.",
+  "Read the document to capture the exact current text to change: `gws docs documents get --params '{\"documentId\": \"DOC_ID\"}'`",
+  "Post each proposed edit as a comment quoting the target text: `gws drive comments create --params '{\"fileId\": \"DOC_ID\", \"fields\": \"id\"}' --json '{\"content\": \"SUGGESTED EDIT — replace with: NEW TEXT\", \"quotedFileContent\": {\"value\": \"EXACT CURRENT TEXT\"}}'`",
+  "After reviewers accept, apply the edit for real: `gws docs documents batchUpdate --params '{\"documentId\": \"DOC_ID\"}' --json '{\"requests\": [{\"replaceAllText\": {\"containsText\": {\"text\": \"EXACT CURRENT TEXT\", \"matchCase\": true}, \"replaceText\": \"NEW TEXT\"}}]}'`",
+  "Resolve the comment: `gws drive replies create --params '{\"fileId\": \"DOC_ID\", \"commentId\": \"COMMENT_ID\", \"fields\": \"id\"}' --json '{\"action\": \"resolve\", \"content\": \"Applied.\"}'`"
+]
