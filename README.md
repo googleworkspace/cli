@@ -332,7 +332,7 @@ gws drive --help      # shows +upload …
 | `modelarmor` | `+sanitize-response` | Sanitize a model response through a Model Armor template |
 | `modelarmor` | `+create-template` | Create a new Model Armor template |
 
-> **Gmail web links vs API IDs:** The API returns hex thread/message IDs (e.g. `19e1acd465710c93`). There is no supported way to turn these into durable Gmail web URLs. `#all/<hexId>` is unofficial and unreliable on cold loads. For the inverse problem (web URL IDs not accepted by the API), see [#790](https://github.com/googleworkspace/cli/issues/790).
+> **Gmail web links vs API IDs:** The API returns hex thread/message IDs (e.g. `19e1acd465710c93`). There is no supported way to turn these into durable Gmail web URLs. `#all/<hexId>` is unofficial and unreliable on cold loads. The closest option is `#search/rfc822msgid:<Message-ID>`, though it is a search URL, not a direct permalink. For the inverse problem (web URL IDs not accepted by the API), see [#790](https://github.com/googleworkspace/cli/issues/790).
 
 **Examples:**
 
