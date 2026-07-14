@@ -23,15 +23,19 @@ fn opener_for_os(os: &str, url: &str) -> Option<(&'static str, Vec<String>)> {
 }
 
 /// Validates that `url` is a plain https URL that is safe to hand to an
-/// external opener program. Rejects control characters, whitespace, and
+/// external opener program. Rejects control characters, whitespace,
 /// dangerous Unicode (zero-width chars, bidi overrides) that
-/// `char::is_control()` does not cover (`Cf` category).
+/// `char::is_control()` does not cover (`Cf` category), and quote/shell
+/// metacharacters in case an opener forwards its argument through a shell
+/// (e.g. `xdg-open` wrapper scripts) or mis-parses quotes (`rundll32`).
+/// Properly percent-encoded OAuth URLs never contain any of these.
 fn is_openable_url(url: &str) -> bool {
     url.starts_with("https://")
         && !url.chars().any(|c| {
             c.is_control()
                 || c.is_whitespace()
                 || google_workspace::validate::is_dangerous_unicode(c)
+                || matches!(c, '"' | '\'' | '\\' | ';' | '$' | '|' | '`' | '<' | '>')
         })
 }
 
