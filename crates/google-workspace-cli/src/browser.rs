@@ -34,7 +34,7 @@ fn is_openable_url(url: &str) -> bool {
         && !url.chars().any(|c| {
             c.is_control()
                 || c.is_whitespace()
-                || google_workspace::validate::is_dangerous_unicode(c)
+                || crate::validate::is_dangerous_unicode(c)
                 || matches!(c, '"' | '\'' | '\\' | ';' | '$' | '|' | '`' | '<' | '>')
         })
 }
