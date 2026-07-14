@@ -23,9 +23,16 @@ fn opener_for_os(os: &str, url: &str) -> Option<(&'static str, Vec<String>)> {
 }
 
 /// Validates that `url` is a plain https URL that is safe to hand to an
-/// external opener program.
+/// external opener program. Rejects control characters, whitespace, and
+/// dangerous Unicode (zero-width chars, bidi overrides) that
+/// `char::is_control()` does not cover (`Cf` category).
 fn is_openable_url(url: &str) -> bool {
-    url.starts_with("https://") && !url.chars().any(|c| c.is_control() || c.is_whitespace())
+    url.starts_with("https://")
+        && !url.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || google_workspace::validate::is_dangerous_unicode(c)
+        })
 }
 
 /// Spawns `program` detached from this process. Returns `true` when the
@@ -117,6 +124,14 @@ mod tests {
     fn openable_url_rejects_whitespace_and_control_chars() {
         assert!(!is_openable_url("https://example.com/a b"));
         assert!(!is_openable_url("https://example.com/\n"));
+    }
+
+    #[test]
+    fn openable_url_rejects_dangerous_unicode() {
+        // RLO (bidi override, category Cf — not caught by is_control)
+        assert!(!is_openable_url("https://example.com/\u{202E}evil"));
+        // ZWSP (zero-width space)
+        assert!(!is_openable_url("https://example.com/a\u{200B}b"));
     }
 
     #[test]
