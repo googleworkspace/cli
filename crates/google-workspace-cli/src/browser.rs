@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn opener_for_windows_uses_rundll32() {
+    fn opener_for_windows_uses_explorer() {
         let (program, args) = opener_for_os("windows", "https://example.com").unwrap();
         assert_eq!(program, "explorer");
         assert_eq!(args, vec!["https://example.com".to_string()]);
