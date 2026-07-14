@@ -12,12 +12,12 @@ fn opener_for_os(os: &str, url: &str) -> Option<(&'static str, Vec<String>)> {
     match os {
         "macos" => Some(("open", vec![url.to_string()])),
         "linux" => Some(("xdg-open", vec![url.to_string()])),
-        // `start` is a cmd.exe built-in that re-parses `&` inside URLs, so
-        // use rundll32 which receives the URL as a plain argument instead.
-        "windows" => Some((
-            "rundll32",
-            vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
-        )),
+        // `start` is a cmd.exe built-in that re-parses `&` inside URLs, and
+        // `rundll32 url.dll,FileProtocolHandler` is a well-known LOLBIN
+        // technique that EDR/WDAC policies commonly block. Spawning the
+        // Windows shell directly avoids both: no cmd re-parsing, and
+        // explorer.exe cannot be blocked without breaking the OS GUI.
+        "windows" => Some(("explorer", vec![url.to_string()])),
         _ => None,
     }
 }
@@ -95,14 +95,8 @@ mod tests {
     #[test]
     fn opener_for_windows_uses_rundll32() {
         let (program, args) = opener_for_os("windows", "https://example.com").unwrap();
-        assert_eq!(program, "rundll32");
-        assert_eq!(
-            args,
-            vec![
-                "url.dll,FileProtocolHandler".to_string(),
-                "https://example.com".to_string()
-            ]
-        );
+        assert_eq!(program, "explorer");
+        assert_eq!(args, vec!["https://example.com".to_string()]);
     }
 
     #[test]
