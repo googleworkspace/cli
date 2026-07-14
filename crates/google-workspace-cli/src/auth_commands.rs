@@ -128,6 +128,11 @@ async fn login_with_proxy_support(
 
     println!("Open this URL in your browser to authenticate:\n");
     println!("  {}\n", auth_url);
+    if crate::browser::try_open_browser(&auth_url) {
+        println!(
+            "Your default browser should open automatically. If it doesn't, use the URL above.\n"
+        );
+    }
 
     // Wait for OAuth callback
     let (mut stream, _) = listener
@@ -567,6 +572,11 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
             };
             eprintln!("Open this URL in your browser to authenticate:\n");
             eprintln!("  {display_url}\n");
+            if crate::browser::try_open_browser(&display_url) {
+                eprintln!(
+                    "Your default browser should open automatically. If it doesn't, use the URL above.\n"
+                );
+            }
             Ok(String::new())
         })
     }
