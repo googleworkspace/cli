@@ -131,6 +131,18 @@ mod tests {
     }
 
     #[test]
+    fn openable_url_rejects_quotes_and_shell_metacharacters() {
+        assert!(!is_openable_url("https://example.com/\""));
+        assert!(!is_openable_url("https://example.com/'"));
+        assert!(!is_openable_url("https://example.com/\\"));
+        assert!(!is_openable_url("https://example.com/;evil"));
+        assert!(!is_openable_url("https://example.com/$(evil)"));
+        assert!(!is_openable_url("https://example.com/a|b"));
+        assert!(!is_openable_url("https://example.com/`evil`"));
+        assert!(!is_openable_url("https://example.com/<a>"));
+    }
+
+    #[test]
     fn openable_url_rejects_dangerous_unicode() {
         // RLO (bidi override, category Cf — not caught by is_control)
         assert!(!is_openable_url("https://example.com/\u{202E}evil"));
