@@ -59,6 +59,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         description: "Audit logs and usage reports",
     },
     ServiceEntry {
+        aliases: &["cloud-identity", "cloudidentity"],
+        api_name: "cloudidentity",
+        version: "v1",
+        description: "Manage Cloud Identity groups and memberships",
+    },
+    ServiceEntry {
         aliases: &["docs"],
         api_name: "docs",
         version: "v1",
@@ -173,6 +179,14 @@ mod tests {
         assert_eq!(
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("cloud-identity").unwrap(),
+            ("cloudidentity".to_string(), "v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("cloudidentity").unwrap(),
+            ("cloudidentity".to_string(), "v1".to_string())
         );
     }
 

@@ -14,6 +14,7 @@ Core Google Workspace API skills.
 | [gws-gmail](../skills/gws-gmail/SKILL.md) | Gmail: Send, read, and manage email. |
 | [gws-calendar](../skills/gws-calendar/SKILL.md) | Google Calendar: Manage calendars and events. |
 | [gws-admin-reports](../skills/gws-admin-reports/SKILL.md) | Google Workspace Admin SDK: Audit logs and usage reports. |
+| [gws-cloud-identity](../skills/gws-cloud-identity/SKILL.md) | Google Cloud Identity: Manage Cloud Identity groups and memberships. |
 | [gws-docs](../skills/gws-docs/SKILL.md) | Read and write Google Docs. |
 | [gws-slides](../skills/gws-slides/SKILL.md) | Google Slides: Read and write presentations. |
 | [gws-tasks](../skills/gws-tasks/SKILL.md) | Google Tasks: Manage task lists and tasks. |
