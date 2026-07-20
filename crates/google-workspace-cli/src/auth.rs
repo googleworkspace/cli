@@ -84,8 +84,10 @@ async fn refresh_token_with_reqwest(
 ///
 /// Priority:
 /// 1. `GOOGLE_WORKSPACE_PROJECT_ID` environment variable.
-/// 2. `project_id` from the OAuth client configuration (`client_secret.json`).
-/// 3. `quota_project_id` from Application Default Credentials (ADC).
+/// 2. `quota_project_id` from Application Default Credentials (ADC).
+///
+/// The `project_id` from the OAuth client configuration (`client_secret.json`) is not
+/// used: quota for end-user OAuth credentials is attributed via the OAuth client ID.
 pub fn get_quota_project() -> Option<String> {
     // 1. Explicit environment variable (highest priority)
     if let Ok(project_id) = std::env::var("GOOGLE_WORKSPACE_PROJECT_ID") {
@@ -94,14 +96,7 @@ pub fn get_quota_project() -> Option<String> {
         }
     }
 
-    // 2. Project ID from the OAuth client configuration (set via `gws auth setup`)
-    if let Ok(config) = crate::oauth_config::load_client_config() {
-        if !config.project_id.is_empty() {
-            return Some(config.project_id);
-        }
-    }
-
-    // 3. Fallback to Application Default Credentials (ADC)
+    // 2. Fallback to Application Default Credentials (ADC)
     let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
         .ok()
         .map(PathBuf::from)
@@ -936,7 +931,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_get_quota_project_priority_config() {
+    fn test_get_quota_project_ignores_client_config() {
         let tmp = tempfile::tempdir().unwrap();
         let _config_guard = EnvVarGuard::set(
             "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
@@ -949,7 +944,24 @@ mod tests {
         // Save a client config with a project ID
         crate::oauth_config::save_client_config("id", "secret", "config-project").unwrap();
 
-        assert_eq!(get_quota_project(), Some("config-project".to_string()));
+        assert_eq!(get_quota_project(), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_get_quota_project_env_var_overrides_client_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _config_guard = EnvVarGuard::set(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            tmp.path().to_str().unwrap(),
+        );
+        let _env_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_PROJECT_ID", "explicit-project");
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+        let _home_guard = EnvVarGuard::set("HOME", "/missing/home");
+
+        crate::oauth_config::save_client_config("id", "secret", "config-project").unwrap();
+
+        assert_eq!(get_quota_project(), Some("explicit-project".to_string()));
     }
 
     #[test]
