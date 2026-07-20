@@ -45,6 +45,8 @@ gws gmail <resource> <method> [flags]
   - `settings` — Operations on the 'settings' resource
   - `threads` — Operations on the 'threads' resource
 
+> **Gmail web links vs API IDs:** The API returns hex thread/message IDs (e.g. `19e1acd465710c93`). There is no supported way to turn these into durable Gmail web URLs. `#all/<hexId>` is unofficial and unreliable on cold loads. The closest option is `#search/rfc822msgid:<Message-ID>`, though it is a search URL, not a direct permalink. For the inverse problem, see [#790](https://github.com/googleworkspace/cli/issues/790).
+
 ## Discovering Commands
 
 Before calling any API method, inspect it:
