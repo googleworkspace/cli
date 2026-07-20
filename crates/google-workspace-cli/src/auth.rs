@@ -938,8 +938,10 @@ mod tests {
             tmp.path().to_str().unwrap(),
         );
         let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
-        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
-        let _home_guard = EnvVarGuard::set("HOME", "/missing/home");
+        let _adc_guard = EnvVarGuard::set(
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            tmp.path().join("missing-adc.json").to_str().unwrap(),
+        );
 
         // Save a client config with a project ID
         crate::oauth_config::save_client_config("id", "secret", "config-project").unwrap();
@@ -956,8 +958,10 @@ mod tests {
             tmp.path().to_str().unwrap(),
         );
         let _env_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_PROJECT_ID", "explicit-project");
-        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
-        let _home_guard = EnvVarGuard::set("HOME", "/missing/home");
+        let _adc_guard = EnvVarGuard::set(
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            tmp.path().join("missing-adc.json").to_str().unwrap(),
+        );
 
         crate::oauth_config::save_client_config("id", "secret", "config-project").unwrap();
 
