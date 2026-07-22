@@ -198,12 +198,7 @@ async fn login_with_proxy_support(
         .read_line(&mut request_line)
         .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
 
-    eprintln!("Received callback: {}", request_line.trim());
-
     let code = extract_authorization_code(&request_line)?;
-
-    eprintln!("Parsed code: {code}");
-    eprintln!("Using redirect_uri: {redirect_uri}");
 
     // Send success response to browser
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
