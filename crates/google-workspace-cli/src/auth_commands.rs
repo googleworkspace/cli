@@ -143,11 +143,16 @@ fn extract_authorization_code(request_line: &str) -> Result<String, GwsError> {
             query.split('&').find_map(|pair| {
                 let mut parts = pair.split('=');
                 if parts.next() == Some("code") {
-                    parts.next().map(|value| value.to_string())
+                    parts.next()
                 } else {
                     None
                 }
             })
+        })
+        .map(|value| {
+            percent_encoding::percent_decode_str(value)
+                .decode_utf8_lossy()
+                .into_owned()
         })
         .ok_or_else(|| GwsError::Auth("No authorization code in callback".to_string()))
 }
@@ -193,7 +198,12 @@ async fn login_with_proxy_support(
         .read_line(&mut request_line)
         .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
 
+    eprintln!("Received callback: {}", request_line.trim());
+
     let code = extract_authorization_code(&request_line)?;
+
+    eprintln!("Parsed code: {code}");
+    eprintln!("Using redirect_uri: {redirect_uri}");
 
     // Send success response to browser
     let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
@@ -2626,6 +2636,20 @@ mod tests {
             extract_authorization_code("GET /?state=abc&code=4/test-code&scope=openid HTTP/1.1")
                 .unwrap();
         assert_eq!(code, "4/test-code");
+    }
+
+    #[test]
+    fn extract_authorization_code_decodes_percent_encoding() {
+        // A redirector hop can re-serialize the query string, percent-encoding
+        // characters (e.g. '/' as %2F, '+' as %2B) that Google's own raw
+        // redirect wouldn't have encoded. The extracted code must match what
+        // Google actually issued, or the token exchange fails with
+        // "invalid_grant: Malformed auth code".
+        let code = extract_authorization_code(
+            "GET /?state=abc&code=4%2Ftest%2Bcode&scope=openid HTTP/1.1",
+        )
+        .unwrap();
+        assert_eq!(code, "4/test+code");
     }
 
     #[test]
