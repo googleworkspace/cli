@@ -113,21 +113,28 @@ const ENV_OAUTH_STATE: &str = "GOOGLE_WORKSPACE_CLI_OAUTH_STATE";
 /// advance (e.g. to embed it in `GOOGLE_WORKSPACE_CLI_OAUTH_STATE`).
 const ENV_OAUTH_PORT: &str = "GOOGLE_WORKSPACE_CLI_OAUTH_PORT";
 
+/// Read an env var, treating an empty value the same as unset — matching the
+/// convention `crate::auth::has_proxy_env` uses, so `export VAR=` doesn't
+/// silently count as "set".
+fn env_var_nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
 /// True if any of the OAuth redirect override env vars are set, meaning the
 /// caller wants control over where/how the browser gets redirected.
 fn has_oauth_redirect_override() -> bool {
-    std::env::var(ENV_OAUTH_REDIRECT_URI).is_ok()
-        || std::env::var(ENV_OAUTH_STATE).is_ok()
-        || std::env::var(ENV_OAUTH_PORT).is_ok()
+    [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT]
+        .iter()
+        .any(|key| env_var_nonempty(key).is_some())
 }
 
 /// Resolves the redirect_uri Google should send the browser to, and the
 /// `state` value (if any) to attach to the auth URL — both overridable via
 /// env vars so external tooling can route the callback anywhere it needs to.
 fn resolve_redirect_target(port: u16) -> (String, Option<String>) {
-    let redirect_uri = std::env::var(ENV_OAUTH_REDIRECT_URI)
-        .unwrap_or_else(|_| format!("http://localhost:{port}"));
-    let state = std::env::var(ENV_OAUTH_STATE).ok();
+    let redirect_uri =
+        env_var_nonempty(ENV_OAUTH_REDIRECT_URI).unwrap_or_else(|| format!("http://localhost:{port}"));
+    let state = env_var_nonempty(ENV_OAUTH_STATE);
     (redirect_uri, state)
 }
 
@@ -166,8 +173,7 @@ async fn login_with_proxy_support(
     // Start local server to receive OAuth callback. Binds to a fixed port
     // when GOOGLE_WORKSPACE_CLI_OAUTH_PORT is set, so external tooling can
     // know the port in advance; otherwise an OS-assigned ephemeral port.
-    let requested_port = std::env::var(ENV_OAUTH_PORT)
-        .ok()
+    let requested_port = env_var_nonempty(ENV_OAUTH_PORT)
         .map(|p| {
             p.parse::<u16>()
                 .map_err(|e| GwsError::Auth(format!("Invalid {ENV_OAUTH_PORT}: {e}")))
@@ -2595,6 +2601,30 @@ mod tests {
         for (k, v) in keys.iter().zip(saved) {
             if let Some(v) = v {
                 std::env::set_var(k, v);
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_redirect_target_treats_empty_env_as_unset() {
+        let keys = [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT];
+        let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
+
+        // Empty-but-set vars must behave like unset (matches has_proxy_env).
+        for k in keys {
+            std::env::set_var(k, "");
+        }
+
+        assert!(!has_oauth_redirect_override());
+        let (redirect_uri, state) = resolve_redirect_target(12345);
+        assert_eq!(redirect_uri, "http://localhost:12345");
+        assert!(state.is_none());
+
+        for (k, v) in keys.iter().zip(saved) {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
             }
         }
     }
