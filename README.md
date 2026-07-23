@@ -116,6 +116,7 @@ The CLI supports multiple auth workflows so it works on your laptop, in CI, and 
 | A GCP project but no `gcloud` | [Manual OAuth setup](#manual-oauth-setup-google-cloud-console) |
 | An existing OAuth access token | [`GOOGLE_WORKSPACE_CLI_TOKEN`](#pre-obtained-access-token) |
 | Existing Credentials | [`GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`](#service-account-server-to-server) |
+| A remote host unreachable via `localhost` from my browser | [Remote host](#remote-host-browser-on-another-machine) |
 
 ### Interactive (local desktop)
 
@@ -186,6 +187,22 @@ If scope checkboxes appear, select required scopes (or **Select all**) before co
    export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/credentials.json
    gws drive files list   # just works
    ```
+
+### Remote host (browser on another machine)
+
+When the CLI runs where the browser cannot reach via `localhost` (e.g. a cloud development environment), tell the OAuth server to redirect the authorization code to the CLI's host:
+
+```bash
+# Where Google sends the browser (must be an authorized redirect URI on the OAuth client)
+export GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI="https://example.com/callback"
+# Optional value passed through to the listening server (see OAuth 2.0 docs)
+export GOOGLE_WORKSPACE_CLI_OAUTH_STATE="$STATE"
+# Optional port for the CLI's callback server
+export GOOGLE_WORKSPACE_CLI_OAUTH_PORT=42067
+gws auth login
+```
+
+This flow requires a web application OAuth client that would allow redirects to URIs other than `http://localhost`. Provide the client's details via `GOOGLE_WORKSPACE_CLI_CLIENT_ID` and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` environment variables.
 
 ### Service Account (server-to-server)
 
@@ -459,6 +476,8 @@ gws auth login --scopes drive,gmail,calendar
 ### `redirect_uri_mismatch`
 
 The OAuth client was not created as a **Desktop app** type. In the [Credentials](https://console.cloud.google.com/apis/credentials) page, delete the existing client, create a new one with type **Desktop app**, and download the new JSON.
+
+Using the [remote-host flow](#remote-host-browser-on-another-machine) instead? There it means the URL in `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` is not registered on your **Web application** client - add it under **Authorized redirect URIs**.
 
 ### API not enabled — `accessNotConfigured`
 
