@@ -132,8 +132,8 @@ fn has_oauth_redirect_override() -> bool {
 /// `state` value (if any) to attach to the auth URL — both overridable via
 /// env vars so external tooling can route the callback anywhere it needs to.
 fn resolve_redirect_target(port: u16) -> (String, Option<String>) {
-    let redirect_uri =
-        env_var_nonempty(ENV_OAUTH_REDIRECT_URI).unwrap_or_else(|| format!("http://localhost:{port}"));
+    let redirect_uri = env_var_nonempty(ENV_OAUTH_REDIRECT_URI)
+        .unwrap_or_else(|| format!("http://localhost:{port}"));
     let state = env_var_nonempty(ENV_OAUTH_STATE);
     (redirect_uri, state)
 }
