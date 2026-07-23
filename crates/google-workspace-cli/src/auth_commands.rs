@@ -2581,18 +2581,18 @@ mod tests {
     #[test]
     fn extract_authorization_code_returns_code() {
         let code =
-            extract_authorization_code("GET /?state=abc&code=my/test-code1&scope=openid HTTP/1.1")
+            extract_authorization_code("GET /?state=abc&code=4/test-code&scope=openid HTTP/1.1")
                 .unwrap();
-        assert_eq!(code, "my/test-code1");
+        assert_eq!(code, "4/test-code");
     }
 
     #[test]
     fn extract_authorization_code_decodes_percent_encoding() {
         let code = extract_authorization_code(
-            "GET /?state=abc&code=my%2Ftest-code1&scope=openid HTTP/1.1",
+            "GET /?state=abc&code=4%2Ftest-code&scope=openid HTTP/1.1",
         )
         .unwrap();
-        assert_eq!(code, "my/test-code1");
+        assert_eq!(code, "4/test-code");
     }
 
     #[test]
