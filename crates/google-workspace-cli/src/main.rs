@@ -482,6 +482,15 @@ fn print_usage() {
         "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
     );
     println!(
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI  Override OAuth redirect_uri (e.g. an external redirector)"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_STATE         Opaque OAuth state value passed through to the auth URL"
+    );
+    println!(
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_PORT          Pin the local OAuth callback port (default: random)"
+    );
+    println!(
         "    GOOGLE_WORKSPACE_CLI_CONFIG_DIR          Override config directory (default: ~/.config/gws)"
     );
     println!(
