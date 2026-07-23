@@ -381,8 +381,8 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
-| `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` | Override the OAuth `redirect_uri` (e.g. route through an external redirector) |
-| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | Opaque OAuth `state` value passed through to the auth URL |
+| `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` | Override the OAuth redirect URI (for remote-host logins) |
+| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | OAuth `state` value, passed through to the auth URL |
 | `GOOGLE_WORKSPACE_CLI_OAUTH_PORT` | Pin the local OAuth callback port (default: random) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |

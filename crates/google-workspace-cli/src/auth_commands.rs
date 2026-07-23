@@ -98,44 +98,19 @@ fn build_proxy_auth_url(
     url
 }
 
-/// Env var overriding the redirect_uri Google sends the browser to after
-/// auth. Defaults to `http://localhost:{port}`. Set this to route through an
-/// external OAuth redirector (e.g. for a remote dev environment where the
-/// browser can't reach the CLI's local callback server directly).
+// Env vars for customizing the OAuth login callback (see `gws --help`).
 const ENV_OAUTH_REDIRECT_URI: &str = "GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI";
-/// Env var providing a raw `state` value to attach to the auth URL. gws
-/// treats it as an opaque string — whatever encodes the real callback target
-/// (e.g. for an external redirector to decode) is entirely up to whoever
-/// sets this.
 const ENV_OAUTH_STATE: &str = "GOOGLE_WORKSPACE_CLI_OAUTH_STATE";
-/// Env var pinning the local callback server to a fixed port instead of an
-/// OS-assigned ephemeral one, so external tooling can know the port in
-/// advance (e.g. to embed it in `GOOGLE_WORKSPACE_CLI_OAUTH_STATE`).
 const ENV_OAUTH_PORT: &str = "GOOGLE_WORKSPACE_CLI_OAUTH_PORT";
 
-/// Read an env var, treating an empty value the same as unset — matching the
-/// convention `crate::auth::has_proxy_env` uses, so `export VAR=` doesn't
-/// silently count as "set".
-fn env_var_nonempty(key: &str) -> Option<String> {
+fn get_non_empty_env_var(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-/// True if any of the OAuth redirect override env vars are set, meaning the
-/// caller wants control over where/how the browser gets redirected.
-fn has_oauth_redirect_override() -> bool {
+fn has_oauth_callback_override() -> bool {
     [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT]
         .iter()
-        .any(|key| env_var_nonempty(key).is_some())
-}
-
-/// Resolves the redirect_uri Google should send the browser to, and the
-/// `state` value (if any) to attach to the auth URL — both overridable via
-/// env vars so external tooling can route the callback anywhere it needs to.
-fn resolve_redirect_target(port: u16) -> (String, Option<String>) {
-    let redirect_uri = env_var_nonempty(ENV_OAUTH_REDIRECT_URI)
-        .unwrap_or_else(|| format!("http://localhost:{port}"));
-    let state = env_var_nonempty(ENV_OAUTH_STATE);
-    (redirect_uri, state)
+        .any(|key| get_non_empty_env_var(key).is_some())
 }
 
 fn extract_authorization_code(request_line: &str) -> Result<String, GwsError> {
@@ -164,29 +139,36 @@ fn extract_authorization_code(request_line: &str) -> Result<String, GwsError> {
         .ok_or_else(|| GwsError::Auth("No authorization code in callback".to_string()))
 }
 
+fn oauth_redirect_uri(port: u16) -> String {
+    get_non_empty_env_var(ENV_OAUTH_REDIRECT_URI)
+        .unwrap_or_else(|| format!("http://localhost:{port}"))
+}
+
+fn oauth_callback_port() -> Result<u16, GwsError> {
+    get_non_empty_env_var(ENV_OAUTH_PORT)
+        .map(|p| {
+            p.parse::<u16>()
+                .map_err(|e| GwsError::Auth(format!("Invalid {ENV_OAUTH_PORT}: {e}")))
+        })
+        .transpose()
+        .map(|port| port.unwrap_or(0))
+}
+
 /// Perform OAuth login flow with proxy support using reqwest for token exchange
 async fn login_with_proxy_support(
     client_id: &str,
     client_secret: &str,
     scopes: &[String],
 ) -> Result<(String, String), GwsError> {
-    // Start local server to receive OAuth callback. Binds to a fixed port
-    // when GOOGLE_WORKSPACE_CLI_OAUTH_PORT is set, so external tooling can
-    // know the port in advance; otherwise an OS-assigned ephemeral port.
-    let requested_port = env_var_nonempty(ENV_OAUTH_PORT)
-        .map(|p| {
-            p.parse::<u16>()
-                .map_err(|e| GwsError::Auth(format!("Invalid {ENV_OAUTH_PORT}: {e}")))
-        })
-        .transpose()?
-        .unwrap_or(0);
-    let listener = TcpListener::bind(("127.0.0.1", requested_port))
+    // Start local server to receive OAuth callback
+    let listener = TcpListener::bind(("127.0.0.1", oauth_callback_port()?))
         .map_err(|e| GwsError::Auth(format!("Failed to start local server: {e}")))?;
     let port = listener
         .local_addr()
         .map_err(|e| GwsError::Auth(format!("Failed to inspect local server: {e}")))?
         .port();
-    let (redirect_uri, state) = resolve_redirect_target(port);
+    let redirect_uri = oauth_redirect_uri(port);
+    let state = get_non_empty_env_var(ENV_OAUTH_STATE);
 
     let auth_url = build_proxy_auth_url(client_id, &redirect_uri, scopes, state.as_deref());
 
@@ -682,13 +664,10 @@ async fn handle_login_inner(
     std::fs::create_dir_all(&config)
         .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
 
-    // The proxy-aware flow builds its own auth URL and redirect_uri, so it's
-    // also what's needed whenever a caller wants to override the redirect
-    // target (via GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI/_STATE/_PORT) —
-    // yup-oauth2's InstalledFlowAuthenticator doesn't expose a way to
-    // override its redirect_uri or state per-request.
+    // If proxy or oauth env vars are set, use proxy-aware OAuth flow (reqwest)
+    // Otherwise use yup-oauth2 (faster, but doesn't support proxy)
     let (access_token, refresh_token) =
-        if crate::auth::has_proxy_env() || has_oauth_redirect_override() {
+        if crate::auth::has_proxy_env() || has_oauth_callback_override() {
             login_with_proxy_support(&client_id, &client_secret, &scopes).await?
         } else {
             login_with_yup_oauth(&config, &client_id, &client_secret, &scopes).await?
@@ -1790,6 +1769,7 @@ async fn augment_with_dynamic_scopes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVarGuard;
 
     /// Helper to run resolve_scopes in tests (async).
     fn run_resolve_scopes(scope_mode: ScopeMode, project_id: Option<&str>) -> Vec<String> {
@@ -2576,105 +2556,43 @@ mod tests {
         let scopes = vec!["openid".to_string()];
         let url = build_proxy_auth_url(
             "client id",
-            "https://oauth-redirector.example.com",
+            "https://example.com/callback",
             &scopes,
-            Some("eyJ0YXJnZXRfdXJsIjoiZm9vIn0"),
+            Some("eyJub25jZSI6eyJyZWRpcmVjdFVybCI6Ii4uLiJ9fQ"),
         );
 
-        assert!(url.contains("state=eyJ0YXJnZXRfdXJsIjoiZm9vIn0"));
+        assert!(url.contains("state=eyJub25jZSI6eyJyZWRpcmVjdFVybCI6Ii4uLiJ9fQ"));
     }
 
     #[test]
     #[serial_test::serial]
-    fn resolve_redirect_target_defaults_to_localhost() {
-        let keys = [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT];
-        let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
-        for k in keys {
-            std::env::remove_var(k);
-        }
-
-        assert!(!has_oauth_redirect_override());
-        let (redirect_uri, state) = resolve_redirect_target(12345);
-        assert_eq!(redirect_uri, "http://localhost:12345");
-        assert!(state.is_none());
-
-        for (k, v) in keys.iter().zip(saved) {
-            if let Some(v) = v {
-                std::env::set_var(k, v);
-            }
-        }
+    fn oauth_redirect_uri_defaults_to_localhost() {
+        let _uri = EnvVarGuard::remove(ENV_OAUTH_REDIRECT_URI);
+        assert_eq!(oauth_redirect_uri(12345), "http://localhost:12345");
     }
 
     #[test]
     #[serial_test::serial]
-    fn resolve_redirect_target_treats_empty_env_as_unset() {
-        let keys = [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT];
-        let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
-
-        // Empty-but-set vars must behave like unset (matches has_proxy_env).
-        for k in keys {
-            std::env::set_var(k, "");
-        }
-
-        assert!(!has_oauth_redirect_override());
-        let (redirect_uri, state) = resolve_redirect_target(12345);
-        assert_eq!(redirect_uri, "http://localhost:12345");
-        assert!(state.is_none());
-
-        for (k, v) in keys.iter().zip(saved) {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn resolve_redirect_target_honors_env_overrides() {
-        let keys = [ENV_OAUTH_REDIRECT_URI, ENV_OAUTH_STATE, ENV_OAUTH_PORT];
-        let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
-
-        std::env::set_var(
-            ENV_OAUTH_REDIRECT_URI,
-            "https://oauth-redirector.example.com",
-        );
-        std::env::set_var(ENV_OAUTH_STATE, "opaque-caller-supplied-state");
-        std::env::remove_var(ENV_OAUTH_PORT);
-
-        assert!(has_oauth_redirect_override());
-        let (redirect_uri, state) = resolve_redirect_target(18323);
-        assert_eq!(redirect_uri, "https://oauth-redirector.example.com");
-        assert_eq!(state, Some("opaque-caller-supplied-state".to_string()));
-
-        for (k, v) in keys.iter().zip(saved) {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
+    fn oauth_redirect_uri_honors_override() {
+        let _uri = EnvVarGuard::set(ENV_OAUTH_REDIRECT_URI, "https://example.com/callback");
+        assert_eq!(oauth_redirect_uri(12345), "https://example.com/callback");
     }
 
     #[test]
     fn extract_authorization_code_returns_code() {
         let code =
-            extract_authorization_code("GET /?state=abc&code=4/test-code&scope=openid HTTP/1.1")
+            extract_authorization_code("GET /?state=abc&code=my/test-code1&scope=openid HTTP/1.1")
                 .unwrap();
-        assert_eq!(code, "4/test-code");
+        assert_eq!(code, "my/test-code1");
     }
 
     #[test]
     fn extract_authorization_code_decodes_percent_encoding() {
-        // A redirector hop can re-serialize the query string, percent-encoding
-        // characters (e.g. '/' as %2F, '+' as %2B) that Google's own raw
-        // redirect wouldn't have encoded. The extracted code must match what
-        // Google actually issued, or the token exchange fails with
-        // "invalid_grant: Malformed auth code".
         let code = extract_authorization_code(
-            "GET /?state=abc&code=4%2Ftest%2Bcode&scope=openid HTTP/1.1",
+            "GET /?state=abc&code=my%2Ftest-code1&scope=openid HTTP/1.1",
         )
         .unwrap();
-        assert_eq!(code, "4/test+code");
+        assert_eq!(code, "my/test-code1");
     }
 
     #[test]

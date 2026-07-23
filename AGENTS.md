@@ -215,8 +215,8 @@ See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md)
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (for `gws auth login` when no `client_secret.json` is saved) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID` above) |
-| `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` | Override the OAuth `redirect_uri` (e.g. route through an external redirector) |
-| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | Opaque OAuth `state` value passed through to the auth URL |
+| `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` | Override the OAuth redirect URI (for remote-host logins) |
+| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | OAuth `state` value, passed through to the auth URL |
 | `GOOGLE_WORKSPACE_CLI_OAUTH_PORT` | Pin the local OAuth callback port (default: random) |
 
 ### Sanitization (Model Armor)

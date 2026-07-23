@@ -436,46 +436,9 @@ async fn load_credentials_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVarGuard;
     use std::io::Write;
     use tempfile::NamedTempFile;
-
-    /// RAII guard that saves the current value of an environment variable and
-    /// restores it when dropped. This ensures cleanup even if a test panics.
-    struct EnvVarGuard {
-        name: String,
-        original: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVarGuard {
-        /// Save the current value of `name`, then set it to `value`.
-        fn set(name: &str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let original = std::env::var_os(name);
-            std::env::set_var(name, value);
-            Self {
-                name: name.to_string(),
-                original,
-            }
-        }
-
-        /// Save the current value of `name`, then remove it.
-        fn remove(name: &str) -> Self {
-            let original = std::env::var_os(name);
-            std::env::remove_var(name);
-            Self {
-                name: name.to_string(),
-                original,
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(v) => std::env::set_var(&self.name, v),
-                None => std::env::remove_var(&self.name),
-            }
-        }
-    }
 
     fn clear_proxy_env() -> Vec<EnvVarGuard> {
         PROXY_ENV_VARS

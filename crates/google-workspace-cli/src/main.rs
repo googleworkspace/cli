@@ -38,6 +38,8 @@ mod schema;
 mod services;
 mod setup;
 mod setup_tui;
+#[cfg(test)]
+mod test_support;
 mod text;
 mod timezone;
 mod token_storage;
@@ -482,10 +484,10 @@ fn print_usage() {
         "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
     );
     println!(
-        "    GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI  Override OAuth redirect_uri (e.g. an external redirector)"
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI  Override OAuth redirect URI (for remote-host logins)"
     );
     println!(
-        "    GOOGLE_WORKSPACE_CLI_OAUTH_STATE         Opaque OAuth state value passed through to the auth URL"
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_STATE         OAuth state value, passed through to the auth URL"
     );
     println!(
         "    GOOGLE_WORKSPACE_CLI_OAUTH_PORT          Pin the local OAuth callback port (default: random)"
