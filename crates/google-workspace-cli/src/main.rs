@@ -487,7 +487,7 @@ fn print_usage() {
         "    GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI  Override OAuth redirect URI (for remote-host logins)"
     );
     println!(
-        "    GOOGLE_WORKSPACE_CLI_OAUTH_STATE         OAuth state value, passed through to the auth URL"
+        "    GOOGLE_WORKSPACE_CLI_OAUTH_STATE         OAuth state value passed to the server and verified on the callback"
     );
     println!(
         "    GOOGLE_WORKSPACE_CLI_OAUTH_PORT          Pin the local OAuth callback port (default: random)"

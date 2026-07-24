@@ -113,30 +113,40 @@ fn has_oauth_callback_override() -> bool {
         .any(|key| get_non_empty_env_var(key).is_some())
 }
 
+fn query_param(request_line: &str, name: &str) -> Option<String> {
+    let query = request_line.split_whitespace().nth(1)?.split('?').nth(1)?;
+    query.split('&').find_map(|pair| {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next() == Some(name) {
+            parts.next().map(|value| {
+                percent_encoding::percent_decode_str(value)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
+        } else {
+            None
+        }
+    })
+}
+
 fn extract_authorization_code(request_line: &str) -> Result<String, GwsError> {
-    let path = request_line
+    request_line
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| GwsError::Auth("Invalid HTTP request".to_string()))?;
-
-    path.split('?')
-        .nth(1)
-        .and_then(|query| {
-            query.split('&').find_map(|pair| {
-                let mut parts = pair.split('=');
-                if parts.next() == Some("code") {
-                    parts.next()
-                } else {
-                    None
-                }
-            })
-        })
-        .map(|value| {
-            percent_encoding::percent_decode_str(value)
-                .decode_utf8_lossy()
-                .into_owned()
-        })
+    query_param(request_line, "code")
         .ok_or_else(|| GwsError::Auth("No authorization code in callback".to_string()))
+}
+
+fn verify_callback_state(request_line: &str) -> Result<(), GwsError> {
+    let Some(expected) = get_non_empty_env_var(ENV_OAUTH_STATE) else {
+        return Ok(());
+    };
+    if query_param(request_line, "state").as_deref() == Some(expected.as_str()) {
+        Ok(())
+    } else {
+        Err(GwsError::Auth("OAuth state mismatch".to_string()))
+    }
 }
 
 fn oauth_redirect_uri(port: u16) -> String {
@@ -186,6 +196,8 @@ async fn login_with_proxy_support(
         .read_line(&mut request_line)
         .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
 
+    // Reject a forged callback before doing anything with the code
+    verify_callback_state(&request_line)?;
     let code = extract_authorization_code(&request_line)?;
 
     // Send success response to browser
@@ -2588,10 +2600,9 @@ mod tests {
 
     #[test]
     fn extract_authorization_code_decodes_percent_encoding() {
-        let code = extract_authorization_code(
-            "GET /?state=abc&code=4%2Ftest-code&scope=openid HTTP/1.1",
-        )
-        .unwrap();
+        let code =
+            extract_authorization_code("GET /?state=abc&code=4%2Ftest-code&scope=openid HTTP/1.1")
+                .unwrap();
         assert_eq!(code, "4/test-code");
     }
 
@@ -2599,6 +2610,69 @@ mod tests {
     fn extract_authorization_code_rejects_missing_code() {
         let err = extract_authorization_code("GET /?state=abc HTTP/1.1").unwrap_err();
         assert!(err.to_string().contains("No authorization code"));
+    }
+
+    #[test]
+    fn extract_authorization_code_rejects_malformed_request() {
+        let err = extract_authorization_code("GARBAGE").unwrap_err();
+        assert!(err.to_string().contains("Invalid HTTP request"));
+    }
+
+    #[test]
+    fn query_param_returns_decoded_value() {
+        let line = "GET /?state=abc&code=4%2Ftest-code&scope=openid HTTP/1.1";
+        assert_eq!(query_param(line, "code").as_deref(), Some("4/test-code"));
+        assert_eq!(query_param(line, "state").as_deref(), Some("abc"));
+        assert_eq!(query_param(line, "scope").as_deref(), Some("openid"));
+    }
+
+    #[test]
+    fn query_param_absent_or_no_query_is_none() {
+        assert_eq!(query_param("GET /?a=1 HTTP/1.1", "code"), None);
+        assert_eq!(query_param("GET / HTTP/1.1", "code"), None);
+        assert_eq!(query_param("GARBAGE", "code"), None);
+    }
+
+    #[test]
+    fn query_param_matches_full_name_not_prefix() {
+        let line = "GET /?abcd=no&abc=yes HTTP/1.1";
+        assert_eq!(query_param(line, "abc").as_deref(), Some("yes"));
+    }
+
+    #[test]
+    fn query_param_preserves_equals_in_value() {
+        let line = "GET /?state=YQ==&code=x HTTP/1.1";
+        assert_eq!(query_param(line, "state").as_deref(), Some("YQ=="));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn verify_callback_state_skips_when_no_state_configured() {
+        let _state = EnvVarGuard::remove(ENV_OAUTH_STATE);
+
+        verify_callback_state("GET /?code=4/test-code HTTP/1.1").unwrap();
+        verify_callback_state("GET /?state=whatever&code=4/test-code HTTP/1.1").unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn verify_callback_state_accepts_matching_state() {
+        let _state = EnvVarGuard::set(ENV_OAUTH_STATE, "secure-state");
+
+        verify_callback_state("GET /?state=secure-state&code=4/test-code HTTP/1.1").unwrap();
+        verify_callback_state("GET /?state=secure%2Dstate&code=4/x HTTP/1.1").unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn verify_callback_state_rejects_mismatched_or_missing_state() {
+        let _state = EnvVarGuard::set(ENV_OAUTH_STATE, "secure-state");
+
+        let err = verify_callback_state("GET /?state=wrong&code=4/test-code HTTP/1.1").unwrap_err();
+        assert!(err.to_string().contains("state mismatch"));
+
+        let err = verify_callback_state("GET /?code=4/test-code HTTP/1.1").unwrap_err();
+        assert!(err.to_string().contains("state mismatch"));
     }
 
     #[test]

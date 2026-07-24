@@ -190,19 +190,19 @@ If scope checkboxes appear, select required scopes (or **Select all**) before co
 
 ### Remote host (browser on another machine)
 
-When the CLI runs where the browser cannot reach via `localhost` (e.g. a cloud development environment), tell the OAuth server to redirect the authorization code to the CLI's host:
+When the CLI runs where the browser cannot reach it via `localhost` (e.g. a cloud development environment), point the OAuth redirect at an address the browser can reach, which delivers the authorization code back to the CLI:
 
 ```bash
 # Where Google sends the browser (must be an authorized redirect URI on the OAuth client)
-export GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI="https://example.com/callback"
-# Optional value passed through to the listening server (see OAuth 2.0 docs)
+export GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI="https://example.com/callback"k
+# Optional value passed to the OAuth server and verified when returned on the callback
 export GOOGLE_WORKSPACE_CLI_OAUTH_STATE="$STATE"
 # Optional port for the CLI's callback server
 export GOOGLE_WORKSPACE_CLI_OAUTH_PORT=42067
 gws auth login
 ```
 
-This flow requires a web application OAuth client that would allow redirects to URIs other than `http://localhost`. Provide the client's details via `GOOGLE_WORKSPACE_CLI_CLIENT_ID` and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` environment variables.
+This flow requires a web application OAuth client that allows redirects to URIs other than `http://localhost`. Provide the client's details via `GOOGLE_WORKSPACE_CLI_CLIENT_ID` and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` environment variables.
 
 ### Service Account (server-to-server)
 
@@ -399,7 +399,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_OAUTH_REDIRECT_URI` | Override the OAuth redirect URI (for remote-host logins) |
-| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | OAuth `state` value, passed through to the auth URL |
+| `GOOGLE_WORKSPACE_CLI_OAUTH_STATE` | OAuth `state` value, passed to the OAuth server and verified on the callback |
 | `GOOGLE_WORKSPACE_CLI_OAUTH_PORT` | Pin the local OAuth callback port (default: random) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
