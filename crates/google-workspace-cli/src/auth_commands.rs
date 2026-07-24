@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
@@ -164,6 +164,24 @@ fn oauth_callback_port() -> Result<u16, GwsError> {
         .map(|port| port.unwrap_or(0))
 }
 
+const MAX_CALLBACK_REQUEST_BYTES: u64 = 8 * 1024;
+
+fn read_request_line<R: Read>(stream: R) -> Result<String, GwsError> {
+    let mut reader = BufReader::new(stream.take(MAX_CALLBACK_REQUEST_BYTES));
+    let mut request_line = String::new();
+    let read = reader
+        .read_line(&mut request_line)
+        .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
+
+    if read as u64 == MAX_CALLBACK_REQUEST_BYTES && !request_line.ends_with('\n') {
+        return Err(GwsError::Auth(format!(
+            "OAuth callback request line exceeded {MAX_CALLBACK_REQUEST_BYTES} bytes. \
+             The request was rejected without being processed"
+        )));
+    }
+    Ok(request_line)
+}
+
 /// Perform OAuth login flow with proxy support using reqwest for token exchange
 async fn login_with_proxy_support(
     client_id: &str,
@@ -190,11 +208,7 @@ async fn login_with_proxy_support(
         .accept()
         .map_err(|e| GwsError::Auth(format!("Failed to accept connection: {e}")))?;
 
-    let mut reader = BufReader::new(&stream);
-    let mut request_line = String::new();
-    reader
-        .read_line(&mut request_line)
-        .map_err(|e| GwsError::Auth(format!("Failed to read request: {e}")))?;
+    let request_line = read_request_line(&stream)?;
 
     // Reject a forged callback before doing anything with the code
     verify_callback_state(&request_line)?;
@@ -2643,6 +2657,20 @@ mod tests {
     fn query_param_preserves_equals_in_value() {
         let line = "GET /?state=YQ==&code=x HTTP/1.1";
         assert_eq!(query_param(line, "state").as_deref(), Some("YQ=="));
+    }
+
+    #[test]
+    fn read_request_line_reads_normal_line() {
+        let input = b"GET /?code=4/x HTTP/1.1\r\n";
+        let line = read_request_line(&input[..]).unwrap();
+        assert!(line.starts_with("GET /?code=4/x"));
+    }
+
+    #[test]
+    fn read_request_line_is_bounded_without_newline() {
+        let huge = vec![b'a'; MAX_CALLBACK_REQUEST_BYTES as usize * 4];
+        let err = read_request_line(&huge[..]).unwrap_err();
+        assert!(err.to_string().contains("exceeded"));
     }
 
     #[test]
