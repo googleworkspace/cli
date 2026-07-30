@@ -763,8 +763,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
 
-        // Isolate global config dir to prevent races with other tests
-        std::env::set_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
+        // Isolate global config dir to prevent races with other tests. The
+        // guard restores the variable on drop; a bare set_var leaked it into
+        // every later test, and config_dir_returns_gws_subdir then read a
+        // dropped tempdir path instead of the real default.
+        let _config_dir = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
 
         // Encrypt and write
         let encrypted = crate::credential_store::encrypt(json.as_bytes()).unwrap();

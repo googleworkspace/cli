@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 use serde_json::json;
@@ -88,6 +90,62 @@ fn build_proxy_auth_url(client_id: &str, redirect_uri: &str, scopes: &[String]) 
     )
 }
 
+fn browser_command(browser: Option<OsString>, os: &str) -> Option<OsString> {
+    browser.or_else(|| match os {
+        "linux" => Some(OsString::from("xdg-open")),
+        "macos" => Some(OsString::from("open")),
+        // `explorer` avoids cmd.exe URL parsing and the EDR-sensitive rundll32 opener.
+        "windows" => Some(OsString::from("explorer")),
+        _ => None,
+    })
+}
+
+fn is_openable_url(url: &str) -> bool {
+    url.starts_with("https://")
+        && !url.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || crate::output::is_dangerous_unicode(c)
+                || matches!(c, '"' | '\'' | '\\' | ';' | '$' | '|' | '`' | '<' | '>')
+        })
+}
+
+/// Attempt to open an OAuth URL without blocking or affecting the login flow.
+///
+/// Returns whether an opener was actually spawned, so the caller only claims
+/// a browser is opening when one is. The child is reaped in a background
+/// thread, so a slow platform opener cannot block the callback server.
+fn try_open_browser(url: &str) -> bool {
+    if !is_openable_url(url) {
+        return false;
+    }
+
+    let Some(program) = browser_command(std::env::var_os("BROWSER"), std::env::consts::OS) else {
+        return false;
+    };
+
+    match Command::new(program)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            // Builder::spawn returns Err instead of panicking when the OS
+            // refuses a thread; the unreaped child then lingers only until
+            // this short-lived CLI exits, and the login is unaffected.
+            let _ = std::thread::Builder::new()
+                .name("gws-browser-reaper".to_string())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 fn extract_authorization_code(request_line: &str) -> Result<String, GwsError> {
     let path = request_line
         .split_whitespace()
@@ -126,6 +184,9 @@ async fn login_with_proxy_support(
 
     let auth_url = build_proxy_auth_url(client_id, &redirect_uri, scopes);
 
+    if try_open_browser(&auth_url) {
+        println!("Opening in your browser...");
+    }
     println!("Open this URL in your browser to authenticate:\n");
     println!("  {}\n", auth_url);
 
@@ -565,6 +626,9 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
             } else {
                 url.to_string()
             };
+            if try_open_browser(&display_url) {
+                eprintln!("Opening in your browser...");
+            }
             eprintln!("Open this URL in your browser to authenticate:\n");
             eprintln!("  {display_url}\n");
             Ok(String::new())
@@ -2479,6 +2543,68 @@ mod tests {
         };
         let result = extract_scopes_from_doc(&doc, false);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn browser_command_prefers_browser_env() {
+        // $BROWSER is a single command, not a shell line; arguments are not split.
+        let browser = std::ffi::OsString::from("/opt/bin/my-browser");
+
+        let command = browser_command(Some(browser.clone()), "linux");
+
+        assert_eq!(command, Some(browser));
+    }
+
+    #[test]
+    fn browser_command_uses_xdg_open_on_linux() {
+        let command = browser_command(None, "linux");
+
+        assert_eq!(command, Some(std::ffi::OsString::from("xdg-open")));
+    }
+
+    #[test]
+    fn browser_command_uses_open_on_macos() {
+        let command = browser_command(None, "macos");
+
+        assert_eq!(command, Some(std::ffi::OsString::from("open")));
+    }
+
+    #[test]
+    fn browser_command_uses_explorer_on_windows() {
+        let command = browser_command(None, "windows");
+
+        assert_eq!(command, Some(std::ffi::OsString::from("explorer")));
+    }
+
+    #[test]
+    fn browser_command_rejects_unknown_platform() {
+        let command = browser_command(None, "freebsd");
+
+        assert_eq!(command, None);
+    }
+
+    #[test]
+    fn openable_url_accepts_https_url() {
+        assert!(is_openable_url(
+            "https://accounts.google.com/o/oauth2/auth?scope=openid"
+        ));
+    }
+
+    #[test]
+    fn openable_url_rejects_control_whitespace_and_dangerous_unicode() {
+        assert!(!is_openable_url("https://example.com/with space"));
+        assert!(!is_openable_url("https://example.com/with\nnewline"));
+        assert!(!is_openable_url("https://example.com/\u{202E}override"));
+        assert!(!is_openable_url("https://example.com/zero\u{200B}width"));
+    }
+
+    #[test]
+    fn openable_url_rejects_quotes_backslashes_and_shell_characters() {
+        assert!(!is_openable_url("https://example.com/\""));
+        assert!(!is_openable_url("https://example.com/'"));
+        assert!(!is_openable_url("https://example.com/\\"));
+        assert!(!is_openable_url("https://example.com/;evil"));
+        assert!(!is_openable_url("https://example.com/$(evil)"));
     }
 
     #[test]
