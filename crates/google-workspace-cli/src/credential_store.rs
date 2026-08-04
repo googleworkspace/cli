@@ -148,8 +148,12 @@ impl KeyringProvider for OsKeyring {
 /// Which backend to use for encryption key storage.
 ///
 /// Controlled by `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND`:
-/// - `"keyring"` (default): Use OS keyring, fall back to `.encryption_key` file
+/// - `"keyring"`: Use OS keyring, fall back to `.encryption_key` file
 /// - `"file"`: Use `.encryption_key` file only (for Docker/CI/headless)
+///
+/// With no explicit backend, the default config directory uses the OS keyring,
+/// while an isolated `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` uses its profile-local
+/// key file. This prevents custom profiles from sharing one OS-keyring entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyringBackend {
     Keyring,
@@ -158,18 +162,29 @@ enum KeyringBackend {
 
 impl KeyringBackend {
     fn from_env() -> Self {
-        let raw = std::env::var("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND").unwrap_or_default();
-        let lower = raw.to_lowercase();
+        let raw = std::env::var("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND").ok();
+        let custom_config_dir = std::env::var_os("GOOGLE_WORKSPACE_CLI_CONFIG_DIR").is_some();
+        Self::from_setting(raw.as_deref(), custom_config_dir)
+    }
+
+    fn from_setting(raw: Option<&str>, custom_config_dir: bool) -> Self {
+        let default = if custom_config_dir {
+            KeyringBackend::File
+        } else {
+            KeyringBackend::Keyring
+        };
+        let lower = raw.unwrap_or_default().to_lowercase();
         match lower.as_str() {
             "file" => KeyringBackend::File,
-            "keyring" | "" => KeyringBackend::Keyring,
+            "keyring" => KeyringBackend::Keyring,
+            "" => default,
             other => {
-                // Item 1: warn on unrecognized values
                 eprintln!(
                     "Warning: unknown GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=\"{other}\", \
-                     defaulting to \"keyring\". Valid values: \"keyring\", \"file\"."
+                     defaulting to \"{}\". Valid values: \"keyring\", \"file\".",
+                    default.as_str()
                 );
-                KeyringBackend::Keyring
+                default
             }
         }
     }
@@ -811,8 +826,26 @@ mod tests {
 
     #[test]
     fn backend_default_is_keyring() {
-        // from_env reads the env; default (empty/unset) → Keyring
-        assert_eq!(KeyringBackend::from_env(), KeyringBackend::Keyring);
+        assert_eq!(
+            KeyringBackend::from_setting(None, false),
+            KeyringBackend::Keyring
+        );
+    }
+
+    #[test]
+    fn custom_config_dir_defaults_to_file_backend() {
+        assert_eq!(
+            KeyringBackend::from_setting(None, true),
+            KeyringBackend::File
+        );
+    }
+
+    #[test]
+    fn explicit_keyring_overrides_custom_config_default() {
+        assert_eq!(
+            KeyringBackend::from_setting(Some("keyring"), true),
+            KeyringBackend::Keyring
+        );
     }
 
     // ---- read_key_file tests ----

@@ -358,33 +358,12 @@ async fn load_credentials_inner(
                 return parse_credential_file(enc_path, &json_str).await;
             }
             Err(e) => {
-                // Decryption failed — the encryption key likely changed (e.g. after
-                // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
-                eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
-                    enc_path.display()
-                );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
-                    eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
+                return Err(e).with_context(|| {
+                    format!(
+                        "Failed to decrypt encrypted credentials at {}; file and token caches were preserved",
                         enc_path.display()
-                    );
-                }
-                // Also remove stale token caches that used the old key.
-                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
-                    let path = enc_path.with_file_name(cache_file);
-                    if let Err(err) = tokio::fs::remove_file(&path).await {
-                        if err.kind() != std::io::ErrorKind::NotFound {
-                            eprintln!(
-                                "Warning: failed to remove stale token cache '{}': {err}",
-                                path.display()
-                            );
-                        }
-                    }
-                }
-                // Fall through to remaining credential sources below.
+                    )
+                });
             }
         }
     }
@@ -825,18 +804,26 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
+    async fn test_load_credentials_corrupt_encrypted_file_is_preserved() {
+        // A decryption failure must fail closed without deleting credentials or
+        // token caches. The operator may still be able to recover the key/file.
         let tmp = tempfile::tempdir().unwrap();
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
 
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
+        let token_cache_path = dir.path().join("token_cache.json");
+        let sa_token_cache_path = dir.path().join("sa_token_cache.json");
 
         // Write garbage data that cannot be decrypted.
         tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
+            .await
+            .unwrap();
+        tokio::fs::write(&token_cache_path, b"token-cache-sentinel")
+            .await
+            .unwrap();
+        tokio::fs::write(&sa_token_cache_path, b"sa-token-cache-sentinel")
             .await
             .unwrap();
         assert!(enc_path.exists());
@@ -844,24 +831,31 @@ mod tests {
         let result =
             load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist")).await;
 
-        // Should fall through to "No credentials found" (not a decryption error).
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("No credentials found"),
-            "Should fall through to final error, got: {msg}"
+            msg.contains("Failed to decrypt encrypted credentials"),
+            "Should report the decryption failure, got: {msg}"
         );
         assert!(
-            !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
+            enc_path.exists(),
+            "credentials.enc must be preserved after decryption failure"
+        );
+        assert_eq!(
+            tokio::fs::read(&token_cache_path).await.unwrap(),
+            b"token-cache-sentinel"
+        );
+        assert_eq!(
+            tokio::fs::read(&sa_token_cache_path).await.unwrap(),
+            b"sa-token-cache-sentinel"
         );
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_falls_through_to_plaintext() {
-        // When credentials.enc is corrupt but a valid plaintext file exists,
-        // the function should fall through and use the plaintext credentials.
+    async fn test_load_credentials_corrupt_encrypted_does_not_fall_through_to_plaintext() {
+        // Falling through could silently authenticate as a different principal
+        // or with different scopes, so an encrypted-credential failure is final.
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
         let plain_path = dir.path().join("credentials.json");
@@ -880,20 +874,20 @@ mod tests {
         }"#;
         tokio::fs::write(&plain_path, plain_json).await.unwrap();
 
-        let res = load_credentials_inner(None, &enc_path, &plain_path)
+        let err = load_credentials_inner(None, &enc_path, &plain_path)
             .await
-            .unwrap();
+            .unwrap_err();
 
-        match res {
-            Credential::AuthorizedUser(secret) => {
-                assert_eq!(
-                    secret.client_id, "fallback_id",
-                    "Should fall through to plaintext credentials"
-                );
-            }
-            _ => panic!("Expected AuthorizedUser from plaintext fallback"),
-        }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        assert!(
+            err.to_string()
+                .contains("Failed to decrypt encrypted credentials"),
+            "Should report the encrypted credential failure, got: {err:#}"
+        );
+        assert!(enc_path.exists(), "credentials.enc must be preserved");
+        assert!(
+            plain_path.exists(),
+            "plaintext fallback must remain untouched"
+        );
     }
 
     #[tokio::test]
