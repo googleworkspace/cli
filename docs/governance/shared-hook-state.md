@@ -7,8 +7,16 @@ for exactly these common-Git-dir targets:
 - .git/hooks/pre-push
 - .git/info/lefthook.checksum
 
-The current contract is intentionally PROPOSED. It does not choose
-absent or present, and therefore is not an authority for restoration.
+The current contract is DECIDED as a forward local-workstation policy. All
+three targets are expected present with the exact bytes, SHA-256 values, and
+modes embedded in the contract. This preserves the observed Lefthook state;
+it does not claim that those bytes are the historical preimage from before the
+incidental installation.
+
+The pinned hook scripts include the local Lefthook installation path generated
+on this workstation. Moving the repository or regenerating hooks is therefore
+expected to produce bounded drift and requires a new explicit decision rather
+than silent contract refresh.
 
 ## Contract rules
 
@@ -57,12 +65,14 @@ Stable exit codes are:
 | 24 | Target observation failed closed |
 | 25 | CLI arguments are outside the fixed interface |
 
-## Future restoration handoff
+## Decision and future restoration handoff
 
-R2 does not restore anything. A separately authorized future task must:
+R3B made no shared-Git-dir mutation because the observed state already matched
+the forward decision. A future task that changes the decision or observes drift
+must:
 
-1. Receive an exact decision for all three targets; if the decision is absent,
-   leave this contract UNDECIDED/PROPOSED and stop.
+1. Receive a new exact decision for all three targets; if no decision exists,
+   leave this contract unchanged and stop.
 2. Update the repository-owned contract to DECIDED, freeze the manifest
    bytes and every present artifact, and verify the artifact hashes before any
    shared-Git-dir mutation.
@@ -73,6 +83,5 @@ R2 does not restore anything. A separately authorized future task must:
    fail-closed stop. Do not substitute a guessed absent/present state or
    run pnpm, npm, yarn, npx, or an install command to obtain evidence.
 
-Green local tests, a valid proposal, or a zero-drift observation do not by
-themselves constitute human acceptance, restoration authorization, delivery,
-or a live hook effect.
+Green local tests or zero drift do not by themselves prove historical
+restoration, remote delivery, or a live hook execution.

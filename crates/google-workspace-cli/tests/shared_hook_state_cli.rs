@@ -133,7 +133,7 @@ fn drift_kinds(result: &Value) -> Vec<&str> {
 }
 
 #[test]
-fn shared_hook_state_is_structured_and_fail_closed_when_proposal_is_active() {
+fn canonical_shared_hook_decision_matches_observed_targets() {
     let output = Command::new(env!("CARGO_BIN_EXE_gws"))
         .arg("shared-hook-state")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -144,9 +144,11 @@ fn shared_hook_state_is_structured_and_fail_closed_when_proposal_is_active() {
         .expect("shared-hook-state should emit structured JSON on stdout");
 
     assert_eq!(result["schema"], "shared_hook_state_verification_result_v1");
-    assert_eq!(result["authorityStatus"], "PROPOSED");
-    assert_eq!(result["failClosed"], true);
-    assert_eq!(output.status.code(), Some(20));
+    assert_eq!(result["status"], "PASS");
+    assert_eq!(result["authorityStatus"], "DECIDED");
+    assert_eq!(result["failClosed"], false);
+    assert_eq!(result["drift"]["status"], "none");
+    assert_eq!(output.status.code(), Some(0));
 }
 
 #[test]

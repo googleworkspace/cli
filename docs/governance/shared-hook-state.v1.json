@@ -2,27 +2,51 @@
   "schema": "shared_hook_state_authority_v1",
   "schemaVersion": 1,
   "authority": {
-    "status": "PROPOSED",
-    "decisionId": null,
-    "decisionSource": "repository",
-    "basis": "R2 provides a read-only verifier; no exact preimage decision is active.",
+    "status": "DECIDED",
+    "decisionId": "T10-CORR4-R3B-2026-08-05-present-v1",
+    "decisionSource": "human",
+    "basis": "Forward local-workstation decision: preserve the three currently observed Lefthook artifacts exactly because package.json declares prepare=lefthook install and lefthook.yml defines pre-commit/pre-push. This does not claim historical preimage restoration.",
     "mutationAllowed": false
   },
   "targets": [
     {
       "name": "pre-commit",
       "relativePath": ".git/hooks/pre-commit",
-      "expected": null
+      "expected": {
+        "state": "present",
+        "sha256": "55919a9331052e969652af6017b92ddc0e64565efb8984bf3f7a3c9bb15d983c",
+        "mode": "0755",
+        "artifact": {
+          "encoding": "base64",
+          "content": "IyEvYmluL3NoCgppZiBbICIkTEVGVEhPT0tfVkVSQk9TRSIgPSAiMSIgLW8gIiRMRUZUSE9PS19WRVJCT1NFIiA9ICJ0cnVlIiBdOyB0aGVuCiAgc2V0IC14CmZpCgppZiBbICIkTEVGVEhPT0siID0gIjAiIF07IHRoZW4KICBleGl0IDAKZmkKCmNhbGxfbGVmdGhvb2soKQp7CiAgaWYgdGVzdCAtbiAiJExFRlRIT09LX0JJTiIKICB0aGVuCiAgICAiJExFRlRIT09LX0JJTiIgIiRAIgogIGVsaWYgbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgdGhlbgogICAgbGVmdGhvb2sgIiRAIgogIGVsaWYgL1VzZXJzL2ZhY3VuZG8vZGVzYXJyb2xsby9nb29nbGUtY2xpL25vZGVfbW9kdWxlcy8ucG5wbS9sZWZ0aG9vay1kYXJ3aW4tYXJtNjRAMi4xLjIvbm9kZV9tb2R1bGVzL2xlZnRob29rLWRhcndpbi1hcm02NC9iaW4vbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgdGhlbgogICAgL1VzZXJzL2ZhY3VuZG8vZGVzYXJyb2xsby9nb29nbGUtY2xpL25vZGVfbW9kdWxlcy8ucG5wbS9sZWZ0aG9vay1kYXJ3aW4tYXJtNjRAMi4xLjIvbm9kZV9tb2R1bGVzL2xlZnRob29rLWRhcndpbi1hcm02NC9iaW4vbGVmdGhvb2sgIiRAIgogIGVsc2UKICAgIGRpcj0iJChnaXQgcmV2LXBhcnNlIC0tc2hvdy10b3BsZXZlbCkiCiAgICBvc0FyY2g9JCh1bmFtZSB8IHRyICdbOnVwcGVyOl0nICdbOmxvd2VyOl0nKQogICAgY3B1QXJjaD0kKHVuYW1lIC1tIHwgc2VkICdzL2FhcmNoNjQvYXJtNjQvO3MveDg2XzY0L3g2NC8nKQogICAgaWYgdGVzdCAtZiAiJGRpci9ub2RlX21vZHVsZXMvbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vYmluL2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vYmluL2xlZnRob29rIiAiJEAiCiAgICBlbGlmIHRlc3QgLWYgIiRkaXIvbm9kZV9tb2R1bGVzL0BldmlsbWFydGlhbnMvbGVmdGhvb2svYmluL2xlZnRob29rLSR7b3NBcmNofS0ke2NwdUFyY2h9L2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay9iaW4vbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vbGVmdGhvb2siICIkQCIKICAgIGVsaWYgdGVzdCAtZiAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay1pbnN0YWxsZXIvYmluL2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay1pbnN0YWxsZXIvYmluL2xlZnRob29rIiAiJEAiCiAgICBlbGlmIHRlc3QgLWYgIiRkaXIvbm9kZV9tb2R1bGVzL2xlZnRob29rL2Jpbi9pbmRleC5qcyIKICAgIHRoZW4KICAgICAgIiRkaXIvbm9kZV9tb2R1bGVzL2xlZnRob29rL2Jpbi9pbmRleC5qcyIgIiRAIgogICAgZWxpZiBnbyB0b29sIGxlZnRob29rIC1oID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICBnbyB0b29sIGxlZnRob29rICIkQCIKICAgIGVsaWYgYnVuZGxlIGV4ZWMgbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIGJ1bmRsZSBleGVjIGxlZnRob29rICIkQCIKICAgIGVsaWYgeWFybiBsZWZ0aG9vayAtaCA+L2Rldi9udWxsIDI+JjEKICAgIHRoZW4KICAgICAgeWFybiBsZWZ0aG9vayAiJEAiCiAgICBlbGlmIHBucG0gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIHBucG0gbGVmdGhvb2sgIiRAIgogICAgZWxpZiBzd2lmdCBwYWNrYWdlIGxlZnRob29rID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICBzd2lmdCBwYWNrYWdlIC0tYnVpbGQtcGF0aCAuYnVpbGQvbGVmdGhvb2sgLS1kaXNhYmxlLXNhbmRib3ggbGVmdGhvb2sgIiRAIgogICAgZWxpZiBjb21tYW5kIC12IG1pbnQgPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIG1pbnQgcnVuIGNzam9uZXMvbGVmdGhvb2stcGx1Z2luICIkQCIKICAgIGVsaWYgdXYgcnVuIGxlZnRob29rIC1oID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICB1diBydW4gbGVmdGhvb2sgIiRAIgogICAgZWxpZiBtaXNlIGV4ZWMgLS0gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIG1pc2UgZXhlYyAtLSBsZWZ0aG9vayAiJEAiCiAgICBlbGlmIGRldmJveCBydW4gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIGRldmJveCBydW4gbGVmdGhvb2sgIiRAIgogICAgZWxzZQogICAgICBlY2hvICJDYW4ndCBmaW5kIGxlZnRob29rIGluIFBBVEgiCiAgICBmaQogIGZpCn0KCmNhbGxfbGVmdGhvb2sgcnVuICJwcmUtY29tbWl0IiAiJEAiCg=="
+        }
+      }
     },
     {
       "name": "pre-push",
       "relativePath": ".git/hooks/pre-push",
-      "expected": null
+      "expected": {
+        "state": "present",
+        "sha256": "62b911fd1272fa2c9a0d7fab1f310ca586bbe0921c2eede645eb779e54a1daf7",
+        "mode": "0755",
+        "artifact": {
+          "encoding": "base64",
+          "content": "IyEvYmluL3NoCgppZiBbICIkTEVGVEhPT0tfVkVSQk9TRSIgPSAiMSIgLW8gIiRMRUZUSE9PS19WRVJCT1NFIiA9ICJ0cnVlIiBdOyB0aGVuCiAgc2V0IC14CmZpCgppZiBbICIkTEVGVEhPT0siID0gIjAiIF07IHRoZW4KICBleGl0IDAKZmkKCmNhbGxfbGVmdGhvb2soKQp7CiAgaWYgdGVzdCAtbiAiJExFRlRIT09LX0JJTiIKICB0aGVuCiAgICAiJExFRlRIT09LX0JJTiIgIiRAIgogIGVsaWYgbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgdGhlbgogICAgbGVmdGhvb2sgIiRAIgogIGVsaWYgL1VzZXJzL2ZhY3VuZG8vZGVzYXJyb2xsby9nb29nbGUtY2xpL25vZGVfbW9kdWxlcy8ucG5wbS9sZWZ0aG9vay1kYXJ3aW4tYXJtNjRAMi4xLjIvbm9kZV9tb2R1bGVzL2xlZnRob29rLWRhcndpbi1hcm02NC9iaW4vbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgdGhlbgogICAgL1VzZXJzL2ZhY3VuZG8vZGVzYXJyb2xsby9nb29nbGUtY2xpL25vZGVfbW9kdWxlcy8ucG5wbS9sZWZ0aG9vay1kYXJ3aW4tYXJtNjRAMi4xLjIvbm9kZV9tb2R1bGVzL2xlZnRob29rLWRhcndpbi1hcm02NC9iaW4vbGVmdGhvb2sgIiRAIgogIGVsc2UKICAgIGRpcj0iJChnaXQgcmV2LXBhcnNlIC0tc2hvdy10b3BsZXZlbCkiCiAgICBvc0FyY2g9JCh1bmFtZSB8IHRyICdbOnVwcGVyOl0nICdbOmxvd2VyOl0nKQogICAgY3B1QXJjaD0kKHVuYW1lIC1tIHwgc2VkICdzL2FhcmNoNjQvYXJtNjQvO3MveDg2XzY0L3g2NC8nKQogICAgaWYgdGVzdCAtZiAiJGRpci9ub2RlX21vZHVsZXMvbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vYmluL2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vYmluL2xlZnRob29rIiAiJEAiCiAgICBlbGlmIHRlc3QgLWYgIiRkaXIvbm9kZV9tb2R1bGVzL0BldmlsbWFydGlhbnMvbGVmdGhvb2svYmluL2xlZnRob29rLSR7b3NBcmNofS0ke2NwdUFyY2h9L2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay9iaW4vbGVmdGhvb2stJHtvc0FyY2h9LSR7Y3B1QXJjaH0vbGVmdGhvb2siICIkQCIKICAgIGVsaWYgdGVzdCAtZiAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay1pbnN0YWxsZXIvYmluL2xlZnRob29rIgogICAgdGhlbgogICAgICAiJGRpci9ub2RlX21vZHVsZXMvQGV2aWxtYXJ0aWFucy9sZWZ0aG9vay1pbnN0YWxsZXIvYmluL2xlZnRob29rIiAiJEAiCiAgICBlbGlmIHRlc3QgLWYgIiRkaXIvbm9kZV9tb2R1bGVzL2xlZnRob29rL2Jpbi9pbmRleC5qcyIKICAgIHRoZW4KICAgICAgIiRkaXIvbm9kZV9tb2R1bGVzL2xlZnRob29rL2Jpbi9pbmRleC5qcyIgIiRAIgogICAgZWxpZiBnbyB0b29sIGxlZnRob29rIC1oID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICBnbyB0b29sIGxlZnRob29rICIkQCIKICAgIGVsaWYgYnVuZGxlIGV4ZWMgbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIGJ1bmRsZSBleGVjIGxlZnRob29rICIkQCIKICAgIGVsaWYgeWFybiBsZWZ0aG9vayAtaCA+L2Rldi9udWxsIDI+JjEKICAgIHRoZW4KICAgICAgeWFybiBsZWZ0aG9vayAiJEAiCiAgICBlbGlmIHBucG0gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIHBucG0gbGVmdGhvb2sgIiRAIgogICAgZWxpZiBzd2lmdCBwYWNrYWdlIGxlZnRob29rID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICBzd2lmdCBwYWNrYWdlIC0tYnVpbGQtcGF0aCAuYnVpbGQvbGVmdGhvb2sgLS1kaXNhYmxlLXNhbmRib3ggbGVmdGhvb2sgIiRAIgogICAgZWxpZiBjb21tYW5kIC12IG1pbnQgPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIG1pbnQgcnVuIGNzam9uZXMvbGVmdGhvb2stcGx1Z2luICIkQCIKICAgIGVsaWYgdXYgcnVuIGxlZnRob29rIC1oID4vZGV2L251bGwgMj4mMQogICAgdGhlbgogICAgICB1diBydW4gbGVmdGhvb2sgIiRAIgogICAgZWxpZiBtaXNlIGV4ZWMgLS0gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIG1pc2UgZXhlYyAtLSBsZWZ0aG9vayAiJEAiCiAgICBlbGlmIGRldmJveCBydW4gbGVmdGhvb2sgLWggPi9kZXYvbnVsbCAyPiYxCiAgICB0aGVuCiAgICAgIGRldmJveCBydW4gbGVmdGhvb2sgIiRAIgogICAgZWxzZQogICAgICBlY2hvICJDYW4ndCBmaW5kIGxlZnRob29rIGluIFBBVEgiCiAgICBmaQogIGZpCn0KCmNhbGxfbGVmdGhvb2sgcnVuICJwcmUtcHVzaCIgIiRAIgo="
+        }
+      }
     },
     {
       "name": "lefthook.checksum",
       "relativePath": ".git/info/lefthook.checksum",
-      "expected": null
+      "expected": {
+        "state": "present",
+        "sha256": "e8448fb5c4738248828aeee4386b582b459c56abd7d5431546c4b3d2e63255a1",
+        "mode": "0644",
+        "artifact": {
+          "encoding": "base64",
+          "content": "Y2FkY2VmZDMwZDIzNDg1OTJkZTc3ZTA5ZGNmODI4ZTkgMTc4NTg5MDc3NyAK"
+        }
+      }
     }
   ]
 }
