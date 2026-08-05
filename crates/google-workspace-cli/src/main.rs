@@ -38,6 +38,7 @@ mod schema;
 mod services;
 mod setup;
 mod setup_tui;
+mod shared_hook_state;
 mod text;
 mod timezone;
 mod token_storage;
@@ -47,6 +48,11 @@ use error::{print_error_json, GwsError};
 
 #[tokio::main]
 async fn main() {
+    let process_args: Vec<String> = std::env::args().collect();
+    if process_args.get(1).map(String::as_str) == Some(shared_hook_state::COMMAND_NAME) {
+        std::process::exit(shared_hook_state::run_cli(&process_args));
+    }
+
     // Load .env file if present (silently ignored if missing)
     let _ = dotenvy::dotenv();
 
@@ -443,6 +449,7 @@ fn print_usage() {
     println!("USAGE:");
     println!("    gws <service> <resource> [sub-resource] <method> [flags]");
     println!("    gws schema <service.resource.method> [--resolve-refs]");
+    println!("    gws shared-hook-state");
     println!();
     println!("EXAMPLES:");
     println!("    gws drive files list --params '{{\"pageSize\": 10}}'");

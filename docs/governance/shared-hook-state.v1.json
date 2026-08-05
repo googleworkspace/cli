@@ -1,0 +1,28 @@
+{
+  "schema": "shared_hook_state_authority_v1",
+  "schemaVersion": 1,
+  "authority": {
+    "status": "PROPOSED",
+    "decisionId": null,
+    "decisionSource": "repository",
+    "basis": "R2 provides a read-only verifier; no exact preimage decision is active.",
+    "mutationAllowed": false
+  },
+  "targets": [
+    {
+      "name": "pre-commit",
+      "relativePath": ".git/hooks/pre-commit",
+      "expected": null
+    },
+    {
+      "name": "pre-push",
+      "relativePath": ".git/hooks/pre-push",
+      "expected": null
+    },
+    {
+      "name": "lefthook.checksum",
+      "relativePath": ".git/info/lefthook.checksum",
+      "expected": null
+    }
+  ]
+}
