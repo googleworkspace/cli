@@ -38,6 +38,7 @@ pub(super) use mail_builder::headers::address::Address as MbAddress;
 pub(super) use serde::Serialize;
 pub(super) use serde_json::{json, Value};
 use std::future::Future;
+use std::io::Read;
 use std::pin::Pin;
 
 pub struct GmailHelper;
@@ -176,10 +177,10 @@ impl OriginalPart {
 /// A parsed Gmail message fetched via the API, used as context for reply/forward.
 ///
 /// `from` is always populated — `parse_original_message` returns an error when
-/// `From` is missing. `body_text` always has a value — it falls back to the
-/// message snippet when no `text/plain` MIME part is found. Semantically optional
-/// fields (`cc`, `reply_to`, `date`, `body_html`) use `Option` so the compiler
-/// enforces absence checks.
+/// `From` is missing. `body_text` always has a value — HTML-only messages are
+/// rendered as readable text, with the message snippet as a final fallback.
+/// Semantically optional fields (`cc`, `reply_to`, `date`, `body_html`) use
+/// `Option` so the compiler enforces absence checks.
 #[derive(Default, Serialize)]
 pub(super) struct OriginalMessage {
     pub thread_id: Option<String>,
@@ -334,7 +335,12 @@ fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
         .map(extract_payload_contents)
         .unwrap_or_default();
 
-    let body_text = extracted_text.unwrap_or(snippet);
+    let converted_html = body_html.as_deref().and_then(convert_html_to_readable_text);
+    let body_text = select_readable_body(
+        extracted_text.as_deref(),
+        converted_html.as_deref(),
+        &snippet,
+    );
 
     // Parse references: split on whitespace and strip any angle brackets, producing bare IDs
     let references = parsed_headers
@@ -362,6 +368,55 @@ fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
         body_html,
         parts: original_parts,
     })
+}
+
+/// Convert HTML to readable plain text without dropping link targets or document structure.
+/// A wide render width minimizes presentation-only wrapping while retaining block breaks.
+fn convert_html_to_readable_text(html: &str) -> Option<String> {
+    render_html_to_readable_text(html.as_bytes())
+}
+
+fn render_html_to_readable_text(reader: impl Read) -> Option<String> {
+    match html2text::from_read(reader, 120) {
+        Ok(text) => Some(text.trim().to_string()).filter(|text| !text.is_empty()),
+        Err(e) => {
+            eprintln!(
+                "Warning: text/html body could not be rendered as text: {}",
+                sanitize_for_terminal(&e.to_string())
+            );
+            None
+        }
+    }
+}
+
+/// Prefer a converted HTML alternative only when it contains substantially more readable
+/// content than the supplied plain-text alternative. This avoids replacing a good plain part
+/// for minor formatting differences while recovering messages whose plain part is only a stub.
+fn select_readable_body(
+    plain_text: Option<&str>,
+    converted_html: Option<&str>,
+    snippet: &str,
+) -> String {
+    let plain_text = plain_text.filter(|text| !text.trim().is_empty());
+    let converted_html = converted_html.filter(|text| !text.trim().is_empty());
+
+    match (plain_text, converted_html) {
+        (None, Some(html)) => html.to_string(),
+        (Some(plain), Some(html)) if html_is_substantially_richer(plain, html) => html.to_string(),
+        (Some(plain), _) => plain.to_string(),
+        (None, None) => snippet.to_string(),
+    }
+}
+
+fn html_is_substantially_richer(plain_text: &str, converted_html: &str) -> bool {
+    const MIN_EXTRA_CHARS: usize = 80;
+    const MIN_RATIO: usize = 2;
+
+    let plain_chars = plain_text.trim().chars().count();
+    let html_chars = converted_html.trim().chars().count();
+
+    html_chars >= plain_chars.saturating_mul(MIN_RATIO)
+        && html_chars.saturating_sub(plain_chars) >= MIN_EXTRA_CHARS
 }
 
 pub(super) async fn fetch_message_metadata(
@@ -2225,8 +2280,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_original_message_snippet_fallback() {
-        // When only text/html is present (no text/plain), body_text falls back to snippet
+    fn test_parse_original_message_html_fallback() {
+        // When only text/html is present, body_text is rendered from the complete HTML body.
         let msg = json!({
             "threadId": "t1",
             "snippet": "Snippet fallback text",
@@ -2240,7 +2295,7 @@ mod tests {
             }
         });
         let original = parse_original_message(&msg).unwrap();
-        assert_eq!(original.body_text, "Snippet fallback text");
+        assert_eq!(original.body_text, "HTML only");
         assert_eq!(original.body_html.unwrap(), "<p>HTML only</p>");
     }
 
@@ -2423,7 +2478,7 @@ mod tests {
             original.references,
             vec!["ref-1@example.com", "ref-2@example.com"]
         );
-        assert_eq!(original.body_text, "Snippet fallback");
+        assert_eq!(original.body_text, "HTML only");
         assert_eq!(original.body_html.as_deref(), Some("<p>HTML only</p>"));
     }
 
@@ -2458,6 +2513,193 @@ mod tests {
 
         assert_eq!(original.body_text, "Plain text body");
         assert_eq!(original.body_html.as_deref(), Some("<p>Rich HTML body</p>"));
+    }
+
+    fn synthetic_message_with_payload(snippet: &str, mut payload: Value) -> Value {
+        payload.as_object_mut().unwrap().insert(
+            "headers".to_string(),
+            json!([
+                { "name": "From", "value": "sender@example.com" },
+                { "name": "To", "value": "recipient@example.com" },
+                { "name": "Message-ID", "value": "<synthetic@example.com>" }
+            ]),
+        );
+
+        json!({
+            "threadId": "synthetic-thread",
+            "snippet": snippet,
+            "payload": payload,
+        })
+    }
+
+    #[test]
+    fn test_read_prefers_substantially_richer_html_alternative() {
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": { "data": URL_SAFE.encode("View this message online.") }
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": {
+                        "data": URL_SAFE.encode(
+                            "<p>Your synthetic quarterly report is ready.</p>\
+                             <p>Revenue increased across every region, and the detailed \
+                             analysis contains the unique marker RICH-ALTERNATIVE-CONTENT.</p>"
+                        )
+                    }
+                }
+            ]
+        });
+        let msg = synthetic_message_with_payload("unused snippet", payload);
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert!(original.body_text.contains("RICH-ALTERNATIVE-CONTENT"));
+    }
+
+    #[test]
+    fn test_read_uses_html_alternative_when_plain_part_is_empty() {
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": { "data": URL_SAFE.encode("") }
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": { "data": URL_SAFE.encode("<p>Complete synthetic HTML body</p>") }
+                }
+            ]
+        });
+        let msg = synthetic_message_with_payload("incomplete snippet", payload);
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert_eq!(original.body_text, "Complete synthetic HTML body");
+    }
+
+    #[test]
+    fn test_read_keeps_comparable_plain_text_alternative() {
+        let payload = json!({
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {
+                    "mimeType": "text/plain",
+                    "body": { "data": URL_SAFE.encode("Preferred plain wording") }
+                },
+                {
+                    "mimeType": "text/html",
+                    "body": { "data": URL_SAFE.encode("<p>Similar HTML wording</p>") }
+                }
+            ]
+        });
+        let msg = synthetic_message_with_payload("unused snippet", payload);
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert_eq!(original.body_text, "Preferred plain wording");
+    }
+
+    #[test]
+    fn test_html_conversion_empty_and_read_error_fall_back() {
+        struct FailingReader;
+
+        impl std::io::Read for FailingReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("synthetic read failure"))
+            }
+        }
+
+        assert!(convert_html_to_readable_text("<p></p>").is_none());
+        assert!(render_html_to_readable_text(FailingReader).is_none());
+    }
+
+    #[test]
+    fn test_read_html_only_body_is_not_replaced_by_truncated_snippet() {
+        let long_body = format!(
+            "<p>{}</p><p>NON-TRUNCATED-TAIL</p>",
+            "Synthetic long-form message content. ".repeat(120)
+        );
+        let payload = json!({
+            "mimeType": "text/html",
+            "body": { "data": URL_SAFE.encode(&long_body) }
+        });
+        let msg = synthetic_message_with_payload(
+            "Synthetic long-form message content. Synthetic long-form message con",
+            payload,
+        );
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert!(original.body_text.len() > 3_200);
+        assert!(original.body_text.contains("NON-TRUNCATED-TAIL"));
+    }
+
+    #[test]
+    fn test_read_html_only_body_preserves_anchor_href() {
+        let payload = json!({
+            "mimeType": "text/html",
+            "body": {
+                "data": URL_SAFE.encode(
+                    "<p><a href=\"https://example.test/invitations/synthetic-token\">\
+                     Accept invitation</a></p>"
+                )
+            }
+        });
+        let msg = synthetic_message_with_payload("Accept invitation", payload);
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert!(original
+            .body_text
+            .contains("https://example.test/invitations/synthetic-token"));
+    }
+
+    #[test]
+    fn test_read_html_only_body_decodes_entities() {
+        let payload = json!({
+            "mimeType": "text/html",
+            "body": {
+                "data": URL_SAFE.encode("<p>Tom &amp; Jerry&#39;s synthetic report</p>")
+            }
+        });
+        let msg = synthetic_message_with_payload("Tom &amp; Jerry&#39;s synthetic report", payload);
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert!(original
+            .body_text
+            .contains("Tom & Jerry's synthetic report"));
+    }
+
+    #[test]
+    fn test_read_html_only_body_preserves_block_line_breaks() {
+        let payload = json!({
+            "mimeType": "text/html",
+            "body": {
+                "data": URL_SAFE.encode(
+                    "<p>First synthetic paragraph</p><div>Second synthetic block</div>"
+                )
+            }
+        });
+        let msg = synthetic_message_with_payload(
+            "First synthetic paragraphSecond synthetic block",
+            payload,
+        );
+
+        let original = parse_original_message(&msg).unwrap();
+        let first_end = original
+            .body_text
+            .find("First synthetic paragraph")
+            .unwrap()
+            + "First synthetic paragraph".len();
+        let second_start = original.body_text.find("Second synthetic block").unwrap();
+
+        assert!(original.body_text[first_end..second_start].contains('\n'));
     }
 
     #[test]
