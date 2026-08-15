@@ -448,6 +448,108 @@ class LiveCaptureDialog(QDialog):
         super().done(result)
 
 
+class MediaPipeDialog(QDialog):
+    """Pick one MediaPipe landmark file per camera and triangulate them."""
+
+    def __init__(self, camera_names: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Trianguler des points MediaPipe")
+        self.resize(640, 380)
+        self.camera_names = camera_names
+        self.list = QListWidget()
+        self.list.addItems([f"{index} · {name} : (aucun fichier)" for index, name in enumerate(camera_names)])
+        self.paths: list[str] = ["" for _ in camera_names]
+
+        choose = QPushButton("Choisir le fichier de la caméra sélectionnée…")
+        choose.clicked.connect(self._choose_one)
+        choose_all = QPushButton("Choisir tous les fichiers (dans l'ordre)…")
+        choose_all.clicked.connect(self._choose_all)
+
+        self.min_visibility = QDoubleSpinBox(minimum=0.0, maximum=1.0, decimals=2, value=0.5)
+        self.min_visibility.setSingleStep(0.05)
+        self.min_visibility.setToolTip("Les points dont la visibilité MediaPipe est inférieure sont ignorés.")
+        self.max_error = QDoubleSpinBox(minimum=0.0, maximum=200.0, decimals=1, value=0.0)
+        self.max_error.setSuffix(" px")
+        self.max_error.setToolTip(
+            "Rejette les points dont l'erreur de reprojection dépasse ce seuil. 0 désactive."
+        )
+        self.person = QSpinBox(minimum=0, maximum=9, value=0)
+        self.offsets = QComboBox()
+        self.offsets.setEditable(True)
+        self.offsets.addItem(", ".join("0" for _ in camera_names))
+        self.offsets.setToolTip(
+            "Décalage en trames par caméra, séparé par des virgules — pour une caméra démarrée en retard."
+        )
+
+        form = QFormLayout()
+        form.addRow("Visibilité minimale", self.min_visibility)
+        form.addRow("Erreur de reprojection maximale", self.max_error)
+        form.addRow("Personne suivie", self.person)
+        form.addRow("Décalages (trames)", self.offsets)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                "Un fichier de points par caméra (.json, .jsonl, .npy, .npz), "
+                "<b>dans l'ordre du dispositif étalonné</b>."
+            )
+        )
+        layout.addWidget(self.list, 1)
+        row = QHBoxLayout()
+        row.addWidget(choose)
+        row.addWidget(choose_all)
+        layout.addLayout(row)
+        layout.addLayout(form)
+        layout.addWidget(_buttons(self))
+
+    def _filter(self) -> str:
+        return "Points MediaPipe (*.json *.jsonl *.npy *.npz);;Tous les fichiers (*)"
+
+    def _choose_one(self) -> None:
+        index = self.list.currentRow()
+        if index < 0:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, f"Points de la caméra {index}", "", self._filter())
+        if path:
+            self._set(index, path)
+
+    def _choose_all(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "Points de toutes les caméras", "", self._filter())
+        for index, path in enumerate(sorted(paths)[: len(self.paths)]):
+            self._set(index, path)
+
+    def _set(self, index: int, path: str) -> None:
+        self.paths[index] = path
+        self.list.item(index).setText(f"{index} · {self.camera_names[index]} : {os.path.basename(path)}")
+
+    def values(self) -> dict:
+        text = self.offsets.currentText().replace(";", ",")
+        try:
+            offsets = [int(part) for part in text.split(",") if part.strip()]
+        except ValueError:
+            offsets = []
+        if len(offsets) != len(self.paths):
+            offsets = [0] * len(self.paths)
+        return {
+            "sources": list(self.paths),
+            "min_visibility": self.min_visibility.value(),
+            "max_error": self.max_error.value(),
+            "person": self.person.value(),
+            "offsets": offsets,
+        }
+
+    def accept(self) -> None:
+        missing = [i for i, path in enumerate(self.paths) if not path]
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Fichiers manquants",
+                "Aucun fichier pour la/les caméra(s) : " + ", ".join(str(i) for i in missing),
+            )
+            return
+        super().accept()
+
+
 class SolverDialog(QDialog):
     """Camera model, free parameters and optimiser settings."""
 

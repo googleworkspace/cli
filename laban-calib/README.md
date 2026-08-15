@@ -115,12 +115,79 @@ python -m labancalib.cli calibrate images/cam0 images/cam1 images/cam2 \
 
 ## Réutilisation : triangulation des articulations
 
+### Import direct MediaPipe
+
+MediaPipe Pose fournit, par caméra et par trame, 33 points BlazePose en
+coordonnées **image normalisées** [0, 1] avec un score de visibilité.
+`labancalib.mediapipe_io` les convertit en pixels via la taille d'image de
+chaque caméra étalonnée, écarte les points peu visibles, aligne les séquences
+et les triangule.
+
 ```python
-import numpy as np
-from labancalib import Rig
+from labancalib import Rig, triangulate_mediapipe
 
 rig = Rig.from_json("dispositif.json")
 
+# un fichier par caméra, dans l'ordre du dispositif
+reconstruction = triangulate_mediapipe(
+    rig,
+    ["cam0.json", "cam1.json", "cam2.json"],
+    min_visibility=0.5,   # seuil sur la visibilité MediaPipe
+    max_error=8.0,        # rejet au-delà de 8 px de reprojection (0 = désactivé)
+    offsets=[0, 0, 2],    # caméra 2 démarrée 2 trames plus tard
+)
+
+reconstruction.points      # (n_trames, 33, 3) en mètres, nan si non reconstruit
+reconstruction.errors      # (n_trames, 33) erreur de reprojection, en pixels
+reconstruction.seen_by     # (n_trames, 33) nombre de caméras exploitables
+reconstruction.completeness()      # part des points reconstruits
+reconstruction.segment_lengths()   # longueurs médianes des segments, en mètres
+reconstruction.save("points3d.npz")   # ou .csv
+```
+
+Sources acceptées, indifféremment : chemins de fichiers (`.json`, `.jsonl`,
+`.npy`, `.npz`), tableaux NumPy, ou listes de résultats MediaPipe en mémoire —
+API Tasks (`PoseLandmarker`) comme ancienne API `solutions.pose`. Le multi-
+personnes est géré par `person=`.
+
+> **Ce sont les points *image* qui sont triangulés, pas les
+> `pose_world_landmarks`.** Ces derniers sont métriques mais recentrés sur le
+> bassin et estimés d'une seule vue : ils ne portent aucune géométrie du
+> dispositif. C'est la triangulation sur les caméras étalonnées qui donne des
+> positions métriques dans le repère du studio.
+
+**Contrôle de sanité** : `segment_lengths()` donne la longueur médiane de
+chaque segment du squelette. Les os ne s'allongent pas — une dispersion
+importante d'une trame à l'autre signale un étalonnage ou une association
+inter-caméras défaillante, avant même de passer à l'analyse Laban.
+
+En ligne de commande :
+
+```bash
+# points MediaPipe d'une captation (nécessite le modèle .task, cf. plus bas)
+python -m labancalib.cli pose captation_cam0.mp4 --model pose_landmarker.task --out cam0.json
+
+# reconstruction 3D sur le dispositif étalonné
+python -m labancalib.cli triangulate dispositif.json cam0.json cam1.json cam2.json \
+    --min-visibility 0.5 --max-error 8 --out points3d.csv
+```
+
+Dans l'interface : menu **Analyse → Trianguler des points MediaPipe…** (F7).
+
+Le sous-programme `pose` a besoin du modèle MediaPipe, à télécharger une fois :
+
+```bash
+curl -L -o pose_landmarker.task \
+  https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
+```
+
+(ou définir `MEDIAPIPE_POSE_MODEL`). Si vous produisez déjà les points avec
+votre propre script MediaPipe, cette étape est inutile : passez directement
+vos fichiers à `triangulate`.
+
+### API générique
+
+```python
 # tracks : (n_caméras, n_trames, n_articulations, 2) en pixels, nan si absent
 points_3d, erreurs = rig.triangulate_tracks(tracks)   # (n_trames, n_articulations, 3) en mètres
 ```
@@ -155,6 +222,7 @@ reprojection, qui sert de mesure de confiance en aval de l'analyse Laban.
 | `labancalib/sources.py` | Dossiers d'images, extraction vidéo, capture en direct |
 | `labancalib/export.py` | Export JSON / OpenCV / rapport texte |
 | `labancalib/triangulate.py` | Reconstruction 3D à partir d'un dispositif étalonné |
+| `labancalib/mediapipe_io.py` | Import des points MediaPipe Pose et reconstruction 3D |
 | `labancalib/cli.py` | Interface en ligne de commande |
 | `labancalib/gui/` | Interface PySide6 (fenêtre, calques, graphiques, vue 3D, tâches de fond) |
 
@@ -164,9 +232,14 @@ reprojection, qui sert de mesure de confiance en aval de l'analyse Laban.
 python -m pytest tests -q
 ```
 
-53 tests : accord de la projection vectorisée avec OpenCV, aller-retour de
+71 tests : accord de la projection vectorisée avec OpenCV, aller-retour de
 détection sur les quatre types de mires, précision de l'étalonnage contre une
 vérité terrain synthétique (sténopé et fisheye), rejet des aberrants,
-diagnostic des caméras sans vue commune, persistance du projet, export, et un
-essai de bout en bout sur des images réellement rendues (détection →
-étalonnage → export → triangulation).
+diagnostic des caméras sans vue commune, persistance du projet, export, import
+MediaPipe (sur les vrais objets de l'API Tasks, sur l'ancienne API, et sur les
+formats de fichiers) avec reconstruction 3D vérifiée contre un squelette de
+référence, et un essai de bout en bout sur des images réellement rendues
+(détection → étalonnage → export → triangulation).
+
+Les tests MediaPipe sont ignorés automatiquement si `mediapipe` n'est pas
+installé.

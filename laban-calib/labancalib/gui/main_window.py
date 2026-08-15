@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -37,7 +38,14 @@ from ..pipeline import camera_image_sizes, reprojection_for_view
 from ..project import Project
 from ..sources import list_images, read_image
 from . import workers
-from .dialogs import BoardDialog, LiveCaptureDialog, SolverDialog, SourcesDialog, VideoDialog
+from .dialogs import (
+    BoardDialog,
+    LiveCaptureDialog,
+    MediaPipeDialog,
+    SolverDialog,
+    SourcesDialog,
+    VideoDialog,
+)
 from .image_view import ImageView
 from .plots import CANVAS_TYPES
 from .view3d import View3D
@@ -139,6 +147,11 @@ class MainWindow(QMainWindow):
         self.action_stop = self._action(calibration_menu, "Interrompre", self.stop_worker, "Esc")
         self.action_stop.setEnabled(False)
 
+        analysis_menu = self.menuBar().addMenu("&Analyse")
+        self.action_mediapipe = self._action(
+            analysis_menu, "Trianguler des points MediaPipe…", self.triangulate_mediapipe, "F7"
+        )
+
         view_menu = self.menuBar().addMenu("&Affichage")
         self._action(view_menu, "Ajuster l'image", self.image_view.fit)
         self._action(view_menu, "Zoom avant", lambda: self.image_view.zoom(1.25), QKeySequence.ZoomIn)
@@ -218,6 +231,7 @@ class MainWindow(QMainWindow):
         self.action_detect.setEnabled(not busy and project.n_cameras > 0)
         self.action_optimise.setEnabled(not busy and bool(project.detections))
         self.action_sources.setEnabled(not busy)
+        self.action_mediapipe.setEnabled(not busy and project.result is not None)
         self.action_stop.setEnabled(busy)
 
     def refresh_tree(self) -> None:
@@ -454,6 +468,47 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(2)
 
         self._start(worker, finished, "Optimisation…")
+
+    def triangulate_mediapipe(self) -> None:
+        """Reconstruct MediaPipe joint tracks in 3D on the calibrated rig."""
+        if not self.project.result:
+            QMessageBox.information(
+                self,
+                "Dispositif non étalonné",
+                "Étalonnez d'abord les caméras (F6) : la triangulation a besoin de leurs poses.",
+            )
+            return
+        names = [camera.name for camera in self.project.result.cameras]
+        dialog = MediaPipeDialog(names, self)
+        if not dialog.exec():
+            return
+        options = dialog.values()
+        self.log(f"Triangulation MediaPipe — {len(options['sources'])} fichier(s) de points")
+
+        def finished(reconstruction) -> None:
+            self._worker_done()
+            errors = reconstruction.errors[np.isfinite(reconstruction.errors)]
+            self.log(
+                f"{reconstruction.n_frames} trame(s) — "
+                f"{reconstruction.completeness() * 100:.1f} % des points reconstruits — "
+                f"erreur de reprojection médiane "
+                f"{np.median(errors) if errors.size else float('nan'):.3f} px"
+            )
+            lengths = reconstruction.segment_lengths()
+            for name in ("epaule_gauche–epaule_droite", "hanche_gauche–hanche_droite"):
+                if name in lengths:
+                    self.log(f"    {name} : {lengths[name] * 100:.1f} cm (médiane)")
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Enregistrer les trajectoires 3D",
+                "points3d.npz",
+                "Archive NumPy (*.npz);;CSV (*.csv)",
+            )
+            if path:
+                reconstruction.save(path)
+                self.log(f"Trajectoires 3D enregistrées : {path}")
+
+        self._start(workers.TriangulationWorker(self.project.result, options), finished, "Triangulation…")
 
     def export_result(self) -> None:
         if not self.project.result:

@@ -10,6 +10,8 @@ import argparse
 import os
 import sys
 
+import numpy as np
+
 from .board import ARUCO_DICTIONARIES, BOARD_KINDS, BoardSpec, render_board, save_board_pdf
 from .bundle import BundleOptions
 from .export import EXPORT_FORMATS, export_result, parameters_report
@@ -73,6 +75,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = subparsers.add_parser("report", help="afficher le rapport d'un projet enregistré")
     report.add_argument("project")
+
+    pose = subparsers.add_parser("pose", help="extraire les points MediaPipe d'une vidéo")
+    pose.add_argument("video")
+    pose.add_argument("--out", required=True, help="fichier .json, .npy ou .npz à écrire")
+    pose.add_argument("--model", help="modèle .task de MediaPipe (voir --help pour l'URL)")
+    pose.add_argument("--min-confidence", type=float, default=0.5)
+
+    triangulate = subparsers.add_parser(
+        "triangulate", help="reconstruire des points MediaPipe en 3D sur un dispositif étalonné"
+    )
+    triangulate.add_argument("rig", help="dispositif exporté (JSON)")
+    triangulate.add_argument("landmarks", nargs="+", help="un fichier de points par caméra, dans l'ordre du dispositif")
+    triangulate.add_argument("--out", help="fichier .npz ou .csv à écrire")
+    triangulate.add_argument("--min-visibility", type=float, default=0.5)
+    triangulate.add_argument("--max-error", type=float, default=0.0, help="rejet au-delà de N px de reprojection")
+    triangulate.add_argument("--person", type=int, default=0, help="indice de la personne suivie")
+    triangulate.add_argument(
+        "--offsets", type=int, nargs="+", help="décalage en trames par caméra (démarrage tardif)"
+    )
     return parser
 
 
@@ -141,6 +162,49 @@ def _run_report(args) -> int:
     return 0
 
 
+def _run_pose(args) -> int:
+    from .mediapipe_io import estimate_from_video, save_landmarks
+
+    landmarks = estimate_from_video(
+        args.video,
+        model_path=args.model,
+        min_detection_confidence=args.min_confidence,
+        progress=lambda value: None,
+    )
+    detected = int(np.isfinite(landmarks[:, :, 0]).any(axis=1).sum())
+    save_landmarks(args.out, landmarks, source=args.video)
+    print(f"{len(landmarks)} trame(s), {detected} avec une personne détectée -> {args.out}")
+    return 0 if detected else 2
+
+
+def _run_triangulate(args) -> int:
+    from .mediapipe_io import triangulate_mediapipe
+    from .triangulate import Rig
+
+    rig = Rig.from_json(args.rig)
+    reconstruction = triangulate_mediapipe(
+        rig,
+        args.landmarks,
+        min_visibility=args.min_visibility,
+        offsets=args.offsets,
+        person=args.person,
+        max_error=args.max_error,
+    )
+    errors = reconstruction.errors[np.isfinite(reconstruction.errors)]
+    print(
+        f"{reconstruction.n_frames} trame(s), "
+        f"{reconstruction.completeness() * 100:.1f} % des points reconstruits, "
+        f"erreur de reprojection médiane {np.median(errors) if errors.size else float('nan'):.3f} px"
+    )
+    print("\nLongueurs de segments (médianes, m) — un écart-type élevé trahit un problème :")
+    for name, length in sorted(reconstruction.segment_lengths().items()):
+        print(f"    {name:<40} {length:.4f}")
+    if args.out:
+        reconstruction.save(args.out)
+        print(f"\nécrit vers {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
@@ -148,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         "frames": _run_frames,
         "calibrate": _run_calibrate,
         "report": _run_report,
+        "pose": _run_pose,
+        "triangulate": _run_triangulate,
     }
     try:
         return handlers[args.command](args)

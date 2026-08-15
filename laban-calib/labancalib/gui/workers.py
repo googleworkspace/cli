@@ -102,6 +102,30 @@ class VideoWorker(Worker):
         return out
 
 
+class TriangulationWorker(Worker):
+    """Reconstructs MediaPipe landmarks in 3D on the calibrated rig."""
+
+    def __init__(self, result, options: dict):
+        super().__init__()
+        self.result = result
+        self.options = options
+
+    def work(self):
+        from ..mediapipe_io import triangulate_mediapipe
+        from ..triangulate import Rig
+
+        rig = Rig.from_result(self.result)
+        self.message.emit(f"triangulation sur {rig.n_cameras} caméra(s) étalonnée(s)")
+        return triangulate_mediapipe(
+            rig,
+            self.options["sources"],
+            min_visibility=self.options["min_visibility"],
+            offsets=self.options["offsets"],
+            person=self.options["person"],
+            max_error=self.options["max_error"],
+        )
+
+
 def start(worker: Worker, on_finished, on_failed, on_progress=None, on_message=None) -> QThread:
     """Move ``worker`` to a thread, wire the signals, and start it.
 

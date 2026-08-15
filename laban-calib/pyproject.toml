@@ -17,7 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.5", "matplotlib>=3.7"]
-dev = ["pytest>=7.4", "PySide6>=6.5", "matplotlib>=3.7"]
+pose = ["mediapipe>=0.10"]
+dev = ["pytest>=7.4", "PySide6>=6.5", "matplotlib>=3.7", "mediapipe>=0.10"]
 
 [project.scripts]
 laban-calib = "labancalib.cli:main"
