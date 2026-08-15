@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laban-calib"
+version = "0.1.0"
+description = "Étalonnage multi-caméras pour la captation du mouvement dansé (projet Laban-Notation)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "opencv-contrib-python>=4.7",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5", "matplotlib>=3.7"]
+dev = ["pytest>=7.4", "PySide6>=6.5", "matplotlib>=3.7"]
+
+[project.scripts]
+laban-calib = "labancalib.cli:main"
+
+[project.gui-scripts]
+laban-calib-gui = "labancalib.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["labancalib*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
