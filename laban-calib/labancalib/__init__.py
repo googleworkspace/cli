@@ -34,6 +34,7 @@ from .mediapipe_io import (
 from .pipeline import run_calibration, run_detection
 from .project import CameraSource, Project
 from .triangulate import Rig
+from .undistort import undistort_image, undistort_video, undistorted_intrinsics
 
 __version__ = "0.1.0"
 
@@ -66,5 +67,8 @@ __all__ = [
     "run_detection",
     "save_landmarks",
     "triangulate_mediapipe",
+    "undistort_image",
+    "undistort_video",
+    "undistorted_intrinsics",
     "__version__",
 ]

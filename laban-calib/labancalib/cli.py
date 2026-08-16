@@ -76,6 +76,21 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="afficher le rapport d'un projet enregistré")
     report.add_argument("project")
 
+    undistort = subparsers.add_parser(
+        "undistort", help="corriger la distorsion d'une vidéo ou d'images"
+    )
+    undistort.add_argument("rig", help="étalonnage exporté (JSON)")
+    undistort.add_argument("inputs", nargs="+", help="vidéo(s) ou image(s) à corriger")
+    undistort.add_argument("--out", required=True, help="fichier de sortie, ou dossier si plusieurs entrées")
+    undistort.add_argument("--camera", type=int, default=0, help="indice de la caméra dans l'étalonnage")
+    undistort.add_argument(
+        "--balance",
+        type=float,
+        default=0.0,
+        help="0 = ne garder que les pixels valides (défaut), 1 = conserver tout le champ",
+    )
+    undistort.add_argument("--fourcc", default="mp4v", help="codec de sortie pour les vidéos")
+
     pose = subparsers.add_parser("pose", help="extraire les points MediaPipe d'une vidéo")
     pose.add_argument("video")
     pose.add_argument("--out", required=True, help="fichier .json, .npy ou .npz à écrire")
@@ -162,6 +177,63 @@ def _run_report(args) -> int:
     return 0
 
 
+def _run_undistort(args) -> int:
+    import cv2
+
+    from .sources import VIDEO_EXTENSIONS, read_image
+    from .triangulate import Rig
+    from .undistort import undistort_image, undistort_video, undistortion_maps
+
+    rig = Rig.from_json(args.rig)
+    if not 0 <= args.camera < rig.n_cameras:
+        print(
+            f"erreur : caméra {args.camera} demandée, l'étalonnage en contient {rig.n_cameras}",
+            file=sys.stderr,
+        )
+        return 2
+    intrinsics = rig.intrinsics[args.camera]
+    print(f"Caméra {args.camera} — modèle {intrinsics.model}, étalonné en "
+          f"{intrinsics.image_size[0]}×{intrinsics.image_size[1]}")
+
+    multiple = len(args.inputs) > 1
+    if multiple:
+        os.makedirs(args.out, exist_ok=True)
+
+    for source in args.inputs:
+        destination = (
+            os.path.join(args.out, os.path.basename(source)) if multiple else args.out
+        )
+        if source.lower().endswith(VIDEO_EXTENSIONS):
+            report = undistort_video(
+                source, destination, intrinsics, balance=args.balance, fourcc=args.fourcc
+            )
+            if not report["resolution_matched"]:
+                calibrated = report["calibrated_size"]
+                print(
+                    f"    attention : vidéo {report['size'][0]}×{report['size'][1]} mais étalonnage "
+                    f"{calibrated[0]}×{calibrated[1]} — K mis à l'échelle, valable seulement si le "
+                    "champ de vision est inchangé",
+                    file=sys.stderr,
+                )
+            if report["aspect_changed"]:
+                print(
+                    "    ATTENTION : le rapport d'aspect diffère de l'étalonnage — recadrage probable, "
+                    "l'étalonnage ne s'applique pas ; ré-étalonnez dans le format de tournage",
+                    file=sys.stderr,
+                )
+            print(f"    {report['frames']} trame(s) -> {destination}")
+        else:
+            image = read_image(source)
+            cv2.imwrite(destination, undistort_image(image, intrinsics, balance=args.balance))
+            print(f"    image -> {destination}")
+
+    _, _, new_K, _ = undistortion_maps(intrinsics, balance=args.balance)
+    print("\nIntrinsèques de l'image corrigée (distorsion nulle) :")
+    print(np.array2string(new_K, precision=3, suppress_small=True))
+    print("Utilisez cette matrice en aval : celle de l'étalonnage ne s'applique plus.")
+    return 0
+
+
 def _run_pose(args) -> int:
     from .mediapipe_io import estimate_from_video, save_landmarks
 
@@ -212,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         "frames": _run_frames,
         "calibrate": _run_calibrate,
         "report": _run_report,
+        "undistort": _run_undistort,
         "pose": _run_pose,
         "triangulate": _run_triangulate,
     }

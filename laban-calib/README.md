@@ -113,6 +113,39 @@ python -m labancalib.cli calibrate images/cam0 images/cam1 images/cam2 \
     --model fisheye --out dispositif.json --project etude.lcalib
 ```
 
+## Corriger la distorsion d'une captation
+
+Avec un objectif grand-angle, les droites se courbent et le biais grandit vers
+les bords du cadre : **tout angle articulaire et toute vitesse mesurés sur les
+pixels bruts en héritent**. Corriger la distorsion avant analyse supprime ce
+biais — et c'est le principal apport d'un étalonnage quand une seule caméra est
+disponible et que la 3D métrique est hors d'atteinte.
+
+```bash
+python -m labancalib.cli undistort dispositif.json combat.mp4 --out combat_ok.mp4
+python -m labancalib.cli undistort dispositif.json *.mp4 --out corrigees/   # par lot
+```
+
+```python
+from labancalib import Rig, undistort_video, undistorted_intrinsics
+
+rig = Rig.from_json("dispositif.json")
+rapport = undistort_video("combat.mp4", "combat_ok.mp4", rig.intrinsics[0])
+K = undistorted_intrinsics(rig.intrinsics[0]).K   # matrice de l'image corrigée
+```
+
+> **L'image corrigée est une nouvelle caméra.** Elle a sa propre matrice
+> intrinsèque, sans coefficients de distorsion : la commande l'affiche en fin
+> d'exécution. Les traitements en aval doivent utiliser celle-là, plus celle de
+> l'étalonnage.
+
+`--balance` arbitre entre champ et validité : `0` (défaut) ne conserve que les
+pixels valides, `1` garde tout le champ de vision au prix de bords invalides.
+La commande signale un écart de résolution avec l'étalonnage — `K` est alors
+remis à l'échelle, ce qui n'est licite qu'à champ de vision inchangé — et
+avertit fermement si le rapport d'aspect diffère, signe d'un recadrage qui
+invalide l'étalonnage.
+
 ## Réutilisation : triangulation des articulations
 
 ### Import direct MediaPipe
@@ -222,6 +255,7 @@ reprojection, qui sert de mesure de confiance en aval de l'analyse Laban.
 | `labancalib/sources.py` | Dossiers d'images, extraction vidéo, capture en direct |
 | `labancalib/export.py` | Export JSON / OpenCV / rapport texte |
 | `labancalib/triangulate.py` | Reconstruction 3D à partir d'un dispositif étalonné |
+| `labancalib/undistort.py` | Correction de la distorsion (images, vidéos, intrinsèques corrigées) |
 | `labancalib/mediapipe_io.py` | Import des points MediaPipe Pose et reconstruction 3D |
 | `labancalib/cli.py` | Interface en ligne de commande |
 | `labancalib/gui/` | Interface PySide6 (fenêtre, calques, graphiques, vue 3D, tâches de fond) |
@@ -232,14 +266,15 @@ reprojection, qui sert de mesure de confiance en aval de l'analyse Laban.
 python -m pytest tests -q
 ```
 
-71 tests : accord de la projection vectorisée avec OpenCV, aller-retour de
+84 tests : accord de la projection vectorisée avec OpenCV, aller-retour de
 détection sur les quatre types de mires, précision de l'étalonnage contre une
 vérité terrain synthétique (sténopé et fisheye), rejet des aberrants,
 diagnostic des caméras sans vue commune, persistance du projet, export, import
 MediaPipe (sur les vrais objets de l'API Tasks, sur l'ancienne API, et sur les
 formats de fichiers) avec reconstruction 3D vérifiée contre un squelette de
-référence, et un essai de bout en bout sur des images réellement rendues
-(détection → étalonnage → export → triangulation).
+référence, correction de distorsion (les deux modèles, écarts de résolution et de rapport
+d'aspect, vidéo et lot), et un essai de bout en bout sur des images réellement
+rendues (détection → étalonnage → export → triangulation).
 
 Les tests MediaPipe sont ignorés automatiquement si `mediapipe` n'est pas
 installé.
