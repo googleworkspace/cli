@@ -149,7 +149,12 @@ impl TokenStorage for EncryptedTokenStorage {
         if let Some(map) = map_lock.as_ref() {
             let key = Self::cache_key(scopes);
             if let Some(token) = map.get(&key) {
-                return Some(token.clone());
+                // yup-oauth2 treats a missing expiry as "never expires". Google access tokens
+                // are short-lived, so reusing such an entry can cause permanent 401 responses.
+                // Treat it as a cache miss and let the authenticator fetch a fresh token.
+                if token.expires_at.is_some() {
+                    return Some(token.clone());
+                }
             }
         }
 
@@ -171,5 +176,41 @@ mod tests {
 
         let cache_lock = storage.cache.lock().await;
         assert!(cache_lock.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_ignores_cached_token_without_expiry() {
+        let storage = EncryptedTokenStorage::new(PathBuf::from("/unused/token.json"));
+        let scopes = ["scope-a", "scope-b"];
+        let token = TokenInfo {
+            access_token: Some("stale-access-token".into()),
+            refresh_token: Some("refresh-token".into()),
+            expires_at: None,
+            id_token: None,
+        };
+
+        *storage.cache.lock().await = Some(HashMap::from([(
+            EncryptedTokenStorage::cache_key(&scopes),
+            token,
+        )]));
+
+        assert!(storage.get(&scopes).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_returns_cached_token_with_known_expiry() {
+        let storage = EncryptedTokenStorage::new(PathBuf::from("/unused/token.json"));
+        let scopes = ["scope-a"];
+        let token: TokenInfo = serde_json::from_str(
+            r#"{"access_token":"access-token","refresh_token":"refresh-token","expires_at":[2026,43,19,44,15,0,0,0,0],"id_token":null}"#,
+        )
+        .unwrap();
+
+        *storage.cache.lock().await = Some(HashMap::from([(
+            EncryptedTokenStorage::cache_key(&scopes),
+            token.clone(),
+        )]));
+
+        assert_eq!(storage.get(&scopes).await, Some(token));
     }
 }
