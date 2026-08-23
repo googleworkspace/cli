@@ -336,6 +336,37 @@ async fn handle_json_response(
     Ok(false)
 }
 
+/// How the body of an API response should be handled.
+#[derive(Debug, PartialEq, Eq)]
+enum ResponseBodyKind {
+    /// No body was sent (HTTP 204 No Content). Some endpoints — observed on
+    /// `calendar.events.delete` and `drive.files.delete` — still attach a
+    /// non-empty `Content-Type` header (commonly `text/html`) to an otherwise
+    /// empty 204 response. That header must never be used to route the
+    /// (nonexistent) body into the binary-file path, or a stray zero-byte
+    /// `download.html` gets written into the caller's working directory.
+    NoContent,
+    Json,
+    Binary,
+}
+
+/// Decides how to handle a response body from its status and `Content-Type`,
+/// independent of any actual bytes. Kept pure and separate from
+/// `execute_method` so the 204-vs-content-type interaction can be unit
+/// tested without a live HTTP round trip.
+fn classify_response_body(status: reqwest::StatusCode, content_type: &str) -> ResponseBodyKind {
+    if status == reqwest::StatusCode::NO_CONTENT {
+        return ResponseBodyKind::NoContent;
+    }
+
+    let is_json = content_type.contains("application/json") || content_type.contains("text/json");
+    if is_json || content_type.is_empty() {
+        ResponseBodyKind::Json
+    } else {
+        ResponseBodyKind::Binary
+    }
+}
+
 /// Handle a binary response by streaming it to a file.
 async fn handle_binary_response(
     response: reqwest::Response,
@@ -486,41 +517,48 @@ pub async fn execute_method(
             "API request"
         );
 
-        let is_json =
-            content_type.contains("application/json") || content_type.contains("text/json");
-
-        if is_json || content_type.is_empty() {
-            let body_text = response
-                .text()
-                .await
-                .context("Failed to read response body")?;
-
-            let should_continue = handle_json_response(
-                &body_text,
-                pagination,
-                sanitize_template,
-                sanitize_mode,
-                output_format,
-                &mut pages_fetched,
-                &mut page_token,
-                capture_output,
-                &mut captured_values,
-            )
-            .await?;
-
-            if should_continue {
-                continue;
+        match classify_response_body(status, &content_type) {
+            ResponseBodyKind::NoContent => {
+                // Nothing was sent and nothing should be read or written —
+                // do not fall through to the binary-file path just because
+                // this 204 happened to carry a non-empty Content-Type.
             }
-        } else if let Some(res) = handle_binary_response(
-            response,
-            &content_type,
-            output_path,
-            output_format,
-            capture_output,
-        )
-        .await?
-        {
-            captured_values.push(res);
+            ResponseBodyKind::Json => {
+                let body_text = response
+                    .text()
+                    .await
+                    .context("Failed to read response body")?;
+
+                let should_continue = handle_json_response(
+                    &body_text,
+                    pagination,
+                    sanitize_template,
+                    sanitize_mode,
+                    output_format,
+                    &mut pages_fetched,
+                    &mut page_token,
+                    capture_output,
+                    &mut captured_values,
+                )
+                .await?;
+
+                if should_continue {
+                    continue;
+                }
+            }
+            ResponseBodyKind::Binary => {
+                if let Some(res) = handle_binary_response(
+                    response,
+                    &content_type,
+                    output_path,
+                    output_format,
+                    capture_output,
+                )
+                .await?
+                {
+                    captured_values.push(res);
+                }
+            }
         }
 
         break;
@@ -1200,6 +1238,65 @@ mod tests {
         assert_eq!(config.page_all, false);
         assert_eq!(config.page_limit, 10);
         assert_eq!(config.page_delay_ms, 100);
+    }
+
+    #[test]
+    fn test_classify_response_body_204_is_never_binary_even_with_binary_content_type() {
+        // Reproduces `calendar events delete` / `drive files delete`: a 204 No
+        // Content response that still carries a `text/html` Content-Type header.
+        // Before this fix, this combination fell through to the binary-file
+        // path and wrote a stray, zero-byte `download.html` into the caller's
+        // working directory even though no `--output` flag was given and the
+        // command was not a download at all.
+        assert_eq!(
+            classify_response_body(reqwest::StatusCode::NO_CONTENT, "text/html"),
+            ResponseBodyKind::NoContent
+        );
+    }
+
+    #[test]
+    fn test_classify_response_body_204_with_no_content_type() {
+        assert_eq!(
+            classify_response_body(reqwest::StatusCode::NO_CONTENT, ""),
+            ResponseBodyKind::NoContent
+        );
+    }
+
+    #[test]
+    fn test_classify_response_body_204_with_json_content_type() {
+        // A 204 is still "no content" even if some endpoint bafflingly labels
+        // it application/json — the status code always wins.
+        assert_eq!(
+            classify_response_body(reqwest::StatusCode::NO_CONTENT, "application/json"),
+            ResponseBodyKind::NoContent
+        );
+    }
+
+    #[test]
+    fn test_classify_response_body_200_json() {
+        assert_eq!(
+            classify_response_body(reqwest::StatusCode::OK, "application/json; charset=utf-8"),
+            ResponseBodyKind::Json
+        );
+    }
+
+    #[test]
+    fn test_classify_response_body_200_empty_content_type_is_json() {
+        assert_eq!(
+            classify_response_body(reqwest::StatusCode::OK, ""),
+            ResponseBodyKind::Json
+        );
+    }
+
+    #[test]
+    fn test_classify_response_body_200_binary() {
+        assert_eq!(
+            classify_response_body(
+                reqwest::StatusCode::OK,
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+            ResponseBodyKind::Binary
+        );
     }
 
     #[test]
