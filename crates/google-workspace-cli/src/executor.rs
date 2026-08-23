@@ -187,10 +187,7 @@ async fn build_http_request(
         }
     }
 
-    // Set quota project from ADC for billing/quota attribution
-    if let Some(quota_project) = crate::auth::get_quota_project() {
-        request = request.header("x-goog-user-project", quota_project);
-    }
+    request = add_quota_project_header(request);
 
     let mut all_query_params = input.query_params.clone();
     if let Some(pt) = page_token {
@@ -236,6 +233,139 @@ async fn build_http_request(
     }
 
     Ok(request)
+}
+
+/// Applies the quota-project header from ADC, if one is configured, for
+/// billing/quota attribution.
+fn add_quota_project_header(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    if let Some(quota_project) = crate::auth::get_quota_project() {
+        request.header("x-goog-user-project", quota_project)
+    } else {
+        request
+    }
+}
+
+/// `drive.files.download` on a large file living in a Shared Drive can come
+/// back as a `drive#operation`-shaped JSON body carrying a `downloadUri`
+/// (sometimes `downloadUrl`) that the client is expected to fetch separately,
+/// rather than as raw media bytes on the initial response. Looks for that
+/// URI at any of the shapes actually observed from the Drive API.
+fn extract_download_uri(json_val: &Value) -> Option<&str> {
+    [
+        "/response/downloadUri",
+        "/response/downloadUrl",
+        "/metadata/downloadUri",
+        "/metadata/downloadUrl",
+        "/downloadUri",
+        "/downloadUrl",
+    ]
+    .into_iter()
+    .find_map(|path| json_val.pointer(path).and_then(|v| v.as_str()))
+}
+
+fn is_drive_download_operation(json_val: &Value) -> bool {
+    json_val
+        .get("kind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "drive#operation")
+}
+
+fn parse_download_uri_host(uri: &str) -> Option<String> {
+    let Ok(url) = reqwest::Url::parse(uri) else {
+        return None;
+    };
+    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    url.host_str().map(ToOwned::to_owned)
+}
+
+/// Hosts a `downloadUri` is allowed to point at before the client will ever
+/// follow it. Drive can redirect a large-file download to Cloud Storage, so
+/// this intentionally covers `*.googleusercontent.com` in addition to the
+/// `googleapis.com` family — but nothing outside Google's own infrastructure.
+fn is_google_download_uri(uri: &str) -> bool {
+    parse_download_uri_host(uri).as_deref().is_some_and(|host| {
+        host == "googleapis.com"
+            || host.ends_with(".googleapis.com")
+            || host.ends_with(".googleusercontent.com")
+    })
+}
+
+/// Hosts it is safe to attach our own OAuth bearer token to. Deliberately
+/// narrower than `is_google_download_uri`: a signed Cloud Storage download
+/// URL already carries its own auth in the query string and must not also
+/// get our bearer token, so only the exact API hosts that expect a bearer
+/// token are listed here.
+fn is_google_api_download_host(uri: &str) -> bool {
+    matches!(
+        parse_download_uri_host(uri).as_deref(),
+        Some("googleapis.com" | "www.googleapis.com" | "storage.googleapis.com")
+    )
+}
+
+/// Parses a `drive.files.download` JSON response body and returns the
+/// `downloadUri` to follow, if the body is a `drive#operation` carrying one.
+/// Returns `Ok(None)` for anything else (including a file that itself
+/// happens to be JSON and contains a same-named field — only an actual
+/// `drive#operation` envelope is honored). Returns `Err` if the response
+/// names a `downloadUri` outside Google's own infrastructure, since
+/// following an arbitrary attacker-controlled redirect would leak whatever
+/// auth we attach to the follow-up request.
+fn extract_google_download_uri(body_text: &str) -> Result<Option<String>, GwsError> {
+    let Ok(json_val) = serde_json::from_str::<Value>(body_text) else {
+        return Ok(None);
+    };
+    if !is_drive_download_operation(&json_val) {
+        return Ok(None);
+    }
+    let Some(uri) = extract_download_uri(&json_val) else {
+        return Ok(None);
+    };
+    if !is_google_download_uri(uri) {
+        return Err(GwsError::Validation(
+            "Refusing to follow non-Google downloadUri from API response".to_string(),
+        ));
+    }
+    Ok(Some(uri.to_string()))
+}
+
+fn is_signed_download_uri(download_uri: &str) -> bool {
+    reqwest::Url::parse(download_uri)
+        .map(|url| {
+            url.query_pairs().any(|(key, _)| {
+                let key = key.as_ref();
+                key.eq_ignore_ascii_case("GoogleAccessId")
+                    || key.eq_ignore_ascii_case("Signature")
+                    || key.to_ascii_lowercase().starts_with("x-goog-")
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Builds the follow-up GET for a `downloadUri`. A signed URL already
+/// carries its own auth in the query string, so it gets neither our quota
+/// header nor our bearer token; an unsigned Google API URL gets both, same
+/// as the original request.
+fn build_download_request(
+    client: &reqwest::Client,
+    download_uri: &str,
+    token: Option<&str>,
+    auth_method: &AuthMethod,
+) -> reqwest::RequestBuilder {
+    let mut request = client.get(download_uri);
+    let is_signed = is_signed_download_uri(download_uri);
+
+    if !is_signed {
+        request = add_quota_project_header(request);
+        if let Some(token) = token {
+            if *auth_method == AuthMethod::OAuth && is_google_api_download_host(download_uri) {
+                request = request.bearer_auth(token);
+            }
+        }
+    }
+
+    request
 }
 
 /// Handle a JSON response: parse, sanitize via Model Armor, output, and check pagination.
@@ -494,6 +624,50 @@ pub async fn execute_method(
                 .text()
                 .await
                 .context("Failed to read response body")?;
+
+            // `drive.files.download` on a large Shared-Drive file can respond
+            // with a `drive#operation` JSON envelope naming a `downloadUri`
+            // to fetch the actual bytes from, instead of the bytes
+            // themselves. Follow it now rather than treating the envelope
+            // itself as the command's output.
+            if output_path.is_some() && method.id.as_deref() == Some("drive.files.download") {
+                if let Some(download_uri) = extract_google_download_uri(&body_text)? {
+                    let download_request =
+                        build_download_request(&client, &download_uri, token, &auth_method);
+                    let download_response = download_request
+                        .send()
+                        .await
+                        .context("HTTP download request failed")?;
+                    let download_status = download_response.status();
+                    let download_content_type = download_response
+                        .headers()
+                        .get("content-type")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("application/octet-stream")
+                        .to_string();
+
+                    if !download_status.is_success() {
+                        let error_body = download_response
+                            .text()
+                            .await
+                            .context("Failed to read Drive download error response body")?;
+                        return handle_error_response(download_status, &error_body, &auth_method);
+                    }
+
+                    if let Some(res) = handle_binary_response(
+                        download_response,
+                        &download_content_type,
+                        output_path,
+                        output_format,
+                        capture_output,
+                    )
+                    .await?
+                    {
+                        captured_values.push(res);
+                    }
+                    break;
+                }
+            }
 
             let should_continue = handle_json_response(
                 &body_text,
@@ -1207,6 +1381,266 @@ mod tests {
         assert_eq!(AuthMethod::OAuth, AuthMethod::OAuth);
         assert_eq!(AuthMethod::None, AuthMethod::None);
         assert_ne!(AuthMethod::OAuth, AuthMethod::None);
+    }
+
+    #[test]
+    fn test_extract_download_uri_from_drive_operation_response() {
+        let operation = json!({
+            "done": true,
+            "response": {
+                "downloadUri": "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media"
+            }
+        });
+
+        assert_eq!(
+            extract_download_uri(&operation),
+            Some("https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media")
+        );
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_ignores_user_json_file_content() {
+        // A user's own JSON file could legitimately contain a field named
+        // `downloadUri` — only an actual `drive#operation` envelope counts.
+        let file_content = json!({
+            "done": true,
+            "downloadUri": "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media"
+        })
+        .to_string();
+
+        assert_eq!(extract_google_download_uri(&file_content).unwrap(), None);
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_accepts_drive_operation_kind() {
+        let operation = json!({
+            "kind": "drive#operation",
+            "response": {
+                "downloadUrl": "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media"
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            extract_google_download_uri(&operation).unwrap(),
+            Some(
+                "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_returns_none_for_non_operation_json() {
+        let plain_json = json!({"status": "success"}).to_string();
+        assert_eq!(extract_google_download_uri(&plain_json).unwrap(), None);
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_returns_none_for_non_json_body() {
+        assert_eq!(
+            extract_google_download_uri("not json at all").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_google_download_uri_rejects_non_google_url() {
+        let operation = json!({
+            "kind": "drive#operation",
+            "response": {
+                "downloadUri": "https://attacker.example.com/file.csv"
+            }
+        })
+        .to_string();
+
+        let err = extract_google_download_uri(&operation).unwrap_err();
+        assert!(err.to_string().contains("non-Google downloadUri"));
+    }
+
+    #[test]
+    fn test_is_google_download_uri_allows_google_download_hosts() {
+        assert!(is_google_download_uri("https://googleapis.com/download"));
+        assert!(is_google_download_uri(
+            "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file"
+        ));
+        assert!(is_google_download_uri(
+            "https://doc-0k-8s-docs.googleusercontent.com/document/export"
+        ));
+        assert!(is_google_download_uri(
+            "https://attacker-bucket.storage.googleapis.com/file"
+        ));
+    }
+
+    #[test]
+    fn test_is_google_download_uri_rejects_lookalike_and_non_https_hosts() {
+        // A domain that merely *contains* googleapis.com as a suffix of its
+        // own label (not a real subdomain) must not pass.
+        assert!(!is_google_download_uri(
+            "https://storage.googleapis.com.evil.example/file"
+        ));
+        // Plain http, not https.
+        assert!(!is_google_download_uri("http://googleapis.com/download"));
+        // Userinfo in the URL is a classic host-confusion vector.
+        assert!(!is_google_download_uri(
+            "https://user:pass@googleapis.com/download"
+        ));
+        assert!(!is_google_download_uri("not a url"));
+    }
+
+    #[test]
+    fn test_is_google_api_download_host_excludes_googleusercontent() {
+        // googleusercontent.com is an allowed *redirect target* but must
+        // never receive our bearer token — it's excluded here on purpose,
+        // separately from is_google_download_uri.
+        assert!(!is_google_api_download_host(
+            "https://doc-0k-8s-docs.googleusercontent.com/document/export"
+        ));
+        assert!(is_google_api_download_host(
+            "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file"
+        ));
+    }
+
+    #[test]
+    fn test_is_signed_download_uri_detects_signed_query_params() {
+        assert!(is_signed_download_uri(
+            "https://storage.googleapis.com/bucket/file?GoogleAccessId=abc&Signature=xyz"
+        ));
+        assert!(is_signed_download_uri(
+            "https://storage.googleapis.com/bucket/file?X-Goog-Signature=xyz"
+        ));
+        assert!(!is_signed_download_uri(
+            "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media"
+        ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_add_quota_project_header_uses_configured_project() {
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = add_quota_project_header(reqwest::Client::new().get("https://example.com"))
+            .build()
+            .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_keeps_client_auth_and_quota_headers() {
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://www.googleapis.com/download/drive/v3/files/FAKE_FILE_ID_1?alt=media",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer access-token")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_skips_headers_for_signed_uri() {
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://storage.googleapis.com/download/storage/v1/b/bucket/o/file?X-Goog-Signature=sig&X-Goog-Credential=credential",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert!(request.headers().get("x-goog-user-project").is_none());
+        assert!(request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_build_download_request_never_sends_bearer_to_storage_subdomain() {
+        // A redirect to an *.storage.googleapis.com subdomain is allowed to
+        // be followed (is_google_download_uri) but must not receive our
+        // bearer token (is_google_api_download_host requires an exact host).
+        let client = reqwest::Client::new();
+
+        unsafe {
+            std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "quota-project");
+        }
+
+        let request = build_download_request(
+            &client,
+            "https://attacker-bucket.storage.googleapis.com/file",
+            Some("access-token"),
+            &AuthMethod::OAuth,
+        )
+        .build()
+        .unwrap();
+
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID");
+        }
+
+        assert_eq!(
+            request
+                .headers()
+                .get("x-goog-user-project")
+                .and_then(|value| value.to_str().ok()),
+            Some("quota-project")
+        );
+        assert!(request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .is_none());
     }
 
     #[test]
