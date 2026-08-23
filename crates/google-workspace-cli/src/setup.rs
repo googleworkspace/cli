@@ -1473,6 +1473,16 @@ fn manual_oauth_instructions(project_id: &str) -> String {
     )
 }
 
+fn normalize_oauth_credential(value: String, field_name: &str) -> Result<String, GwsError> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(GwsError::Validation(format!(
+            "{field_name} cannot be empty"
+        )));
+    }
+    Ok(value)
+}
+
 /// Stage 5: Configure OAuth consent screen and collect client credentials.
 async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, GwsError> {
     ctx.wiz(4, StepStatus::InProgress("Configuring...".into()));
@@ -1521,7 +1531,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
             .map_err(|e| GwsError::Validation(format!("TUI error: {e}")))?;
 
         let csec_res = match &cid_res {
-            crate::setup_tui::InputResult::Confirmed(v) if !v.is_empty() => w
+            crate::setup_tui::InputResult::Confirmed(v) if !v.trim().is_empty() => w
                 .show_input(
                     "Enter OAuth Client Secret",
                     "Paste the Client Secret from Google Cloud Console",
@@ -1541,11 +1551,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
 
     ctx.client_id = match cid_result {
         crate::setup_tui::InputResult::Confirmed(v) => {
-            if v.is_empty() {
-                ctx.finish_wizard();
-                return Err(GwsError::Validation("Client ID cannot be empty".into()));
-            }
-            v
+            normalize_oauth_credential(v, "Client ID").inspect_err(|_| ctx.finish_wizard())?
         }
         crate::setup_tui::InputResult::GoBack => {
             return Ok(SetupStage::EnableApis);
@@ -1558,11 +1564,7 @@ async fn stage_configure_oauth(ctx: &mut SetupContext) -> Result<SetupStage, Gws
 
     ctx.client_secret = match csecret_result {
         crate::setup_tui::InputResult::Confirmed(v) => {
-            if v.is_empty() {
-                ctx.finish_wizard();
-                return Err(GwsError::Validation("Client Secret cannot be empty".into()));
-            }
-            v
+            normalize_oauth_credential(v, "Client Secret").inspect_err(|_| ctx.finish_wizard())?
         }
         crate::setup_tui::InputResult::GoBack => {
             return Ok(SetupStage::EnableApis);
@@ -1928,6 +1930,31 @@ mod tests {
     #[test]
     fn test_should_not_offer_login_prompt_dry_run() {
         assert!(!should_offer_login_prompt(true, true, false, true));
+    }
+
+    #[test]
+    fn test_normalize_oauth_credential_trims_surrounding_whitespace() {
+        assert_eq!(
+            normalize_oauth_credential("  client-id\n".into(), "Client ID").unwrap(),
+            "client-id"
+        );
+        assert_eq!(
+            normalize_oauth_credential("\tclient secret  ".into(), "Client Secret").unwrap(),
+            "client secret"
+        );
+    }
+
+    #[test]
+    fn test_normalize_oauth_credential_rejects_whitespace_only_input() {
+        let client_id_error = normalize_oauth_credential(" \t\n".into(), "Client ID").unwrap_err();
+        assert_eq!(client_id_error.to_string(), "Client ID cannot be empty");
+
+        let client_secret_error =
+            normalize_oauth_credential("\n  ".into(), "Client Secret").unwrap_err();
+        assert_eq!(
+            client_secret_error.to_string(),
+            "Client Secret cannot be empty"
+        );
     }
 
     #[test]
