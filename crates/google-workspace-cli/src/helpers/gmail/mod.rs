@@ -48,6 +48,8 @@ pub struct GmailHelper;
 pub(super) const GMAIL_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 pub(super) const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
 pub(super) const PUBSUB_SCOPE: &str = "https://www.googleapis.com/auth/pubsub";
+const DRAFT_SEND_TIP_COMMAND: &str =
+    "gws gmail users drafts send --params '{\"userId\":\"me\"}' --json '{\"id\":\"<draft-id>\"}'";
 
 /// Strip ASCII control characters (0x00–0x1F, 0x7F) from a string.
 ///
@@ -1488,7 +1490,7 @@ pub(super) async fn dispatch_raw_email(
 
     if draft && !matches.get_flag("dry-run") {
         eprintln!("Tip: copy the draft \"id\" from the response above, then send with:");
-        eprintln!("  gws gmail users.drafts.send --body '{{\"id\":\"<draft-id>\"}}'");
+        eprintln!("  {DRAFT_SEND_TIP_COMMAND}");
     }
 
     Ok(())
@@ -2358,6 +2360,14 @@ mod tests {
         let parsed: Value = serde_json::from_str(&metadata).unwrap();
         assert!(parsed["message"].is_object());
         assert!(parsed["message"].get("threadId").is_none());
+    }
+
+    #[test]
+    fn test_draft_send_tip_uses_discovery_command_syntax() {
+        assert_eq!(
+            DRAFT_SEND_TIP_COMMAND,
+            "gws gmail users drafts send --params '{\"userId\":\"me\"}' --json '{\"id\":\"<draft-id>\"}'"
+        );
     }
 
     #[test]
