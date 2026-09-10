@@ -4,12 +4,6 @@ title = "Magnon Gitleaks Config"
 [extend]
 useDefault = true
 
-[[rules]]
-description = "Ignore test fixtures"
-id = "test-fixtures"
-regex = '''(?i)(fake|example|placeholder|test|dummy|sample)'''
-tags = ["allowlist"]
-
 [allowlist]
 description = "Global allowlist"
 regexes = [
