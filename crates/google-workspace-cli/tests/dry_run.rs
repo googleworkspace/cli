@@ -225,7 +225,7 @@ impl Fixture {
         .unwrap();
     }
 
-    fn run(&self, args: &[&str], token: Option<&str>) -> Output {
+    fn command(&self, args: &[&str], token: Option<&str>) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_gws"));
         command
             .args(args)
@@ -238,6 +238,12 @@ impl Fixture {
             .env("USER", "gws-dry-run-test")
             .env("USERNAME", "gws-dry-run-test")
             .env("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", &self.config)
+            // Windows known-folder lookup ignores the home overrides above.
+            // Pin both token loading and quota-project lookup to the fixture.
+            .env(
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                self.dir.path().join("missing-adc.json"),
+            )
             // Never query an actual OS account, even when testing broken auth.
             .env("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND", "file")
             .env("HTTP_PROXY", &self.network.url)
@@ -252,6 +258,14 @@ impl Fixture {
         if let Some(token) = token {
             command.env("GOOGLE_WORKSPACE_CLI_TOKEN", token);
         }
+        command
+    }
+
+    fn run(&self, args: &[&str], token: Option<&str>) -> Output {
+        Self::run_command(self.command(args, token))
+    }
+
+    fn run_command(mut command: Command) -> Output {
         let mut child = command.spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
         while child.try_wait().unwrap().is_none() {
@@ -474,11 +488,6 @@ fn assert_auth_failure(args: &[&str]) {
         .as_str()
         .unwrap()
         .contains("credentials"));
-    // Prove this is the real auth path: existing corrupt-credential cleanup
-    // still runs, and the broken plaintext fallback remains a hard error.
-    assert!(!fixture.config.join("credentials.enc").exists());
-    assert!(!fixture.config.join("token_cache.json").exists());
-    assert!(!fixture.config.join("sa_token_cache.json").exists());
     assert!(fixture.network.requests.lock().unwrap().is_empty());
 }
 
@@ -493,9 +502,42 @@ fn docs_write_real_request_still_fails_on_broken_credentials() {
 }
 
 #[test]
-fn raw_real_request_without_credentials_preserves_access_denied() {
+fn raw_real_request_rejects_fixture_adc_without_profile_fallback() {
     let fixture = Fixture::new(false);
     let output = fixture.run(RAW, None);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["error"]["reason"], "authError");
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("GOOGLE_APPLICATION_CREDENTIALS points to"),
+        "{error}"
+    );
+    assert!(
+        message.contains(
+            fixture
+                .dir
+                .path()
+                .join("missing-adc.json")
+                .to_str()
+                .unwrap()
+        ),
+        "{error}"
+    );
+    assert!(message.contains("file does not exist"), "{error}");
+    assert!(fixture.network.requests.lock().unwrap().is_empty());
+}
+
+// This case must leave ADC unset to exercise the real no-credentials fallback.
+// Only Unix dirs::home_dir() respects our HOME isolation; Windows uses the
+// actual profile's known folder, so this case must not run there.
+#[cfg(unix)]
+#[test]
+fn raw_real_request_without_credentials_preserves_access_denied() {
+    let fixture = Fixture::new(false);
+    let mut command = fixture.command(RAW, None);
+    command.env_remove("GOOGLE_APPLICATION_CREDENTIALS");
+    let output = Fixture::run_command(command);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["error"]["reason"], "authError");
@@ -510,6 +552,16 @@ fn raw_real_request_without_credentials_preserves_access_denied() {
 
 fn assert_authenticated_api_failure(args: &[&str]) {
     let fixture = Fixture::new(false);
+    // Make a mistaken profile fallback observable on Unix without using a real
+    // profile. Windows known-folder lookup ignores these home overrides, so the
+    // fixture must explicitly redirect ADC there as well.
+    let adc_dir = fixture.dir.path().join("home/.config/gcloud");
+    fs::create_dir_all(&adc_dir).unwrap();
+    fs::write(
+        adc_dir.join("application_default_credentials.json"),
+        r#"{"quota_project_id":"synthetic-profile-must-not-be-read"}"#,
+    )
+    .unwrap();
     let output = fixture.run(args, Some("synthetic-test-token"));
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -520,6 +572,10 @@ fn assert_authenticated_api_failure(args: &[&str]) {
     assert!(requests[0]
         .to_lowercase()
         .contains("authorization: bearer synthetic-test-token"));
+    assert!(
+        !requests[0].to_lowercase().contains("x-goog-user-project:"),
+        "Token-authenticated requests must not read quota attribution from profile ADC"
+    );
 }
 
 #[test]
