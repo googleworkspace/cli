@@ -30,6 +30,17 @@ env:
   SCCACHE_IGNORE_SERVER_IO_ERROR: "true"
 
 jobs:
+  docs-review-bundle:
+    name: Docs Review Bundle (Python)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Test stdlib companion with synthetic fixtures
+        run: python3 -B -m unittest discover -s examples/docs-review-bundle -p 'test_*.py' -v
+
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
