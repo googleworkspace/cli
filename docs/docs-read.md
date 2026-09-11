@@ -30,7 +30,8 @@ credentials, fetching document content, or invoking Model Armor.
   Text elements retain separate runs, text styles, links (including tab-aware
   internal links), and suggested insertion/deletion/style changes. Other
   returned paragraph metadata, such as bullets and positioned object IDs,
-  stays on the block.
+  stays on the block. Automatic-text markers use `type: "autoText"` and retain
+  their source subtype (`PAGE_NUMBER` or `PAGE_COUNT`) as `autoTextType`.
 - Table blocks have `rowCount`, `columns`, and
   `rows[].cells[].blocks`, including nested tables. Row/cell styles and
   suggestion metadata are retained.

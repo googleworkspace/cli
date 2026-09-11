@@ -413,6 +413,11 @@ fn element(value: &Value) -> Result<Value, GwsError> {
                 if let Some(id) = result.remove("inlineObjectId") {
                     result.insert("objectId".into(), id);
                 }
+            } else if key == "autoText" {
+                // The source's `type` is content, distinct from our union tag.
+                if let Some(subtype) = value[key].get("type") {
+                    result.insert("autoTextType".into(), subtype.clone());
+                }
             }
             return Ok(Value::Object(result));
         }

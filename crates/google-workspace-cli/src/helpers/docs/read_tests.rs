@@ -84,6 +84,31 @@ fn legacy() -> Value {
 }
 
 #[test]
+fn auto_text_preserves_page_number_and_count_with_indices_and_styles() {
+    let mut outputs = Vec::new();
+    for subtype in ["PAGE_NUMBER", "PAGE_COUNT"] {
+        let mut input = legacy();
+        input["body"]["content"][0]["paragraph"]["elements"] = json!([{
+            "startIndex": 0, "endIndex": 1,
+            "autoText": {"type": subtype, "textStyle": {"bold": true},
+                         "suggestedInsertionIds": ["s1"]}
+        }]);
+        let output = read::normalize(&input).unwrap();
+        let element = &output["tabs"][0]["blocks"][0]["elements"][0];
+        assert_eq!(
+            element,
+            &json!({
+                "type": "autoText", "autoTextType": subtype,
+                "startIndex": 0, "endIndex": 1,
+                "textStyle": {"bold": true}, "suggestedInsertionIds": ["s1"]
+            })
+        );
+        outputs.push(output);
+    }
+    assert_ne!(outputs[0], outputs[1]);
+}
+
+#[test]
 fn request_requires_full_inline_tabs_and_preserves_other_params() {
     let params =
         read::build_params("synthetic", Some(r#"{"fields":"*","prettyPrint":false}"#)).unwrap();
