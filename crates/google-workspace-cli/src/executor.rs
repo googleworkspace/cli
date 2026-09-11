@@ -40,6 +40,13 @@ pub enum AuthMethod {
     None,
 }
 
+/// Controls only whether request properties absent from Discovery are accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyValidationPolicy {
+    Strict,
+    AllowUnknownFields,
+}
+
 /// Source for media upload content.
 ///
 /// Two mutually exclusive strategies: upload from a file on disk (for Drive,
@@ -98,6 +105,7 @@ fn parse_and_validate_inputs(
     params_json: Option<&str>,
     body_json: Option<&str>,
     is_media_upload: bool,
+    validation_policy: BodyValidationPolicy,
 ) -> Result<ExecutionInput, GwsError> {
     let params: Map<String, Value> = if let Some(p) = params_json {
         serde_json::from_str(p)
@@ -112,7 +120,7 @@ fn parse_and_validate_inputs(
 
         if let Some(ref req_ref) = method.request {
             if let Some(ref schema_name) = req_ref.schema_ref {
-                validate_body_against_schema(&val, schema_name, doc)?;
+                validate_body_against_schema(&val, schema_name, doc, validation_policy)?;
             }
         }
 
@@ -411,7 +419,54 @@ pub async fn execute_method(
     output_format: &crate::formatter::OutputFormat,
     capture_output: bool,
 ) -> Result<Option<Value>, GwsError> {
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some())?;
+    execute_method_with_policy(
+        doc,
+        method,
+        params_json,
+        body_json,
+        token,
+        auth_method,
+        output_path,
+        upload,
+        dry_run,
+        pagination,
+        sanitize_template,
+        sanitize_mode,
+        output_format,
+        capture_output,
+        BodyValidationPolicy::Strict,
+    )
+    .await
+}
+
+/// Executes a raw API method with an explicit request-body validation policy.
+/// Handwritten helpers use [`execute_method`] to retain strict validation.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_method_with_policy(
+    doc: &RestDescription,
+    method: &RestMethod,
+    params_json: Option<&str>,
+    body_json: Option<&str>,
+    token: Option<&str>,
+    auth_method: AuthMethod,
+    output_path: Option<&str>,
+    upload: Option<UploadSource<'_>>,
+    dry_run: bool,
+    pagination: &PaginationConfig,
+    sanitize_template: Option<&str>,
+    sanitize_mode: &crate::helpers::modelarmor::SanitizeMode,
+    output_format: &crate::formatter::OutputFormat,
+    capture_output: bool,
+    validation_policy: BodyValidationPolicy,
+) -> Result<Option<Value>, GwsError> {
+    let input = parse_and_validate_inputs(
+        doc,
+        method,
+        params_json,
+        body_json,
+        upload.is_some(),
+        validation_policy,
+    )?;
 
     if dry_run {
         let dry_run_info = json!({
@@ -996,9 +1051,10 @@ fn validate_body_against_schema(
     body: &Value,
     schema_name: &str,
     doc: &RestDescription,
+    validation_policy: BodyValidationPolicy,
 ) -> Result<(), GwsError> {
     let mut errors = Vec::new();
-    validate_value(body, schema_name, doc, "$", &mut errors);
+    validate_value(body, schema_name, doc, "$", &mut errors, validation_policy);
 
     if !errors.is_empty() {
         return Err(GwsError::Validation(format!(
@@ -1016,6 +1072,7 @@ fn validate_value(
     doc: &RestDescription,
     path: &str,
     errors: &mut Vec<String>,
+    validation_policy: BodyValidationPolicy,
 ) {
     let schema = match doc.schemas.get(schema_ref_name) {
         Some(s) => s,
@@ -1028,7 +1085,15 @@ fn validate_value(
     // If the top-level schema is an object
     if schema.schema_type.as_deref() == Some("object") || !schema.properties.is_empty() {
         if let Value::Object(obj) = value {
-            validate_properties(obj, &schema.properties, &schema.required, doc, path, errors);
+            validate_properties(
+                obj,
+                &schema.properties,
+                &schema.required,
+                doc,
+                path,
+                errors,
+                validation_policy,
+            );
         } else {
             errors.push(format!("{path}: Expected object"));
         }
@@ -1042,6 +1107,7 @@ fn validate_properties(
     doc: &RestDescription,
     path: &str,
     errors: &mut Vec<String>,
+    validation_policy: BodyValidationPolicy,
 ) {
     let valid_keys: std::collections::HashSet<&String> = properties.keys().collect();
 
@@ -1060,15 +1126,24 @@ fn validate_properties(
         };
 
         if !valid_keys.contains(key) {
-            errors.push(format!(
-                "{current_path}: Unknown property. Valid properties: {:?}",
-                valid_keys.iter().map(|k| k.as_str()).collect::<Vec<_>>()
-            ));
+            if validation_policy == BodyValidationPolicy::Strict {
+                errors.push(format!(
+                    "{current_path}: Unknown property. Valid properties: {:?}",
+                    valid_keys.iter().map(|k| k.as_str()).collect::<Vec<_>>()
+                ));
+            }
             continue;
         }
 
         let prop_schema = &properties[key];
-        validate_property(val, prop_schema, doc, &current_path, errors);
+        validate_property(
+            val,
+            prop_schema,
+            doc,
+            &current_path,
+            errors,
+            validation_policy,
+        );
     }
 }
 
@@ -1078,10 +1153,11 @@ fn validate_property(
     doc: &RestDescription,
     path: &str,
     errors: &mut Vec<String>,
+    validation_policy: BodyValidationPolicy,
 ) {
     // 1. Resolve $ref if present
     if let Some(ref_name) = &prop_schema.schema_ref {
-        validate_value(value, ref_name, doc, path, errors);
+        validate_value(value, ref_name, doc, path, errors, validation_policy);
         return;
     }
 
@@ -1113,7 +1189,14 @@ fn validate_property(
             if let Value::Array(arr) = value {
                 for (i, item) in arr.iter().enumerate() {
                     let item_path = format!("{path}[{i}]");
-                    validate_property(item, items_schema, doc, &item_path, errors);
+                    validate_property(
+                        item,
+                        items_schema,
+                        doc,
+                        &item_path,
+                        errors,
+                        validation_policy,
+                    );
                 }
             }
         }
@@ -1122,7 +1205,15 @@ fn validate_property(
     // 4. Object properties validation
     if prop_schema.prop_type.as_deref() == Some("object") && !prop_schema.properties.is_empty() {
         if let Value::Object(obj) = value {
-            validate_properties(obj, &prop_schema.properties, &[], doc, path, errors);
+            validate_properties(
+                obj,
+                &prop_schema.properties,
+                &[],
+                doc,
+                path,
+                errors,
+                validation_policy,
+            );
         }
     }
 
@@ -1183,6 +1274,332 @@ pub fn mime_to_extension(mime: &str) -> &str {
         "json"
     } else {
         "bin"
+    }
+}
+
+#[cfg(test)]
+mod preview_fields_tests {
+    use super::*;
+
+    fn fixture() -> (RestDescription, RestMethod) {
+        let doc = serde_json::from_value(json!({
+            "name": "docs",
+            "version": "v1",
+            "rootUrl": "https://example.invalid/",
+            "servicePath": "v1/",
+            "schemas": {
+                "Body": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "mode": {"type": "string", "enum": ["ACTIVE"]},
+                        "count": {"type": "integer"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "writeControl": {
+                            "type": "object",
+                            "properties": {"requiredRevisionId": {"type": "string"}}
+                        },
+                        "child": {"$ref": "Child"},
+                        "requests": {"type": "array", "items": {"$ref": "Request"}},
+                        "children": {
+                            "type": "array",
+                            "items": {"type": "object", "properties": {"id": {"type": "string"}}}
+                        }
+                    }
+                },
+                "Child": {
+                    "type": "object", "required": ["id"],
+                    "properties": {"id": {"type": "string"}}
+                },
+                "Request": {
+                    "type": "object",
+                    "properties": {
+                        "insertText": {
+                            "type": "object", "properties": {"text": {"type": "string"}}
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let method = serde_json::from_value(json!({
+            "httpMethod": "POST",
+            "path": "documents/{+documentId}:batchUpdate",
+            "parameterOrder": ["documentId"],
+            "parameters": {
+                "documentId": {"type": "string", "location": "path", "required": true},
+                "view": {"type": "string", "location": "query", "required": true}
+            },
+            "request": {"$ref": "Body"}
+        }))
+        .unwrap();
+        (doc, method)
+    }
+
+    const PARAMS: &str = r#"{"documentId":"test-document","view":"preview"}"#;
+    // Canonical JSON lets the request test assert exact emitted bytes as well as values.
+    const PREVIEW_BODY: &str = r#"{"name":"demo","preview":[null,true,1.25,9223372036854775807,{"text":"café\n\"quoted\""}],"requests":[{"insertComment":{"content":"Review"}}],"writeControl":{"writeMode":"SUGGEST"}}"#;
+
+    #[test]
+    fn unknown_properties_require_opt_in_at_every_depth() {
+        let (doc, _) = fixture();
+        for (body, path) in [
+            (json!({"name": "demo", "preview": true}), "preview"),
+            (
+                json!({"name": "demo", "writeControl": {"writeMode": "SUGGEST"}}),
+                "writeControl.writeMode",
+            ),
+            (
+                json!({"name": "demo", "child": {"id": "one", "preview": null}}),
+                "child.preview",
+            ),
+            (
+                json!({"name": "demo", "requests": [{"insertComment": {"content": "Review"}}]}),
+                "requests[0].insertComment",
+            ),
+            (
+                json!({"name": "demo", "children": [{"id": "one", "preview": [1, true]}]}),
+                "children[0].preview",
+            ),
+        ] {
+            let err =
+                validate_body_against_schema(&body, "Body", &doc, BodyValidationPolicy::Strict)
+                    .unwrap_err();
+            assert!(err
+                .to_string()
+                .contains(&format!("{path}: Unknown property")));
+            let result = validate_body_against_schema(
+                &body,
+                "Body",
+                &doc,
+                BodyValidationPolicy::AllowUnknownFields,
+            );
+            assert!(result.is_ok(), "{path}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn opt_in_preserves_known_field_and_required_validation() {
+        let (doc, _) = fixture();
+        for (body, expected) in [
+            (
+                json!({"name": 42, "preview": true}),
+                "name: Expected type 'string'",
+            ),
+            (
+                json!({"name": "demo", "count": 1.5, "preview": true}),
+                "count: Expected type 'integer'",
+            ),
+            (
+                json!({"name": "demo", "mode": "PREVIEW", "preview": true}),
+                "not a valid enum member",
+            ),
+            (json!({"preview": true}), "Missing required property 'name'"),
+            (
+                json!({"name": "demo", "child": {"preview": true}}),
+                "child: Missing required property 'id'",
+            ),
+            (
+                json!({"name": "demo", "child": []}),
+                "child: Expected object",
+            ),
+            (
+                json!({"name": "demo", "writeControl": {"requiredRevisionId": 42, "preview": true}}),
+                "writeControl.requiredRevisionId: Expected type 'string'",
+            ),
+            (
+                json!({"name": "demo", "requests": [{"insertText": {"text": 42}, "preview": true}]}),
+                "requests[0].insertText.text: Expected type 'string'",
+            ),
+            (
+                json!({"name": "demo", "children": [{"id": 42, "preview": true}]}),
+                "children[0].id: Expected type 'string'",
+            ),
+            (
+                json!({"name": "demo", "tags": [true], "preview": true}),
+                "tags[0]: Expected type 'string'",
+            ),
+            (
+                json!({"name": "demo", "requests": {}, "preview": true}),
+                "requests: Expected type 'array'",
+            ),
+            (json!([]), "$: Expected object"),
+        ] {
+            for policy in [
+                BodyValidationPolicy::Strict,
+                BodyValidationPolicy::AllowUnknownFields,
+            ] {
+                let err = validate_body_against_schema(&body, "Body", &doc, policy).unwrap_err();
+                assert!(err.to_string().contains(expected), "{policy:?}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn opt_in_preserves_missing_schema_errors() {
+        let (doc, _) = fixture();
+        let err = validate_body_against_schema(
+            &json!({}),
+            "Missing",
+            &doc,
+            BodyValidationPolicy::AllowUnknownFields,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Schema 'Missing' not found"));
+    }
+
+    #[tokio::test]
+    async fn opt_in_dry_run_preserves_preview_body() {
+        let (doc, method) = fixture();
+        let output = execute_method_with_policy(
+            &doc,
+            &method,
+            Some(PARAMS),
+            Some(PREVIEW_BODY),
+            None,
+            AuthMethod::None,
+            None,
+            None,
+            true,
+            &PaginationConfig::default(),
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::Json,
+            true,
+            BodyValidationPolicy::AllowUnknownFields,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            output,
+            json!({
+                "dry_run": true,
+                "url": "https://example.invalid/v1/documents/test%2Ddocument:batchUpdate",
+                "method": "POST",
+                "query_params": [["view", "preview"]],
+                "body": {
+                    "name": "demo",
+                    "preview": [null, true, 1.25, 9223372036854775807_i64, {"text": "café\n\"quoted\""}],
+                    "requests": [{"insertComment": {"content": "Review"}}],
+                    "writeControl": {"writeMode": "SUGGEST"}
+                },
+                "is_multipart_upload": false
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn helper_executor_entry_point_remains_strict() {
+        let (doc, method) = fixture();
+        let err = execute_method(
+            &doc,
+            &method,
+            Some(PARAMS),
+            Some(PREVIEW_BODY),
+            None,
+            AuthMethod::None,
+            None,
+            None,
+            true,
+            &PaginationConfig::default(),
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::Json,
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("Unknown property"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn opt_in_preserves_request_body_bytes() {
+        let (doc, method) = fixture();
+        let input = parse_and_validate_inputs(
+            &doc,
+            &method,
+            Some(PARAMS),
+            Some(PREVIEW_BODY),
+            false,
+            BodyValidationPolicy::AllowUnknownFields,
+        )
+        .unwrap();
+        // Avoid native roots and all credential lookup. Build only; never send.
+        let client = reqwest::Client::builder()
+            .tls_built_in_root_certs(false)
+            .build()
+            .unwrap();
+        let previous_project = std::env::var_os("GOOGLE_WORKSPACE_PROJECT_ID");
+        std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", "test-project");
+        let request = build_http_request(
+            &client,
+            &method,
+            &input,
+            None,
+            &AuthMethod::None,
+            None,
+            0,
+            &None,
+        )
+        .await;
+        match previous_project {
+            Some(value) => std::env::set_var("GOOGLE_WORKSPACE_PROJECT_ID", value),
+            None => std::env::remove_var("GOOGLE_WORKSPACE_PROJECT_ID"),
+        }
+        let request = request.unwrap().build().unwrap();
+        assert_eq!(
+            request.body().unwrap().as_bytes().unwrap(),
+            PREVIEW_BODY.as_bytes()
+        );
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(
+            request.url().as_str(),
+            "https://example.invalid/v1/documents/test%2Ddocument:batchUpdate?view=preview"
+        );
+        assert!(!request.headers().contains_key("authorization"));
+    }
+
+    #[test]
+    fn opt_in_preserves_json_parameter_and_url_errors() {
+        let (doc, method) = fixture();
+        for (params, body, expected) in [
+            (Some(PARAMS), "{", "Invalid --json body"),
+            (Some("{"), PREVIEW_BODY, "Invalid --params JSON"),
+            (Some("[]"), PREVIEW_BODY, "Invalid --params JSON"),
+            (None, PREVIEW_BODY, "Required path parameter documentId"),
+            (
+                Some(r#"{"documentId":"test-document"}"#),
+                PREVIEW_BODY,
+                "Required parameter 'view'",
+            ),
+            (
+                Some(r#"{"documentId":"../secret","view":"preview"}"#),
+                PREVIEW_BODY,
+                "path traversal",
+            ),
+            (
+                Some(r#"{"documentId":"document?injected=true","view":"preview"}"#),
+                PREVIEW_BODY,
+                "must not contain '?'",
+            ),
+        ] {
+            let result = parse_and_validate_inputs(
+                &doc,
+                &method,
+                params,
+                Some(body),
+                false,
+                BodyValidationPolicy::AllowUnknownFields,
+            );
+            let err = result.err().expect("unsafe input must fail");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected}: {err}"
+            );
+        }
     }
 }
 
@@ -1253,7 +1670,9 @@ mod tests {
         };
 
         let body = json!({ "name": "My File" });
-        assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+        assert!(
+            validate_body_against_schema(&body, "File", &doc, BodyValidationPolicy::Strict).is_ok()
+        );
     }
 
     #[test]
@@ -1283,7 +1702,8 @@ mod tests {
         };
 
         let body = json!({ "name": "My File", "invalidField": 123 });
-        let result = validate_body_against_schema(&body, "File", &doc);
+        let result =
+            validate_body_against_schema(&body, "File", &doc, BodyValidationPolicy::Strict);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unknown property"));
     }
@@ -1373,23 +1793,39 @@ mod tests {
             "tags": ["one", "two"],
             "parent": { "id": "123" }
         });
-        assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+        assert!(
+            validate_body_against_schema(&body, "File", &doc, BodyValidationPolicy::Strict).is_ok()
+        );
 
         // Missing Required Field
         let body_missing = json!({ "name": "My File" });
-        let err = validate_body_against_schema(&body_missing, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_missing, "File", &doc, BodyValidationPolicy::Strict)
+                .unwrap_err();
         assert!(err
             .to_string()
             .contains("Missing required property 'status'"));
 
         // Invalid Enum Value
         let body_bad_enum = json!({ "name": "My File", "status": "UNKNOWN" });
-        let err = validate_body_against_schema(&body_bad_enum, "File", &doc).unwrap_err();
+        let err = validate_body_against_schema(
+            &body_bad_enum,
+            "File",
+            &doc,
+            BodyValidationPolicy::Strict,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("not a valid enum member"));
 
         // Invalid Type
         let body_bad_type = json!({ "name": "My File", "status": "ACTIVE", "count": "10" });
-        let err = validate_body_against_schema(&body_bad_type, "File", &doc).unwrap_err();
+        let err = validate_body_against_schema(
+            &body_bad_type,
+            "File",
+            &doc,
+            BodyValidationPolicy::Strict,
+        )
+        .unwrap_err();
         assert!(err
             .to_string()
             .contains("Expected type 'integer', found string"));
@@ -1400,12 +1836,20 @@ mod tests {
             "status": "ACTIVE",
             "parent": { "invalidField": "123" }
         });
-        let err = validate_body_against_schema(&body_bad_ref, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_bad_ref, "File", &doc, BodyValidationPolicy::Strict)
+                .unwrap_err();
         assert!(err.to_string().contains("Unknown property"));
 
         // Expected Object Type Failure
         let body_not_object = json!([]);
-        let err = validate_body_against_schema(&body_not_object, "File", &doc).unwrap_err();
+        let err = validate_body_against_schema(
+            &body_not_object,
+            "File",
+            &doc,
+            BodyValidationPolicy::Strict,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("Expected object"));
     }
     #[tokio::test]

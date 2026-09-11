@@ -112,12 +112,20 @@ fn build_resource_command(name: &str, resource: &RestResource) -> Option<Command
 
         // Only add --json flag if the method accepts a request body
         if method.request.is_some() {
-            method_cmd = method_cmd.arg(
-                Arg::new("json")
-                    .long("json")
-                    .help("JSON string for the request body")
-                    .value_name("JSON"),
-            );
+            method_cmd = method_cmd
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .help("JSON string for the request body")
+                        .value_name("JSON"),
+                )
+                .arg(
+                    Arg::new("allow-unknown-fields")
+                        .long("allow-unknown-fields")
+                        .help("Allow request fields absent from Discovery, including nested fields; known fields are still validated")
+                        .action(clap::ArgAction::SetTrue)
+                        .requires("json"),
+                );
         }
 
         // Add --upload flag if the method supports media upload
@@ -249,6 +257,100 @@ mod tests {
             parameters: HashMap::new(),
             auth: None,
         }
+    }
+
+    #[test]
+    fn test_allow_unknown_fields_on_body_methods_and_subresources() {
+        let mut doc = make_doc();
+        let resource = || RestResource {
+            methods: HashMap::from([(
+                "create".to_string(),
+                RestMethod {
+                    request: Some(crate::discovery::SchemaRef {
+                        schema_ref: Some("File".to_string()),
+                        parameter_name: None,
+                    }),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        doc.resources
+            .get_mut("files")
+            .unwrap()
+            .resources
+            .insert("comments".to_string(), resource());
+        doc.resources.insert("uploads".to_string(), resource());
+
+        for path in [
+            vec!["gws", "uploads", "create"],
+            vec!["gws", "files", "comments", "create"],
+        ] {
+            let mut args = path;
+            args.extend(["--json", r#"{"preview": true}"#, "--allow-unknown-fields"]);
+            let result = build_cli(&doc).try_get_matches_from(args);
+            assert!(
+                result.is_ok(),
+                "body methods must accept opt-in: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_allow_unknown_fields_rejects_bodyless_methods_and_global_use() {
+        let doc = make_doc();
+        for args in [
+            vec!["gws", "files", "list", "--allow-unknown-fields"],
+            vec!["gws", "files", "delete", "--allow-unknown-fields"],
+            vec!["gws", "--allow-unknown-fields", "files", "list"],
+            vec!["gws", "files", "--allow-unknown-fields", "list"],
+        ] {
+            let err = build_cli(&doc).try_get_matches_from(args).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+    }
+
+    #[test]
+    fn test_allow_unknown_fields_rejects_helpers() {
+        let doc = RestDescription {
+            name: "docs".to_string(),
+            ..Default::default()
+        };
+        let err = build_cli(&doc)
+            .try_get_matches_from([
+                "gws",
+                "+write",
+                "--document",
+                "test-document",
+                "--text",
+                "Test",
+                "--allow-unknown-fields",
+            ])
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn test_allow_unknown_fields_requires_json() {
+        let mut doc = make_doc();
+        doc.resources
+            .get_mut("files")
+            .unwrap()
+            .methods
+            .get_mut("list")
+            .unwrap()
+            .request = Some(crate::discovery::SchemaRef {
+            schema_ref: Some("File".to_string()),
+            parameter_name: None,
+        });
+        // An optional body stays optional when the opt-in is absent.
+        assert!(build_cli(&doc)
+            .try_get_matches_from(["gws", "files", "list"])
+            .is_ok());
+        let err = build_cli(&doc)
+            .try_get_matches_from(["gws", "files", "list", "--allow-unknown-fields"])
+            .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

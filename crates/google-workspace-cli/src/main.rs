@@ -279,7 +279,7 @@ async fn run() -> Result<(), GwsError> {
     };
 
     // Execute
-    executor::execute_method(
+    executor::execute_method_with_policy(
         &doc,
         method,
         params_json,
@@ -294,9 +294,24 @@ async fn run() -> Result<(), GwsError> {
         &sanitize_config.mode,
         &output_format,
         false,
+        parse_body_validation_policy(matched_args),
     )
     .await
     .map(|_| ())
+}
+
+fn parse_body_validation_policy(matches: &clap::ArgMatches) -> executor::BodyValidationPolicy {
+    if matches
+        .try_get_one::<bool>("allow-unknown-fields")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false)
+    {
+        executor::BodyValidationPolicy::AllowUnknownFields
+    } else {
+        executor::BodyValidationPolicy::Strict
+    }
 }
 
 /// Select the best scope from a method's scope list.
@@ -524,6 +539,48 @@ fn is_version_flag(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_body_validation_policy_from_raw_method_flags() {
+        let doc: discovery::RestDescription = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "version": "v1",
+            "rootUrl": "https://example.invalid/",
+            "servicePath": "",
+            "resources": {"files": {"methods": {
+                "create": {"path": "files", "httpMethod": "POST", "request": {"$ref": "File"}},
+                "list": {"path": "files", "httpMethod": "GET"}
+            }}}
+        }))
+        .unwrap();
+        for (args, expected) in [
+            (
+                vec!["gws", "files", "list"],
+                executor::BodyValidationPolicy::Strict,
+            ),
+            (
+                vec!["gws", "files", "create", "--json", "{}"],
+                executor::BodyValidationPolicy::Strict,
+            ),
+            (
+                vec![
+                    "gws",
+                    "files",
+                    "create",
+                    "--json",
+                    "{}",
+                    "--allow-unknown-fields",
+                ],
+                executor::BodyValidationPolicy::AllowUnknownFields,
+            ),
+        ] {
+            let matches = commands::build_cli(&doc)
+                .try_get_matches_from(args)
+                .unwrap();
+            let (_, method_args) = resolve_method_from_matches(&doc, &matches).unwrap();
+            assert_eq!(parse_body_validation_policy(method_args), expected);
+        }
+    }
 
     #[test]
     fn test_parse_pagination_config_defaults() {

@@ -104,6 +104,44 @@ gws schema drive.files.list
 gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
 
+### Fields absent from Discovery
+
+Raw API methods with a request body accept `--allow-unknown-fields` alongside
+`--json`. Use it explicitly when an API supports fields that its public Discovery
+document does not yet describe. It allows unknown properties recursively,
+including nested objects and array elements, and forwards their values unchanged.
+JSON is still parsed and serialized normally; whitespace and key order may change.
+
+Validation remains strict by default. With the flag, known-field types, enums and
+required fields are still checked, as are JSON syntax, required URL parameters and
+file paths. It does not allow new enum values on a known field. The flag is local
+to raw methods and does not apply to handwritten `+` helpers.
+
+For example, Docs suggestions and comments require a Cloud project enrolled in the
+[Google Workspace Developer Preview Program](https://developers.google.com/workspace/preview).
+Google still enforces API availability, OAuth scopes, document permissions and
+server-side validation. This flag grants no additional access.
+
+```bash
+# Preview a suggested insertion (Docs Developer Preview).
+gws docs documents batchUpdate \
+  --params '{"documentId":"DOCUMENT_ID"}' \
+  --json '{"requests":[{"insertText":{"location":{"index":1},"text":"Suggested text"}}],"writeControl":{"writeMode":"SUGGEST"}}' \
+  --allow-unknown-fields --dry-run
+
+# Preview a comment anchored to existing text; adjust the range for your document.
+gws docs documents batchUpdate \
+  --params '{"documentId":"DOCUMENT_ID"}' \
+  --json '{"requests":[{"insertComment":{"content":"Please review this text.","range":{"startIndex":1,"endIndex":5}}}]}' \
+  --allow-unknown-fields --dry-run
+```
+
+`--dry-run` uses the same validation policy and shows the request without sending
+it. It cannot verify preview enrollment or server acceptance. Remove `--dry-run`
+to submit a request. See the Docs
+[request reference](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request#InsertCommentRequest)
+for preview field requirements.
+
 ## Authentication
 
 The CLI supports multiple auth workflows so it works on your laptop, in CI, and on a server.
