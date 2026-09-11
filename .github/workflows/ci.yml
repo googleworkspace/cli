@@ -30,27 +30,6 @@ env:
   SCCACHE_IGNORE_SERVER_IO_ERROR: "true"
 
 jobs:
-  docs-review-bundle:
-    name: Docs Review Bundle (Python)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
-        with:
-          key: docs-review-bundle-${{ matrix.os }}
-      - name: Build CLI for export contract regression
-        run: cargo build --locked
-      - name: Test stdlib companion with synthetic fixtures
-        run: python3 -B -m unittest discover -s examples/docs-review-bundle -p 'test_*.py' -v
-        env:
-          GWS_TEST_BINARY: ${{ github.workspace }}/target/debug/gws
-
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
