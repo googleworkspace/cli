@@ -225,6 +225,86 @@ class ReviewCliTests(unittest.TestCase):
                          ["get", "get", "batchUpdate", "get"])
         self.assertEqual((self.root / "plan.json").read_bytes(), original)
 
+    def test_closed_stdout_after_apply_keeps_confirmed_mutation_state(self):
+        self.success(self.plan())
+        original = (self.root / "plan.json").read_bytes()
+        for python_flags in [[], ["-u"]]:
+            with self.subTest(python_flags=python_flags):
+                (self.root / "submitted").unlink(missing_ok=True)
+                previous_calls = len(self.calls())
+                read_fd, write_fd = os.pipe()
+                os.close(read_fd)
+                try:
+                    result = subprocess.run(
+                        [sys.executable, *python_flags, str(SCRIPT),
+                         "apply", "--plan", "plan.json"],
+                        cwd=self.root, env=self.env, stdout=write_fd,
+                        stderr=subprocess.PIPE, text=True, timeout=10,
+                    )
+                finally:
+                    os.close(write_fd)
+                self.assertEqual(result.returncode, 3, result.stderr)
+                outcome = json.loads(result.stderr)
+                self.assertEqual(outcome["status"], "ambiguous")
+                self.assertEqual(outcome["mutation_state"], "confirmed")
+                self.assertIn("inspect", outcome["message"])
+                self.assertIn("do not blindly retry", outcome["message"])
+                self.assertEqual([c[2] for c in self.calls()[previous_calls:]],
+                                 ["get", "batchUpdate", "get"])
+                self.assertEqual((self.root / "plan.json").read_bytes(), original)
+
+    def test_interruption_after_apply_returns_keeps_confirmed_mutation_state(self):
+        self.success(self.plan())
+        original = (self.root / "plan.json").read_bytes()
+        # Inject only the interruption at the return boundary. The actual
+        # apply implementation still performs every read/write/verification.
+        wrapper = """
+import runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+real_apply = namespace["apply_plan"]
+def interrupted_return(*args, **kwargs):
+    real_apply(*args, **kwargs)
+    raise KeyboardInterrupt
+namespace["main"].__globals__["apply_plan"] = interrupted_return
+sys.exit(namespace["main"](["apply", "--plan", "plan.json"]))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", wrapper, str(SCRIPT)],
+            cwd=self.root, env=self.env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.refused(result, "ambiguous")
+        outcome = json.loads(result.stderr)
+        self.assertEqual(outcome["mutation_state"], "confirmed")
+        self.assertIn("do not blindly retry", outcome["message"])
+        self.assertNotIn("before submission", outcome["message"])
+        self.assertEqual([c[2] for c in self.calls()],
+                         ["get", "get", "batchUpdate", "get"])
+        self.assertEqual((self.root / "plan.json").read_bytes(), original)
+
+    def test_final_serialization_failure_keeps_confirmed_mutation_state(self):
+        self.success(self.plan())
+        original = (self.root / "plan.json").read_bytes()
+        wrapper = """
+import json, runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+real_dumps = json.dumps
+def failed_result(value, *args, **kwargs):
+    if isinstance(value, dict) and value.get("status") == "applied":
+        raise ValueError("secret-token final output failure")
+    return real_dumps(value, *args, **kwargs)
+json.dumps = failed_result
+sys.exit(namespace["main"](["apply", "--plan", "plan.json"]))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", wrapper, str(SCRIPT)],
+            cwd=self.root, env=self.env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.refused(result, "ambiguous")
+        self.assertEqual(json.loads(result.stderr)["mutation_state"], "confirmed")
+        self.assertEqual((self.root / "plan.json").read_bytes(), original)
+
     def test_zero_multiple_and_overlapping_matches_refuse_without_write(self):
         for text, find in [("Nothing.\n", "world"),
                            ("world world\n", "world"), ("aaa\n", "aa")]:
@@ -330,10 +410,18 @@ class ReviewCliTests(unittest.TestCase):
     def test_resigned_semantic_tampering_is_reconstructed_before_write(self):
         self.success(self.plan())
         plan = self.load_plan()
-        plan["target"]["start_index"] = 8
-        self.put("plan.json", json.dumps(resign(plan)))
-        self.refused(self.apply())
-        self.assertFalse((self.root / "submitted").exists())
+        altered_target = copy.deepcopy(plan)
+        altered_target["target"] = {"start_index": 8, "end_index": 13}
+        altered_fingerprint = dict(plan, source_sha256="0" * 64)
+        for altered in [altered_target, altered_fingerprint]:
+            with self.subTest(altered=altered):
+                self.put("plan.json", json.dumps(resign(altered)))
+                original = (self.root / "plan.json").read_bytes()
+                previous_calls = len(self.calls())
+                self.refused(self.apply())
+                self.assertEqual([c[2] for c in self.calls()[previous_calls:]], ["get"])
+                self.assertFalse((self.root / "submitted").exists())
+                self.assertEqual((self.root / "plan.json").read_bytes(), original)
 
     def test_unsupported_structural_edits_and_noops_refuse(self):
         for find, replacement in [("", "new"), ("world", "world"),
@@ -532,6 +620,81 @@ class ReviewCliTests(unittest.TestCase):
                 self.fixture(doc)
                 self.refused(self.plan())
                 self.assertFalse((self.root / "plan.json").exists())
+
+    def test_null_scalar_and_incomplete_structures_refuse_before_plan(self):
+        cases = []
+        for value in [None, 3, {}, {"rows": 1, "columns": 1, "tableRows": None},
+                      {"rows": 1, "columns": 1, "tableRows": [None]},
+                      {"rows": 1, "columns": 1, "tableRows": [{"tableCells": [None]}]},
+                      {"rows": 1, "columns": 1, "tableRows": [
+                          {"tableCells": [{"content": "not structural content"}]}]}]:
+            doc = document()
+            body(doc).append({"startIndex": 14, "endIndex": 15, "table": value})
+            cases.append(doc)
+        for region in ["headers", "footers", "footnotes"]:
+            for value in [None, [], {"segment-1": None},
+                          {"segment-1": {"content": "not structural content"}}]:
+                doc = document()
+                doc["tabs"][0]["documentTab"][region] = value
+                cases.append(doc)
+        for kind in ["sectionBreak", "tableOfContents"]:
+            doc = document()
+            body(doc).append({"startIndex": 14, "endIndex": 15, kind: None})
+            cases.append(doc)
+        for doc in cases:
+            with self.subTest(document=doc):
+                (self.root / "plan.json").unlink(missing_ok=True)
+                self.fixture(doc)
+                self.refused(self.plan())
+                self.assertFalse((self.root / "plan.json").exists())
+                self.assertFalse((self.root / "submitted").exists())
+
+    def test_unselected_tab_malformed_ranges_refuse_preflight_and_postwrite(self):
+        before = document()
+        child = copy.deepcopy(document("😀 untouched\n")["tabs"][0])
+        child["tabProperties"]["tabId"] = "t.other"
+        before["tabs"].append(child)
+        after = copy.deepcopy(before)
+        after["revisionId"] = "rev-2"
+        body(after)[1] = paragraph([("Hello reader.\n", {})])
+        self.fixture(before, after)
+        self.success(self.plan("--tab", "t.main"))
+        original = (self.root / "plan.json").read_bytes()
+        for phase in ["preflight", "postwrite"]:
+            for field, value in [("endIndex", 999), ("startIndex", 2),
+                                 ("endIndex", True)]:
+                with self.subTest(phase=phase, field=field, value=value):
+                    (self.root / "submitted").unlink(missing_ok=True)
+                    bad = copy.deepcopy(before if phase == "preflight" else after)
+                    bad["tabs"][1]["documentTab"]["body"]["content"][1][
+                        "paragraph"]["elements"][0][field] = value
+                    self.fixture(bad if phase == "preflight" else before,
+                                 bad if phase == "postwrite" else after)
+                    previous_calls = len(self.calls())
+                    self.refused(self.apply(),
+                                 "refused" if phase == "preflight" else "ambiguous")
+                    expected_calls = (["get"] if phase == "preflight" else
+                                      ["get", "batchUpdate", "get"])
+                    self.assertEqual([c[2] for c in self.calls()[previous_calls:]],
+                                     expected_calls)
+                    self.assertEqual((self.root / "plan.json").read_bytes(), original)
+
+    def test_unselected_text_run_shape_is_checked_before_discarding_fields(self):
+        for extra in [{"textRun": None}, {"textRun": {"content": "extra\n",
+                                                    "textStyle": "invalid"}},
+                      {"futureElementMetadata": {"value": "must not disappear"}}]:
+            with self.subTest(extra=extra):
+                (self.root / "plan.json").unlink(missing_ok=True)
+                doc = document()
+                other = copy.deepcopy(document("extra\n")["tabs"][0])
+                other["tabProperties"]["tabId"] = "t.other"
+                other["documentTab"]["body"]["content"][1]["paragraph"]["elements"][0].update(
+                    extra)
+                doc["tabs"].append(other)
+                self.fixture(doc)
+                self.refused(self.plan("--tab", "t.main"))
+                self.assertFalse((self.root / "plan.json").exists())
+                self.assertFalse((self.root / "submitted").exists())
 
     def test_omitted_empty_text_style_does_not_fail_verification(self):
         before = document()

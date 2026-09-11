@@ -179,6 +179,7 @@ class Gws:
     def __init__(self, timeout):
         self.timeout = timeout
         self.diagnostics = False
+        self.mutation_state = "not_attempted"
 
     def call(self, method, document_id, request=None):
         params = {"documentId": document_id}
@@ -275,39 +276,109 @@ def check_supported(tab):
                 "Suggested content in selected tab is unsupported; resolve suggestions first.")
         require(not obj.get("namedRanges") and not obj.get("bookmarks"),
                 "Named ranges and bookmarks in the selected tab are unsupported.")
-        if "content" in obj and isinstance(obj["content"], list):
-            for block in obj["content"]:
-                require(isinstance(block, dict)
-                        and len(set(block) - {"startIndex", "endIndex"}) == 1
-                        and len(set(block) & {
-                            "paragraph", "sectionBreak", "table", "tableOfContents"}) == 1,
-                    "Unsupported document structure.")
         if "paragraph" not in obj:
             continue
-        paragraph = obj["paragraph"]
-        require(isinstance(paragraph, dict)
-                and isinstance(paragraph.get("elements"), list), "Malformed paragraph.")
-        cursor = obj.get("startIndex", 0)
-        require(type(cursor) is int and cursor >= 0, "Invalid paragraph index.")
-        for element in paragraph["elements"]:
-            require(isinstance(element, dict)
-                    and type(element.get("startIndex", 0)) is int
-                    and type(element.get("endIndex")) is int
-                    and element.get("startIndex", 0) == cursor
-                    and element["endIndex"] > cursor, "Non-contiguous paragraph indices.")
+        for element in obj["paragraph"]["elements"]:
             kinds = set(element) - {"startIndex", "endIndex"}
             require(len(kinds) == 1 and kinds <= {
                 "textRun", "inlineObjectElement", "footnoteReference",
                 "horizontalRule", "pageBreak", "columnBreak"},
                 "Unsupported paragraph element; rich links, equations and chips are excluded.")
-            if "textRun" in element:
-                run = element["textRun"]
-                require(isinstance(run, dict) and isinstance(run.get("content"), str),
-                        "Malformed text run.")
-                require(utf16(run["content"]) == element["endIndex"] - cursor,
-                        "Text run does not match its UTF-16 indices.")
-            cursor = element["endIndex"]
-        require(obj.get("endIndex") == cursor, "Paragraph end index mismatch.")
+
+
+def index_range(value):
+    start, end = value.get("startIndex", 0), value.get("endIndex")
+    require(type(start) is int and type(end) is int and 0 <= start < end,
+            "Invalid structural or paragraph element indices.")
+    return start, end
+
+
+def check_region(region):
+    require(isinstance(region, dict) and isinstance(region.get("content"), list),
+            "Malformed document region; expected structural content.")
+
+
+def check_content(content):
+    for block in content:
+        require(isinstance(block, dict), "Malformed structural block.")
+        kinds = set(block) - {"startIndex", "endIndex"}
+        require(len(kinds) == 1 and kinds <= {
+            "paragraph", "sectionBreak", "table", "tableOfContents"},
+            "Unsupported document structure.")
+        require(isinstance(block[next(iter(kinds))], dict), "Malformed structural block value.")
+        index_range(block)
+
+
+def check_table(table):
+    require(isinstance(table, dict), "Malformed table.")
+    require(type(table.get("rows")) is int and table["rows"] > 0
+            and type(table.get("columns")) is int and table["columns"] > 0,
+            "Malformed table dimensions.")
+    rows = table.get("tableRows")
+    require(isinstance(rows, list) and len(rows) == table["rows"], "Malformed table rows.")
+    for row in rows:
+        require(isinstance(row, dict) and isinstance(row.get("tableCells"), list)
+                and 0 < len(row["tableCells"]) <= table["columns"], "Malformed table row.")
+        for cell in row["tableCells"]:
+            check_region(cell)
+
+
+def check_paragraph(block):
+    paragraph = block["paragraph"]
+    require(isinstance(paragraph, dict)
+            and isinstance(paragraph.get("elements"), list)
+            and paragraph["elements"], "Malformed paragraph.")
+    require(isinstance(paragraph.get("paragraphStyle", {}), dict),
+            "Malformed paragraph style.")
+    cursor, paragraph_end = index_range(block)
+    for element in paragraph["elements"]:
+        require(isinstance(element, dict), "Malformed paragraph element.")
+        start, end = index_range(element)
+        require(start == cursor, "Non-contiguous paragraph indices.")
+        kinds = set(element) - {"startIndex", "endIndex"}
+        # Extra siblings of textRun would otherwise disappear in normalization.
+        # Unrecognized non-text unions are retained whole in unselected tabs.
+        require(len(kinds) == 1 and isinstance(element[next(iter(kinds))], dict),
+                "Malformed or unsupported paragraph element fields.")
+        if "textRun" in element:
+            run = element["textRun"]
+            require(isinstance(run.get("content"), str)
+                    and isinstance(run.get("textStyle", {}), dict), "Malformed text run.")
+            require(utf16(run["content"]) == end - start,
+                    "Text run does not match its UTF-16 indices.")
+        cursor = end
+    require(paragraph_end == cursor, "Paragraph end index mismatch.")
+
+
+def check_document_structure(document):
+    """Validate every region/range the normalizer interprets, in every tab.
+
+    Unknown metadata is retained unchanged. Unknown structural blocks or
+    text-element siblings that cannot be retained safely are refused.
+    """
+    for _, obj in walk(document):
+        if "documentTab" in obj:
+            require(isinstance(obj["documentTab"], dict) and "body" in obj["documentTab"],
+                    "Missing document tab body.")
+        if "body" in obj:
+            check_region(obj["body"])
+        for group in ("headers", "footers", "footnotes"):
+            if group in obj:
+                require(isinstance(obj[group], dict), "Malformed document region map.")
+                for region in obj[group].values():
+                    check_region(region)
+        if isinstance(obj.get("content"), list):
+            check_content(obj["content"])
+        if "paragraph" in obj:
+            check_paragraph(obj)
+        if "table" in obj:
+            check_table(obj["table"])
+        if "tableOfContents" in obj:
+            check_region(obj["tableOfContents"])
+        if "sectionBreak" in obj:
+            require(isinstance(obj["sectionBreak"], dict)
+                    and isinstance(obj["sectionBreak"].get("sectionStyle", {}), dict),
+                    "Malformed section break.")
 
 
 def check_document_budget(document):
@@ -328,10 +399,17 @@ def check_document_budget(document):
                 "Document is too large for safe text/style verification.")
 
 
-def normalized(value, path=()):
+def normalized(document):
+    # This gate is part of normalization itself, so no caller can accidentally
+    # compare discarded text-run indices before validating the complete source.
+    check_document_structure(document)
+    return _normalized(document)
+
+
+def _normalized(value, path=()):
     """Canonical semantic shape; text-run splitting is not a style change."""
     if isinstance(value, list):
-        return [normalized(v, path + (i,)) for i, v in enumerate(value)]
+        return [_normalized(v, path + (i,)) for i, v in enumerate(value)]
     if not isinstance(value, dict):
         return value
     result = {}
@@ -352,10 +430,10 @@ def normalized(value, path=()):
                     for char in run["content"]:
                         elements.append({"text": char, "format": metadata})
                 else:
-                    elements.append(normalized(element, path + (key,)))
+                    elements.append(_normalized(element, path + (key,)))
             result[key] = elements
         else:
-            result[key] = normalized(item, path + (key,))
+            result[key] = _normalized(item, path + (key,))
     return result
 
 
@@ -408,12 +486,13 @@ def build_plan(document, document_id, tab_id, find, replacement):
     text_input(replacement, allow_empty=True)
     require(find != replacement, "No-op replacement; choose different text.")
     tab_id, tab_path = select_tab(document, document_id, tab_id)
-    check_supported(at(document, tab_path))
     check_document_budget(document)
+    source = normalized(document)
+    check_supported(at(document, tab_path))
     _, _, start = locate(document, tab_path, find)
     result = {
         "version": 1, "document_id": document_id, "tab_id": tab_id,
-        "revision_id": document["revisionId"], "source_sha256": sha256(normalized(document)),
+        "revision_id": document["revisionId"], "source_sha256": sha256(source),
         "find": find, "replacement": replacement, "expected_occurrences": 1,
         "target": {"start_index": start, "end_index": start + utf16(find)},
         "diff": review_diff(find, replacement),
@@ -465,10 +544,10 @@ def verify(before, after, plan, write_revision):
     _, tab_path = select_tab(before, plan["document_id"], plan["tab_id"])
     select_tab(after, plan["document_id"], plan["tab_id"])
     require(after["revisionId"] == write_revision, "Post-write revision mismatch.")
-    check_supported(at(after, tab_path))
     check_document_budget(after)
-    path, offset, _ = locate(before, tab_path, plan["find"])
     expected, actual = normalized(before), normalized(after)
+    check_supported(at(after, tab_path))
+    path, offset, _ = locate(before, tab_path, plan["find"])
     end = plan["target"]["end_index"]
     delta = utf16(plan["replacement"]) - utf16(plan["find"])
     # Indices in the body shift; headers/footers/footnotes have separate indices.
@@ -496,6 +575,7 @@ def apply_plan(plan, gws):
     require(rebuilt == plan,
             "Source revision or content changed; regenerate and review a new plan.")
     try:
+        gws.mutation_state = "attempted"
         reply = gws.call("batchUpdate", plan["document_id"], request_body(plan))
         require(reply.get("documentId") == plan["document_id"], "Write identity mismatch.")
         replies = reply.get("replies")
@@ -510,6 +590,7 @@ def apply_plan(plan, gws):
         require(write_revision != plan["revision_id"], "Write revision did not advance.")
         after = gws.get(plan["document_id"])
         verify(before, after, plan, write_revision)
+        gws.mutation_state = "confirmed"
     except (Refusal, OSError, ValueError, KeyError, TypeError, IndexError, RecursionError,
             KeyboardInterrupt):
         raise Ambiguous(
@@ -523,6 +604,46 @@ def apply_plan(plan, gws):
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise Refusal("Invalid arguments; use --help for supported options.")
+
+
+def silence_failed_stdout():
+    """Prevent a failed buffered write from being retried at interpreter exit."""
+    try:
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def report_failure(error, mutation_state):
+    if mutation_state != "not_attempted":
+        message = (
+            "Write was confirmed, but final reporting failed. "
+            if mutation_state == "confirmed" else
+            "Write may have applied; verification did not establish success. "
+        )
+        outcome = {
+            "status": "ambiguous", "mutation_state": mutation_state,
+            "message": message + "Keep the original plan, inspect the document and revision, "
+            "and do not blindly retry. Further changes require a newly reviewed plan.",
+        }
+        code = 3
+    else:
+        if isinstance(error, KeyboardInterrupt):
+            message = "Interrupted before submission."
+        elif isinstance(error, Refusal):
+            message = str(error)
+        else:
+            message = "Malformed source or inaccessible file; check inputs and regenerate."
+        outcome = {"status": "refused", "message": message}
+        code = 2
+    try:
+        print(json.dumps(outcome), file=sys.stderr, flush=True)
+    except (OSError, KeyboardInterrupt):
+        # Neither an unavailable diagnostic channel nor another interruption
+        # changes whether a mutation was attempted.
+        pass
+    return code
 
 
 def main(argv=None):
@@ -542,6 +663,8 @@ def main(argv=None):
     for command in (plan_parser, apply_parser):
         command.add_argument("--timeout", type=float, default=60,
                              help="Per-gws-call timeout in seconds (default: 60)")
+    gws = None
+    reporting = False
     try:
         args = parser.parse_args(argv)
         require(math.isfinite(args.timeout) and 0 < args.timeout <= 600,
@@ -572,23 +695,15 @@ def main(argv=None):
                 "gws reported diagnostics; check gws and Model Armor settings. "
                 "Raw output was suppressed to protect document content."
             )
-        print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+        reporting = True
+        print(json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
         return 0
-    except Ambiguous as error:
-        print(json.dumps({"status": "ambiguous", "message": str(error)}), file=sys.stderr)
-        return 3
-    except Refusal as error:
-        print(json.dumps({"status": "refused", "message": str(error)}), file=sys.stderr)
-        return 2
-    except (OSError, ValueError, KeyError, TypeError, IndexError, RecursionError):
-        print(json.dumps({"status": "refused", "message":
-                          "Malformed source or inaccessible file; check inputs and regenerate."}),
-              file=sys.stderr)
-        return 2
-    except KeyboardInterrupt:
-        print(json.dumps({"status": "refused", "message": "Interrupted before submission."}),
-              file=sys.stderr)
-        return 2
+    except (Refusal, OSError, ValueError, KeyError, TypeError, IndexError,
+            RecursionError, KeyboardInterrupt) as error:
+        if reporting:
+            silence_failed_stdout()
+        mutation_state = gws.mutation_state if gws is not None else "not_attempted"
+        return report_failure(error, mutation_state)
 
 
 if __name__ == "__main__":

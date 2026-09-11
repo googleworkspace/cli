@@ -101,8 +101,14 @@ bookmarks. Unknown tab regions, unknown structural blocks, equations,
 automatic text, rich links and smart chips in the selected tab are refused.
 These strict limits avoid interpreting inaccessible text, unstable anchors,
 or unsupported element boundaries as a safe replacement. Other tabs are
-fingerprinted and verified, not edited. New API structures may require an
-explicit compatibility update.
+fingerprinted and verified, not edited. Before normalization, every tab's
+paragraph elements must have valid UTF-16 lengths and contiguous ranges.
+Recognized regions and structural blocks must have valid object/list shapes,
+including table rows and cell content. Malformed snapshots in any tab are
+refused before submission or reported as ambiguous after submission.
+Unknown metadata is retained for comparison; unknown structural blocks and
+extra text-element fields that would be discarded are refused. New API
+structures may require an explicit compatibility update.
 
 Each text input is limited to 16 KiB, the plan to 1 MiB, and each gws response
 to 16 MiB. Source verification additionally limits total text to 250,000
@@ -120,11 +126,18 @@ Exit `2` / `refused` means the companion did not submit a document write.
 Correct the input or reread the source and review a **new** plan.
 
 Exit `3` / `ambiguous` means a write **may have applied**, or its result could
-not be verified. This includes subprocess timeouts, nonzero write exits
-(including a concurrent API 400), malformed responses, missing revisions,
-unexpected reply counts, and failed/mismatching rereads. The original plan
-stays unchanged. Inspect the document and revision through your normal tools;
-do not blindly rerun apply. Keep the failed plan as your review record and
+not be verified or reported successfully. This includes subprocess timeouts,
+nonzero write exits (including a concurrent API 400), malformed responses, missing revisions,
+unexpected reply counts, failed/mismatching rereads, and interruptions or
+output failures after submission. The diagnostic JSON on stderr includes
+`mutation_state: "attempted"` or `"confirmed"`. A confirmed mutation followed
+by a closed stdout consumer or failed final reporting still exits `3`; it
+does not claim that the write was refused or never submitted. Stdout is
+flushed before success is returned, so buffered output failures are handled
+inside the same outcome check.
+
+The original plan stays unchanged. Inspect the document and revision through
+your normal tools; do not blindly rerun apply. Keep the failed plan as your review record and
 create a new plan if further work is required. The companion does not persist
 a separate attempt journal or prevent an operator from manually rerunning it.
 
