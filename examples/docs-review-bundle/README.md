@@ -33,12 +33,17 @@ python3 examples/docs-review-bundle/docs_review_bundle.py \
 
 - `--include-comments`: collect every returned Drive comments page. The entire
   optional artifact is omitted and marked unavailable if retrieval is incomplete
-  or fails. Comments are a separate observation, not revision-bound or mapped to
+  or fails, or if the final serialized artifact exceeds 20 MiB. Size is checked
+  before publication, so an oversized optional result does not fail the required
+  bundle. Comments are a separate observation, not revision-bound or mapped to
   PDF coordinates. Deleted comments are not requested.
 - `--render-pages`: use a trusted `pdftoppm` on `PATH` to generate 96 DPI PNGs.
-  Rendering is opt-in. Missing tools, failures, timeouts, invalid output and
-  noncontiguous page numbers retain the PDF and report no available raster
-  previews. Partial page output is discarded.
+  Its path is resolved before running inside the bundle, including relative
+  `PATH` entries. Rendering is opt-in. Missing tools, failures, timeouts, invalid
+  output and noncontiguous page numbers retain the PDF and report no available
+  raster previews. Outputs from these detected failures are discarded. After a
+  successful process exit and validation, previews are labeled `available`
+  with `coverage: "unverified"`; a missing page suffix cannot be detected.
 - `--timeout`: positive finite seconds per subprocess; default 60. This is not
   a total workflow deadline.
 - `--gws`: trusted executable, resolved before changing subprocess working
@@ -78,6 +83,12 @@ required exports, validation, index generation and artifact hashing succeed.
 an atomic snapshot, successful optional rendering, or verified export tab
 coverage. Check `revisions`, `comments`, and `rendering` independently.
 
+Page previews are never labeled `complete`. `rendering.status: "available"`
+means that local PNG files passed validation, while
+`rendering.coverage: "unverified"` means the original PDF page count was not
+independently checked. Even a contiguous list beginning with page 1 may omit
+later pages. The HTML displays this same coverage limitation.
+
 Revision status is `mixed` for differing observed Docs revision IDs, `unchanged`
 for equal nonempty IDs, and `unknown` if either is missing. Even `unchanged`
 does not prove atomicity or that every export represents the same revision.
@@ -103,10 +114,12 @@ assets. The manifest does not hash itself and is not an authenticity signature.
 - Google determines the PDF/DOCX/Markdown export layout and tab coverage.
   This companion cannot verify that every tab appears in those formats or
   associate a PDF page/DOCX figure with an exact native tab.
-- DOCX figure order comes from main-document drawing relationships, including
-  drawings in tables. Alt text and nearby paragraphs are context, **not exact
-  captions**. Native object IDs are recorded separately; the companion never
-  fabricates a matching native ID or a source tab ID for a DOCX image.
+- DOCX figure order follows individual image occurrences in the main document,
+  including drawings in tables and nested text boxes. Each occurrence uses its
+  nearest drawing's alt text and nearest paragraph's text; legitimate repeated
+  uses of an asset remain separate figures. Alt text and nearby paragraphs are
+  context, **not exact captions**. Native object IDs are recorded separately;
+  the companion never fabricates a matching native ID or source tab ID.
 - Media basenames are replaced with distinct generated local filenames.
   External, missing, traversing and unsupported relationships remain visibly
   unavailable. Unreferenced recognized rasters are retained as artifacts.
@@ -123,7 +136,8 @@ assets. The manifest does not hash itself and is not an authenticity signature.
 - Each source/export/JSON artifact is capped at 20 MiB. Page output is limited
   to 500 files and 100 MiB total. PDF header/EOF and raster signatures are
   checked; these are **not full format validation**. Renderer exit success and
-  contiguous numbering do not independently prove the original PDF page count.
+  contiguous numbering do not independently prove the original PDF page count,
+  so preview coverage is always labeled unverified.
 - Subprocess capture is file-backed, with size checks after exit. Timeouts and
   post-render limits do not enforce disk or memory quotas on external tools.
   `pdftoppm`, `gws`, local viewers and the operator-controlled parent directory

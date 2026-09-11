@@ -49,6 +49,7 @@ LIMITATIONS = [
     "Exports are sequential, not an atomic snapshot; unchanged revisions are observations only.",
     "Native outline includes body paragraphs, tables and nested tabs, not full layout or styling.",
     "Drive export tab coverage is not verified; pages and DOCX figures have no reliable tab mapping.",
+    "Page preview coverage is unverified; available previews may omit pages.",
     "DOCX relationships provide document order and nearby text, "
     "not exact captions or native Docs IDs.",
     "Only recognized PNG, JPEG, GIF and WebP media are previewed; "
@@ -165,7 +166,7 @@ def safe_xml(data):
         raise BundleError("unsafe-xml")
     try:
         text = data.decode("utf-8-sig")
-        declaration = re.search(r"<\?xml[^>]*encoding=['\"]([^'\"]+)", text, re.I)
+        declaration = re.search(r"<\?xml[^>]*\bencoding\s*=\s*['\"]([^'\"]+)", text, re.I)
         if declaration and declaration[1].lower() not in ("utf-8", "utf8", "us-ascii"):
             raise BundleError("unsupported-xml-encoding")
         root = ET.fromstring(text)
@@ -244,6 +245,40 @@ def zip_members(source, member_limit, total_limit, member_count):
         raise BundleError("invalid-zip") from None
 
 
+def docx_image_occurrences(document):
+    """Visit each blip once, retaining its nearest paragraph and drawing."""
+    paragraph_text = {}
+    paragraph_index = {}
+    drawing_alt = {}
+    occurrences = []
+    pending = [(document, None, None)]
+    while pending:
+        node, paragraph, drawing = pending.pop()
+        if node.tag == W + "p":
+            paragraph = node
+            paragraph_index[node] = len(paragraph_text)
+            paragraph_text[node] = []
+        elif node.tag == W + "drawing":
+            drawing = node
+        elif node.tag == W + "t" and paragraph is not None:
+            paragraph_text[paragraph].append(node.text or "")
+        elif node.tag == WP + "docPr" and drawing is not None:
+            drawing_alt.setdefault(
+                drawing, " ".join(node.get(field, "") for field in ("title", "descr")).strip()
+            )
+        elif node.tag == A + "blip" and paragraph is not None and drawing is not None:
+            occurrences.append((node, paragraph, drawing))
+        pending.extend((child, paragraph, drawing) for child in reversed(node))
+
+    texts = ["".join(parts) for parts in paragraph_text.values()]
+    for blip, paragraph, drawing in occurrences:
+        index = paragraph_index[paragraph]
+        nearby = texts[index] or " ".join(
+            texts[max(0, index - 1):index] + texts[index + 1:index + 2]
+        )
+        yield blip, drawing_alt.get(drawing, ""), nearby
+
+
 def extract_docx(
     source, output, *,
     member_limit=FILE_LIMIT, total_limit=TOTAL_LIMIT, member_count=MEMBER_COUNT,
@@ -274,50 +309,36 @@ def extract_docx(
             filename = f"image-{len(assets) + 1}.{extension}"
             write_bytes(output / filename, data)
             assets[name] = local_uri(f"{output.name}/{filename}")
-    paragraphs = list(document.iter(W + "p"))
-    texts = [
-        "".join(text.text or "" for text in paragraph.iter(W + "t"))
-        for paragraph in paragraphs
-    ]
     figures = []
-    for index, paragraph in enumerate(paragraphs):
-        nearby = texts[index] or " ".join(
-            texts[max(0, index - 1):index] + texts[index + 1:index + 2]
-        )
-        for drawing in paragraph.iter(W + "drawing"):
-            properties = drawing.find(".//" + WP + "docPr")
-            alt = ""
-            if properties is not None:
-                alt = " ".join(properties.get(field, "") for field in ("title", "descr")).strip()
-            for blip in drawing.iter(A + "blip"):
-                identity = blip.get(R + "embed") or blip.get(R + "link")
-                relationship = relationships.get(identity, {})
-                asset = None
-                availability = "missing-or-unsupported"
-                if relationship.get("TargetMode", "").lower() == "external":
-                    availability = "external-not-fetched"
-                elif relationship.get("Type") == R[1:-1] + "/image":
-                    target = relationship.get("Target", "")
-                    # Allow only relative media targets in the document's part.
-                    if (
-                        target.startswith("media/")
-                        and not any(p in ("", ".", "..") for p in target.split("/"))
-                        and not any(char in target for char in "\\:%?#")
-                    ):
-                        asset = assets.get(str(PurePosixPath("word") / target))
-                    if asset:
-                        availability = "available"
-                figures.append({
-                    "order": len(figures) + 1,
-                    "relationship_id": identity,
-                    "asset": asset,
-                    "alt": alt,
-                    "nearby_text": nearby[:1000],
-                    "availability": availability,
-                    "mapping_confidence": "docx-relationship-only",
-                    "native_object_id": None,
-                    "source_tab_id": None,
-                })
+    for blip, alt, nearby in docx_image_occurrences(document):
+        identity = blip.get(R + "embed") or blip.get(R + "link")
+        relationship = relationships.get(identity, {})
+        asset = None
+        availability = "missing-or-unsupported"
+        if relationship.get("TargetMode", "").lower() == "external":
+            availability = "external-not-fetched"
+        elif relationship.get("Type") == R[1:-1] + "/image":
+            target = relationship.get("Target", "")
+            # Allow only relative media targets in the document's part.
+            if (
+                target.startswith("media/")
+                and not any(p in ("", ".", "..") for p in target.split("/"))
+                and not any(char in target for char in "\\:%?#")
+            ):
+                asset = assets.get(str(PurePosixPath("word") / target))
+            if asset:
+                availability = "available"
+        figures.append({
+            "order": len(figures) + 1,
+            "relationship_id": identity,
+            "asset": asset,
+            "alt": alt,
+            "nearby_text": nearby[:1000],
+            "availability": availability,
+            "mapping_confidence": "docx-relationship-only",
+            "native_object_id": None,
+            "source_tab_id": None,
+        })
     return {"figures": figures, "assets": list(assets.values())}
 
 
@@ -428,6 +449,11 @@ def index_html(source, markdown, tabs, manifest, artifacts):
             f"{display(manifest['rendering'].get('reason', ''))}</p>",
         ]
     )
+    if manifest["rendering"]["pages"]:
+        parts.append(
+            f"<p>Page coverage: {display(manifest['rendering']['coverage'])}. "
+            "The PDF page count has not been verified; previews may omit pages.</p>"
+        )
     for page in manifest["rendering"]["pages"]:
         parts.append(f'<img loading="lazy" src="{local_uri(page)}" alt="{display(page)}">')
     parts.append("</section><section><h2>Native outline and tabs</h2>")
@@ -536,6 +562,7 @@ def render_pages(bundle, timeout, requested):
     if not renderer:
         return {"status": "unavailable", "reason": "pdftoppm-not-found; PDF retained", "pages": []}
     try:
+        renderer = str(Path(renderer).resolve())
         with tempfile.TemporaryDirectory(prefix=".render-", dir=bundle) as temp:
             staging = Path(temp)
             prefix = str(staging.relative_to(bundle) / "page")
@@ -560,7 +587,8 @@ def render_pages(bundle, timeout, requested):
                 raise BundleError("invalid-render")
             staging.rename(bundle / "pages")
             return {
-                "status": "complete",
+                "status": "available",
+                "coverage": "unverified",
                 "pages": [local_uri("pages/" + pages[number]) for number in sorted(pages)],
             }
     except (BundleError, OSError) as error:
@@ -645,14 +673,20 @@ def build_bundle(args, bundle, manifest):
                 value = parse_json(comments)
                 if not isinstance(value.get("comments"), list) or value.get("nextPageToken"):
                     raise BundleError("incomplete-comments")
+            if len(comments) > FILE_LIMIT:
+                raise BundleError("comments-size-limit")
             write_bytes(bundle / "comments.json", comments)
             artifacts.append("comments.json")
             manifest["comments"] = {"status": "available"}
-        except (BundleError, OSError):
+        except (BundleError, OSError) as error:
             (bundle / "comments.json").unlink(missing_ok=True)
             manifest["comments"] = {
                 "status": "unavailable",
-                "reason": "retrieval-incomplete-or-failed",
+                "reason": (
+                    "comments-size-limit"
+                    if isinstance(error, BundleError) and str(error) == "comments-size-limit"
+                    else "retrieval-incomplete-or-failed"
+                ),
             }
 
     manifest["stage"] = "validate-and-extract"

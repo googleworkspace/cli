@@ -122,8 +122,8 @@ def native_document():
     }
 
 
-def pdf_bytes():
-    """A complete synthetic one-page PDF, also usable by real pdftoppm."""
+def pdf_bytes(page_count=1):
+    """A complete synthetic PDF, also usable by real pdftoppm."""
     content = (
         b"BT /F1 22 Tf 48 720 Td (Synthetic Docs review) Tj ET\n"
         b"BT /F1 12 Tf 48 687 Td (Local fixture - no Google document) Tj ET\n"
@@ -137,25 +137,36 @@ def pdf_bytes():
         b"BT /F1 12 Tf 60 333 Td (Column A) Tj 258 0 Td (Column B) Tj ET\n"
         b"BT /F1 12 Tf 60 288 Td (Cell one) Tj 258 0 Td (Cell two) Tj ET\n"
     )
+    content_id = page_count + 3
+    font_id = page_count + 4
+    kids = " ".join(f"{number} 0 R" for number in range(3, page_count + 3))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {page_count} >>".encode(),
+    ]
+    objects.extend(
+        (
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            f"/Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>"
+        ).encode()
+        for _ in range(page_count)
+    )
+    objects.extend([
         f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"endstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    ]
+    ])
     data = b"%PDF-1.4\n"
     offsets = [0]
     for index, obj in enumerate(objects, 1):
         offsets.append(len(data))
         data += f"{index} 0 obj\n".encode() + obj + b"\nendobj\n"
     startxref = len(data)
-    data += b"xref\n0 6\n0000000000 65535 f \n"
+    object_count = len(objects) + 1
+    data += f"xref\n0 {object_count}\n0000000000 65535 f \n".encode()
     for offset in offsets[1:]:
         data += f"{offset:010d} 00000 n \n".encode()
     data += (
-        f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{startxref}\n%%EOF\n"
+        f"trailer\n<< /Size {object_count} /Root 1 0 R >>\nstartxref\n{startxref}\n%%EOF\n"
     ).encode()
     return data
 
@@ -188,6 +199,22 @@ TargetMode="External"/></Relationships>"""
         "word/media/image1.png": PNG,
         "word/media/nested/image1.png": PNG + b"different",
     }
+
+
+def nested_docx_members(*, outer_image=False):
+    members = docx_members()
+    outer_blip = '<a:blip r:embed="rId2"/>' if outer_image else ""
+    members["word/document.xml"] = f"""
+<w:document xmlns:w="{W}" xmlns:r="{R}" xmlns:a="{A}" xmlns:wp="{WP}">
+<w:body><w:p><w:r><w:t>Outer paragraph</w:t></w:r>
+<w:r><w:drawing><wp:inline><wp:docPr id="1" descr="Outer text box"/>
+<a:graphic><w:txbxContent><w:p><w:r><w:t>Inner paragraph</w:t></w:r>
+<w:r><w:drawing><wp:inline><wp:docPr id="2" descr="Inner image"/>
+<a:graphic><a:blip r:embed="rId1"/></a:graphic>
+</wp:inline></w:drawing></w:r></w:p></w:txbxContent>
+{outer_blip}</a:graphic></wp:inline></w:drawing></w:r>
+</w:p></w:body></w:document>""".encode()
+    return members
 
 
 def write_docx(path, members=None):
@@ -267,6 +294,13 @@ elif args[:3] == ["drive", "files", "export"]:
 elif args[:3] == ["drive", "comments", "list"]:
     assert params["fileId"] == "synthetic-doc"
     assert "nextPageToken" in params["fields"]
+    if mode == "expanded-comments":
+        # ~8 MiB on the wire; >24 MiB after ensure_ascii=True serialization.
+        print(json.dumps(
+            {"comments": [{"id": "large", "content": "é" * (4 * 1024 * 1024)}]},
+            ensure_ascii=False, separators=(",", ":"),
+        ))
+        sys.exit(0)
     if mode == "failed-comments" and params.get("pageToken"):
         sys.exit(9)
     if params.get("pageToken"):
@@ -389,6 +423,39 @@ class ExtractionTests(BundleTestCase):
         self.assertEqual((self.root / paths[0]).read_bytes(), PNG)
         self.assertEqual((self.root / paths[1]).read_bytes(), PNG + b"different")
 
+    def test_nested_text_box_image_has_one_occurrence_with_inner_ownership(self):
+        write_docx(self.fixture / "document.docx", nested_docx_members())
+        figures = self.extract()["figures"]
+        self.assertEqual(len(figures), 1)
+        self.assertEqual(figures[0]["order"], 1)
+        self.assertEqual(figures[0]["alt"], "Inner image")
+        self.assertEqual(figures[0]["nearby_text"], "Inner paragraph")
+        self.assertEqual((self.root / figures[0]["asset"]).read_bytes(), PNG)
+
+    def test_nested_image_order_and_context_follow_nearest_owners(self):
+        write_docx(self.fixture / "document.docx", nested_docx_members(outer_image=True))
+        figures = self.extract()["figures"]
+        self.assertEqual([f["relationship_id"] for f in figures], ["rId1", "rId2"])
+        self.assertEqual([f["alt"] for f in figures], ["Inner image", "Outer text box"])
+        self.assertEqual(
+            [f["nearby_text"] for f in figures], ["Inner paragraph", "Outer paragraph"]
+        )
+        self.assertEqual([f["order"] for f in figures], [1, 2])
+
+    def test_repeated_asset_uses_remain_distinct_figure_occurrences(self):
+        members = docx_members()
+        members["word/document.xml"] = members["word/document.xml"].replace(
+            b'r:embed="rId2"', b'r:embed="rId1"'
+        )
+        write_docx(self.fixture / "document.docx", members)
+        figures = self.extract()["figures"]
+        self.assertEqual(len(figures), 3)
+        self.assertEqual([f["order"] for f in figures], [1, 2, 3])
+        self.assertEqual(figures[0]["asset"], figures[1]["asset"])
+        self.assertEqual([f["relationship_id"] for f in figures[:2]], ["rId1", "rId1"])
+        self.assertNotEqual(figures[0]["alt"], figures[1]["alt"])
+        self.assertEqual(figures[1]["nearby_text"], "Table image context")
+
     def test_zip_traversal_absolute_windows_and_control_paths_are_rejected(self):
         api = self.api()
         for index, name in enumerate(
@@ -444,6 +511,26 @@ class ExtractionTests(BundleTestCase):
                 with self.assertRaises(api.BundleError):
                     self.extract()
         self.assertFalse((self.root / "assets").exists())
+
+    def test_xml_encoding_allowlist_handles_declaration_whitespace(self):
+        api = self.api()
+        for encoding in ("UTF-7", "UTF-16", "UTF-32", "ISO-8859-1"):
+            for assignment in (f' = "{encoding}"', f"= '{encoding}'", f'\t=\n"{encoding}"'):
+                with self.subTest(encoding=encoding, assignment=assignment):
+                    data = f'<?xml version="1.0" encoding{assignment}?><x/>'.encode("utf-8")
+                    with self.assertRaises(api.BundleError) as raised:
+                        api.safe_xml(data)
+                    self.assertEqual(str(raised.exception), "unsupported-xml-encoding")
+
+    def test_xml_utf8_bom_is_accepted_and_utf16_utf32_are_rejected(self):
+        api = self.api()
+        data = '<?xml version="1.0" encoding = "UTF-8"?><x>café</x>'.encode("utf-8-sig")
+        root = api.safe_xml(data)
+        self.assertEqual(root.tag, "x")
+        self.assertEqual(root.text, "café")
+        for encoding in ("utf-16", "utf-32"):
+            with self.subTest(encoding=encoding), self.assertRaises(api.BundleError):
+                api.safe_xml("<x/>".encode(encoding))
 
     def test_relationship_traversal_and_svg_are_not_local_html_assets(self):
         members = docx_members()
@@ -715,9 +802,37 @@ class RenderingTests(BundleTestCase):
         self.executable("pdftoppm", RENDER_STUB)
         result = self.run_bundle("--render-pages", "review")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.manifest()["rendering"]["status"], "complete")
+        self.assertEqual(self.manifest()["rendering"]["status"], "available")
+        self.assertEqual(self.manifest()["rendering"]["coverage"], "unverified")
         self.assertEqual(self.manifest()["rendering"]["pages"], ["pages/page-1.png"])
         self.assertIn("pages/page-1.png", self.manifest()["artifacts"])
+
+    def test_zero_exit_page_prefix_has_unverified_coverage_not_complete(self):
+        (self.fixture / "document.pdf").write_bytes(pdf_bytes(page_count=2))
+        self.executable("pdftoppm", RENDER_STUB)
+        result = self.run_bundle("--render-pages", "review")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = self.manifest()
+        self.assertEqual(manifest["status"], "complete")
+        self.assertEqual(manifest["rendering"]["status"], "available")
+        self.assertEqual(manifest["rendering"]["coverage"], "unverified")
+        self.assertEqual(manifest["rendering"]["pages"], ["pages/page-1.png"])
+        html = (self.root / "review/index.html").read_text()
+        self.assertIn("Page coverage: unverified", html)
+        self.assertIn("previews may omit pages", html)
+        self.assertTrue((self.root / "review/document.pdf").is_file())
+
+    def test_renderer_discovered_on_relative_path_runs_in_bundle(self):
+        self.executable("pdftoppm", RENDER_STUB)
+        for output, search_path in (("relative-path", "bin"), ("absolute-path", str(self.bin))):
+            with self.subTest(search_path=search_path):
+                result = self.run_bundle("--render-pages", output, PATH=search_path)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rendering = self.manifest(output)["rendering"]
+                self.assertEqual(rendering["status"], "available")
+                self.assertEqual(rendering["coverage"], "unverified")
+                self.assertEqual(rendering["pages"], ["pages/page-1.png"])
+                self.assertEqual((self.root / output / "pages/page-1.png").read_bytes(), PNG)
 
     def test_renderer_failure_timeout_and_gap_publish_no_partial_page_list(self):
         self.executable("pdftoppm", RENDER_STUB)
@@ -807,6 +922,19 @@ class GwsIntegrationTests(BundleTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.manifest()["comments"]["status"], "unavailable")
         self.assertFalse((self.root / "review/comments.json").exists())
+
+    def test_serialized_comments_over_limit_remain_an_optional_failure(self):
+        result = self.run_bundle(
+            "--include-comments", "review", live=True, STUB_MODE="expanded-comments"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = self.manifest()
+        self.assertEqual(manifest["status"], "complete")
+        self.assertEqual(manifest["comments"]["status"], "unavailable")
+        self.assertEqual(manifest["comments"]["reason"], "comments-size-limit")
+        self.assertNotIn("comments.json", manifest["artifacts"])
+        self.assertFalse((self.root / "review/comments.json").exists())
+        self.assertTrue((self.root / "review/index.html").is_file())
 
 
 if __name__ == "__main__":
