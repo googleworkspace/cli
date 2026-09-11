@@ -215,6 +215,26 @@ export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 
 Environment variables can also live in a `.env` file.
 
+### Troubleshooting saved credentials
+
+If `gws` cannot read or decrypt `credentials.enc` (including a keyring access
+failure), it returns an authentication error and preserves that file,
+`token_cache.json`, and `sa_token_cache.json`. It does not silently switch to
+plaintext credentials or Application Default Credentials (ADC). This applies to
+the default configuration directory and `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`.
+
+Check that you are using the original configuration directory and can access its
+original OS keyring or encryption key. Back up the configuration before changing
+key storage or replacing credentials. Preservation does not recover a lost key.
+If you intentionally want to discard saved credentials and sign in again, use
+`gws auth logout` followed by `gws auth login`; logout still removes saved
+credentials and token caches.
+
+An explicit `GOOGLE_WORKSPACE_CLI_TOKEN` or
+`GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` still takes precedence. A missing or invalid
+explicit credentials file is an error. When no encrypted credentials file exists,
+the usual plaintext and ADC fallback remains available.
+
 ## AI Agent Skills
 
 The repo ships 100+ Agent Skills (`SKILL.md` files) — one for every supported API, plus higher-level helpers for common workflows and 50 curated recipes for Gmail, Drive, Docs, Calendar, and Sheets. See the full [Skills Index](docs/skills.md) for the complete list.

@@ -337,6 +337,22 @@ async fn load_credentials_inner(
     enc_path: &std::path::Path,
     default_path: &std::path::Path,
 ) -> anyhow::Result<Credential> {
+    load_credentials_with_loader(
+        env_file,
+        enc_path,
+        default_path,
+        credential_store::load_encrypted_from_path,
+    )
+    .await
+}
+
+// Keep credential selection testable without accessing the OS keyring.
+async fn load_credentials_with_loader(
+    env_file: Option<&str>,
+    enc_path: &std::path::Path,
+    default_path: &std::path::Path,
+    load_encrypted: impl FnOnce(&std::path::Path) -> anyhow::Result<String>,
+) -> anyhow::Result<Credential> {
     // 1. Explicit env var — plaintext file (User or Service Account)
     if let Some(path) = env_file {
         let p = PathBuf::from(path);
@@ -353,40 +369,21 @@ async fn load_credentials_inner(
 
     // 2. Encrypted credentials
     if enc_path.exists() {
-        match credential_store::load_encrypted_from_path(enc_path) {
-            Ok(json_str) => {
-                return parse_credential_file(enc_path, &json_str).await;
-            }
-            Err(e) => {
-                // Decryption failed — the encryption key likely changed (e.g. after
-                // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
-                eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
-                    enc_path.display()
-                );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
-                    eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
-                        enc_path.display()
-                    );
-                }
-                // Also remove stale token caches that used the old key.
-                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
-                    let path = enc_path.with_file_name(cache_file);
-                    if let Err(err) = tokio::fs::remove_file(&path).await {
-                        if err.kind() != std::io::ErrorKind::NotFound {
-                            eprintln!(
-                                "Warning: failed to remove stale token cache '{}': {err}",
-                                path.display()
-                            );
-                        }
-                    }
-                }
-                // Fall through to remaining credential sources below.
-            }
-        }
+        // A read, decryption, or keyring failure does not mean the files are
+        // disposable. Stop here so a retry cannot silently select another account.
+        // Do not render backend error details, which may contain sensitive data.
+        let json_str = load_encrypted(enc_path).map_err(|_| {
+            anyhow::anyhow!(
+                "Failed to read or decrypt saved credentials at {}. \
+                 Check access to the original OS keyring or encryption key and verify \
+                 GOOGLE_WORKSPACE_CLI_CONFIG_DIR. Credentials and token caches have been \
+                 preserved; no fallback credentials were used. Back up the configuration \
+                 before intentionally replacing credentials with `gws auth logout` and \
+                 `gws auth login`.",
+                crate::output::sanitize_for_terminal(&enc_path.display().to_string())
+            )
+        })?;
+        return parse_credential_file(enc_path, &json_str).await;
     }
 
     // 3. Plaintext credentials at default path (AuthorizedUser)
@@ -825,75 +822,214 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
-        let tmp = tempfile::tempdir().unwrap();
-        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
-        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
-
+    async fn test_load_credentials_preserves_failed_encrypted_credentials_and_caches() {
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
+        let token_path = dir.path().join("token_cache.json");
+        let service_token_path = dir.path().join("sa_token_cache.json");
+        let absent_path = dir.path().join("missing.json");
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &absent_path);
 
-        // Write garbage data that cannot be decrypted.
-        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
-            .await
-            .unwrap();
-        assert!(enc_path.exists());
+        // A short invalid payload fails before accessing any OS keyring.
+        std::fs::write(&enc_path, b"bad").unwrap();
+        std::fs::write(&token_path, b"synthetic-user-cache").unwrap();
+        std::fs::write(&service_token_path, b"synthetic-service-cache").unwrap();
 
-        let result =
-            load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist")).await;
+        for _ in 0..2 {
+            let result = load_credentials_inner(None, &enc_path, &absent_path).await;
 
-        // Should fall through to "No credentials found" (not a decryption error).
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("No credentials found"),
-            "Should fall through to final error, got: {msg}"
-        );
-        assert!(
-            !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
-        );
+            assert!(result.is_err());
+            assert!(
+                enc_path.exists(),
+                "Authentication failure must preserve saved encrypted credentials"
+            );
+            assert_eq!(std::fs::read(&enc_path).unwrap(), b"bad");
+            assert_eq!(std::fs::read(&token_path).unwrap(), b"synthetic-user-cache");
+            assert_eq!(
+                std::fs::read(&service_token_path).unwrap(),
+                b"synthetic-service-cache"
+            );
+        }
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_falls_through_to_plaintext() {
-        // When credentials.enc is corrupt but a valid plaintext file exists,
-        // the function should fall through and use the plaintext credentials.
+    async fn test_load_credentials_corrupt_encrypted_reports_safe_remediation() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let absent_path = dir.path().join("missing.json");
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &absent_path);
+        std::fs::write(&enc_path, b"bad").unwrap();
+
+        let err = load_credentials_inner(None, &enc_path, &absent_path)
+            .await
+            .unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("decrypt"), "{msg}");
+        assert!(msg.contains("keyring"), "{msg}");
+        assert!(msg.contains("preserved"), "{msg}");
+        assert!(msg.contains("Back up"), "{msg}");
+        assert!(!msg.contains("No credentials found"), "{msg}");
+        assert!(!msg.contains("bad"), "{msg}");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_corrupt_encrypted_blocks_plaintext_and_adc() {
+        // Exercise both a default-style layout and a configured directory,
+        // without changing HOME or touching the actual default directory.
+        let dir = tempfile::tempdir().unwrap();
+        let fallback_json = r#"{
+            "client_id": "different-account",
+            "client_secret": "synthetic-secret",
+            "refresh_token": "synthetic-refresh",
+            "type": "authorized_user"
+        }"#;
+        let adc_path = dir.path().join("adc.json");
+        std::fs::write(&adc_path, fallback_json).unwrap();
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &adc_path);
+
+        for layout in [".config/gws", "custom-config"] {
+            let config = dir.path().join(layout);
+            std::fs::create_dir_all(&config).unwrap();
+            let enc_path = config.join("credentials.enc");
+            let plain_path = config.join("credentials.json");
+            std::fs::write(&enc_path, b"bad").unwrap();
+            std::fs::write(&plain_path, fallback_json).unwrap();
+
+            for fallback in [&plain_path, &config.join("missing.json")] {
+                let err = load_credentials_inner(None, &enc_path, fallback)
+                    .await
+                    .expect_err("Broken encrypted credentials must block another account");
+                assert!(err.to_string().contains("decrypt"));
+                assert_eq!(std::fs::read(&enc_path).unwrap(), b"bad");
+                assert_eq!(std::fs::read_to_string(&plain_path).unwrap(), fallback_json);
+                assert_eq!(std::fs::read_to_string(&adc_path).unwrap(), fallback_json);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_keyring_failure_preserves_files_and_blocks_adc() {
         let dir = tempfile::tempdir().unwrap();
         let enc_path = dir.path().join("credentials.enc");
         let plain_path = dir.path().join("credentials.json");
-
-        // Write garbage encrypted data.
-        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
-            .await
-            .unwrap();
-
-        // Write valid plaintext credentials.
-        let plain_json = r#"{
-            "client_id": "fallback_id",
-            "client_secret": "fallback_secret",
-            "refresh_token": "fallback_refresh",
-            "type": "authorized_user"
-        }"#;
-        tokio::fs::write(&plain_path, plain_json).await.unwrap();
-
-        let res = load_credentials_inner(None, &enc_path, &plain_path)
-            .await
-            .unwrap();
-
-        match res {
-            Credential::AuthorizedUser(secret) => {
-                assert_eq!(
-                    secret.client_id, "fallback_id",
-                    "Should fall through to plaintext credentials"
-                );
-            }
-            _ => panic!("Expected AuthorizedUser from plaintext fallback"),
+        let adc_path = dir.path().join("adc.json");
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &adc_path);
+        let sentinels: &[(&str, &[u8])] = &[
+            ("credentials.enc", b"synthetic-encrypted-credentials"),
+            ("token_cache.json", b"synthetic-user-cache"),
+            ("sa_token_cache.json", b"synthetic-service-cache"),
+            (".encryption_key", b"synthetic-key"),
+        ];
+        for (name, bytes) in sentinels {
+            std::fs::write(dir.path().join(name), bytes).unwrap();
         }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        std::fs::write(
+            &adc_path,
+            r#"{"type":"authorized_user","client_id":"other","client_secret":"secret","refresh_token":"refresh"}"#,
+        )
+        .unwrap();
+
+        for _ in 0..2 {
+            let err = load_credentials_with_loader(None, &enc_path, &plain_path, |_| {
+                anyhow::bail!("OS keyring unavailable: synthetic-sensitive-detail")
+            })
+            .await
+            .expect_err("Key acquisition failure must stop credential selection");
+            for (name, bytes) in sentinels {
+                assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), *bytes);
+            }
+            let msg = format!("{err:#}");
+            assert!(msg.contains("keyring"), "{msg}");
+            assert!(msg.contains("preserved"), "{msg}");
+            assert!(!msg.contains("synthetic-sensitive-detail"), "{msg}");
+            assert!(!msg.contains("synthetic-key"), "{msg}");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_explicit_file_precedes_broken_encrypted_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let explicit_path = dir.path().join("explicit.json");
+        let missing_path = dir.path().join("missing.json");
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &missing_path);
+        std::fs::write(&enc_path, b"bad").unwrap();
+        std::fs::write(
+            &explicit_path,
+            r#"{"type":"authorized_user","client_id":"explicit","client_secret":"secret","refresh_token":"refresh"}"#,
+        )
+        .unwrap();
+
+        let creds = load_credentials_inner(explicit_path.to_str(), &enc_path, &missing_path)
+            .await
+            .unwrap();
+        match creds {
+            Credential::AuthorizedUser(secret) => assert_eq!(secret.client_id, "explicit"),
+            _ => panic!("Expected explicitly selected account"),
+        }
+        assert_eq!(std::fs::read(&enc_path).unwrap(), b"bad");
+
+        // A missing or malformed explicit file must not select another account.
+        for contents in [None, Some("invalid-json")] {
+            if let Some(contents) = contents {
+                std::fs::write(&missing_path, contents).unwrap();
+            }
+            let err = load_credentials_inner(missing_path.to_str(), &enc_path, &explicit_path)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(if contents.is_some() {
+                "Failed to parse"
+            } else {
+                "does not exist"
+            }));
+            assert_eq!(std::fs::read(&enc_path).unwrap(), b"bad");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_get_token_preserves_configured_credentials_until_explicit_logout() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let missing_path = dir.path().join("missing.json");
+        let _config_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_CONFIG_DIR", dir.path());
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &missing_path);
+        let _file_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "");
+        let names = [
+            "credentials.enc",
+            "credentials.json",
+            "token_cache.json",
+            "sa_token_cache.json",
+        ];
+        for name in names {
+            std::fs::write(dir.path().join(name), b"bad").unwrap();
+        }
+
+        let err = get_token(&[]).await.unwrap_err();
+        assert!(err.to_string().contains("decrypt"), "{err}");
+        for name in names {
+            assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"bad");
+        }
+
+        // An explicit token still takes precedence over all credential files.
+        {
+            let _token_guard = EnvVarGuard::set("GOOGLE_WORKSPACE_CLI_TOKEN", "synthetic-token");
+            assert_eq!(get_token(&[]).await.unwrap(), "synthetic-token");
+            assert_eq!(std::fs::read(&enc_path).unwrap(), b"bad");
+        }
+
+        crate::auth_commands::handle_auth_command(&["logout".into()])
+            .await
+            .unwrap();
+        for name in names {
+            assert!(!dir.path().join(name).exists(), "Logout must remove {name}");
+        }
     }
 
     #[tokio::test]
