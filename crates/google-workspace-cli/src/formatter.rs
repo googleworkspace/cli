@@ -319,7 +319,10 @@ fn json_to_yaml(value: &Value, indent: usize) -> String {
                 match val {
                     Value::Object(_) | Value::Array(_) => {
                         let val_str = json_to_yaml(val, indent + 1);
-                        let _ = write!(out, "\n{prefix}{key}:{val_str}");
+                        // Empty collections use inline flow syntax and need a
+                        // space after the colon; block collections start a line.
+                        let separator = if val_str.starts_with('\n') { "" } else { " " };
+                        let _ = write!(out, "\n{prefix}{key}:{separator}{val_str}");
                     }
                     _ => {
                         let val_str = json_to_yaml(val, indent);
@@ -635,6 +638,24 @@ mod tests {
         let output = format_value(&val, &OutputFormat::Yaml);
         assert!(output.contains("name: \"test\""));
         assert!(output.contains("count: 42"));
+    }
+
+    #[test]
+    fn test_format_yaml_empty_collections_as_mapping_values() {
+        let value = json!({"array": [], "object": {}, "tail": true});
+        assert_eq!(
+            format_value(&value, &OutputFormat::Yaml),
+            "\narray: []\nobject: {}\ntail: true"
+        );
+    }
+
+    #[test]
+    fn test_format_yaml_empty_collections_nested_in_sequences() {
+        let value = json!({"items": [[], {}, {"array": [], "object": {}}, "tail"]});
+        assert_eq!(
+            format_value(&value, &OutputFormat::Yaml),
+            "\nitems:\n  - []\n  - {}\n  - \n    array: []\n    object: {}\n  - \"tail\""
+        );
     }
 
     #[test]

@@ -537,7 +537,9 @@ impl Drop for SyntheticQuota {
 async fn executor_fetches_full_content_with_auth_and_honors_all_global_formats() {
     let _quota = SyntheticQuota::new();
     for format in ["json", "yaml", "table", "csv"] {
-        let (doc, request) = serve("200 OK", legacy().to_string()).await;
+        let mut input = legacy();
+        input["body"]["content"][0]["paragraph"]["elements"][0]["textRun"]["textStyle"] = json!({});
+        let (doc, request) = serve("200 OK", input.to_string()).await;
         let args = matches(&[
             "gws",
             "+read",
@@ -564,7 +566,38 @@ async fn executor_fetches_full_content_with_auth_and_honors_all_global_formats()
                 serde_json::from_str::<Value>(&rendered).unwrap()["tabs"][0]["blocks"][0]["text"],
                 "Hi😀"
             ),
-            "yaml" => assert!(rendered.contains("documentId: \"synthetic\"")),
+            // Complete consumer-visible YAML, including the empty map and
+            // arrays that previously lacked a mapping-value separator.
+            "yaml" => assert_eq!(
+                rendered,
+                concat!(
+                    "\ndocumentId: \"synthetic\"",
+                    "\noutline: []",
+                    "\nrevisionId: \"rev-1\"",
+                    "\nsource: \"legacyBody\"",
+                    "\nsuggestionsViewMode: \"SUGGESTIONS_INLINE\"",
+                    "\ntabs:",
+                    "\n  - ",
+                    "\n    blocks:",
+                    "\n      - ",
+                    "\n        elements:",
+                    "\n          - ",
+                    "\n            endIndex: 5",
+                    "\n            startIndex: 1",
+                    "\n            text: \"Hi😀\"",
+                    "\n            textStyle: {}",
+                    "\n            type: \"text\"",
+                    "\n        endIndex: 5",
+                    "\n        startIndex: 1",
+                    "\n        text: \"Hi😀\"",
+                    "\n        type: \"paragraph\"",
+                    "\n    childTabs: []",
+                    "\n    parentTabId: null",
+                    "\n    tabId: null",
+                    "\n    title: \"Example\"",
+                    "\ntitle: \"Example\""
+                )
+            ),
             "table" => assert!(rendered.contains("─") && rendered.contains("blocks")),
             "csv" => assert!(
                 rendered.lines().next().unwrap().contains("blocks,")
