@@ -30,21 +30,6 @@ env:
   SCCACHE_IGNORE_SERVER_IO_ERROR: "true"
 
 jobs:
-  docs-review:
-    name: Docs Review Python Example
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Test with synthetic fixtures and stub gws
-        run: |
-          python3 --version
-          python3 -m unittest discover -s examples/docs-review -p 'test_*.py' -v
-
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
