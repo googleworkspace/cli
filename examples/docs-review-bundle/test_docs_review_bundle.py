@@ -14,6 +14,7 @@
 import base64
 import contextlib
 import hashlib
+import http.server
 from html.parser import HTMLParser
 import importlib.util
 import io
@@ -24,8 +25,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
+import urllib.parse
 import zipfile
 
 
@@ -287,7 +290,11 @@ elif args[:3] == ["drive", "files", "export"]:
         shutil.copyfile(fixture / name, name)
     print(json.dumps({
         "status": "error" if mode == "bad-export-status" else "success",
-        "saved_file": name,
+        "saved_file": (
+            str(Path.cwd().parent / "other" / name) if mode == "wrong-export-path"
+            else name if mode == "relative-export-path"
+            else str(Path(name).resolve())
+        ),
         "mimeType": params["mimeType"],
         "bytes": 1 if mode == "wrong-export-size" else (fixture / name).stat().st_size,
     }))
@@ -397,6 +404,116 @@ class BundleTestCase(unittest.TestCase):
 
     def manifest(self, directory="review"):
         return json.loads((self.root / directory / "manifest.json").read_text())
+
+
+class ExportReceiptTests(BundleTestCase):
+    def test_canonical_receipts_complete_all_exports(self):
+        result = self.run_bundle("review", live=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.manifest()["status"], "complete")
+
+    def test_wrong_destination_or_relative_receipt_is_refused(self):
+        for mode in ["wrong-export-path", "relative-export-path"]:
+            with self.subTest(mode=mode):
+                result = self.run_bundle(mode, live=True, STUB_MODE=mode)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(self.manifest(mode)["error"], "invalid-export-receipt")
+
+
+@unittest.skipUnless(os.environ.get("GWS_TEST_BINARY"), "Set GWS_TEST_BINARY for real CLI coverage")
+class RealCliExportTests(BundleTestCase):
+    def test_real_cli_exports_complete_bundle_with_canonical_receipts(self):
+        binary = Path(os.environ["GWS_TEST_BINARY"]).resolve(strict=True)
+        fixture = self.fixture
+        requests = []
+        exports = {
+            "application/pdf": "document.pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "document.docx",
+            "text/markdown": "document.md",
+        }
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_GET(self):
+                parsed = urllib.parse.urlsplit(self.path)
+                path = urllib.parse.unquote(parsed.path)
+                params = urllib.parse.parse_qs(parsed.query)
+                requests.append((path, params, self.headers.get("Authorization")))
+                if path == "/documents/synthetic-doc":
+                    data = (fixture / "source.json").read_bytes()
+                    mime = "application/json"
+                elif path == "/files/synthetic-doc/export":
+                    mime = params.get("mimeType", [""])[0]
+                    if mime not in exports:
+                        self.send_error(400)
+                        return
+                    data = (fixture / exports[mime]).read_bytes()
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            config = self.root / "real-cli-config"
+            cache = config / "cache"
+            cache.mkdir(parents=True)
+            (self.root / ".env").write_text("")
+            for service, version, resource, method, id_field, path in [
+                ("docs", "v1", "documents", "get", "documentId", "documents/{documentId}"),
+                ("drive", "v3", "files", "export", "fileId", "files/{fileId}/export"),
+            ]:
+                discovery = {
+                    "name": service, "version": version,
+                    "rootUrl": f"http://127.0.0.1:{server.server_port}/",
+                    "resources": {resource: {"methods": {method: {
+                        "httpMethod": "GET", "path": path,
+                        "parameters": {id_field: {
+                            "type": "string", "location": "path", "required": True,
+                        }},
+                    }}}},
+                }
+                (cache / f"{service}_{version}.json").write_text(json.dumps(discovery))
+            env = {
+                **self.env,
+                "GOOGLE_WORKSPACE_CLI_CONFIG_DIR": str(config),
+                "GOOGLE_WORKSPACE_CLI_TOKEN": "synthetic-loopback-token",
+                "GOOGLE_APPLICATION_CREDENTIALS": str(self.root / "absent-adc.json"),
+                "GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND": "file",
+                "GOOGLE_WORKSPACE_PROJECT_ID": "synthetic-loopback-project",
+                "HTTP_PROXY": "http://127.0.0.1:1",
+                "HTTPS_PROXY": "http://127.0.0.1:1",
+                "ALL_PROXY": "http://127.0.0.1:1",
+                "NO_PROXY": "127.0.0.1,localhost",
+            }
+            result = subprocess.run(
+                [sys.executable, "-B", str(SCRIPT), "--document-id", "synthetic-doc",
+                 "--gws", str(binary), "--timeout", "10", "review"],
+                cwd=self.root, env=env, text=True, capture_output=True, timeout=25,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = self.manifest()
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["revisions"]["status"], "unchanged")
+            for name in exports.values():
+                data = (self.root / "review" / name).read_bytes()
+                self.assertEqual(data, (fixture / name).read_bytes())
+                self.assertEqual(manifest["artifacts"][name]["bytes"], len(data))
+            self.assertEqual(len(requests), 5)
+            self.assertTrue(all(auth == "Bearer synthetic-loopback-token"
+                                for _, _, auth in requests))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 class ExtractionTests(BundleTestCase):

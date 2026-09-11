@@ -55,7 +55,9 @@ The companion requests `docs documents get` with `includeTabsContent: true`
 and uses `drive files export` with `--format json` and fixed relative
 `--output` filenames. Every `gws` subprocess runs inside the new bundle.
 Export success, MIME type, destination and byte count are checked against the
-written artifact. This requires the existing `gws` binary-export receipt format.
+written artifact. The receipt must name the exact canonical absolute destination,
+as returned by `gws`; a matching basename alone is insufficient. This requires
+the existing `gws` binary-export receipt format.
 
 Open `index.html` locally. The index has no JavaScript or remote dependencies.
 It contains a sandboxed PDF frame, optional page images, a paragraph/table
@@ -192,5 +194,19 @@ python3 -B -m unittest discover \
 
 Tests use generated JSON/PDF/DOCX files and explicit `gws`/renderer executables
 as stubs. Their subprocess environment omits real authentication settings;
-no installed `gws`, real document, or network request is needed. CI runs this
-same command in a dedicated Linux/macOS job.
+no installed `gws`, real document, or network request is needed for those tests.
+
+To include the real CLI export-contract regression:
+
+```sh
+cargo build --locked
+GWS_TEST_BINARY="$PWD/target/debug/gws" python3 -B -m unittest discover \
+  -s examples/docs-review-bundle -p 'test_*.py' -v
+```
+
+This additional test uses cached synthetic Discovery, a dummy token, isolated
+configuration and ADC paths, and a loopback HTTP server. It downloads all three
+generated exports through the real CLI and checks that the bundle completes.
+It never contacts Google or uses real credentials. The dedicated Linux/macOS CI
+job builds `gws` and always enables this test; local runs without
+`GWS_TEST_BINARY` explicitly skip it.

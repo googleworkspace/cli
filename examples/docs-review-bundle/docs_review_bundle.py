@@ -649,7 +649,7 @@ def build_bundle(args, bundle, manifest):
             data = read_bytes(bundle / name)
             if (
                 receipt.get("status") != "success"
-                or receipt.get("saved_file") != name
+                or receipt.get("saved_file") != str((bundle / name).resolve())
                 or str(receipt.get("mimeType", "")).split(";")[0].strip().lower() != mime
                 or type(receipt.get("bytes")) is not int
                 or receipt["bytes"] != len(data)
