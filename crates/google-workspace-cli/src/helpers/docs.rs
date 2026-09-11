@@ -70,10 +70,15 @@ TIPS:
                 let (params_str, body_str, scopes) = build_write_request(matches, doc)?;
 
                 let scope_strs: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
-                let (token, auth_method) = match auth::get_token(&scope_strs).await {
-                    Ok(t) => (Some(t), executor::AuthMethod::OAuth),
-                    Err(_) if matches.get_flag("dry-run") => (None, executor::AuthMethod::None),
-                    Err(e) => return Err(GwsError::Auth(format!("Docs auth failed: {e}"))),
+                let dry_run = matches.get_flag("dry-run");
+                // Skip auth entirely: even failed auth can mutate stored credentials.
+                let (token, auth_method) = if dry_run {
+                    (None, executor::AuthMethod::None)
+                } else {
+                    match auth::get_token(&scope_strs).await {
+                        Ok(t) => (Some(t), executor::AuthMethod::OAuth),
+                        Err(e) => return Err(GwsError::Auth(format!("Docs auth failed: {e}"))),
+                    }
                 };
 
                 // Method: documents.batchUpdate
@@ -100,7 +105,7 @@ TIPS:
                     auth_method,
                     None,
                     None,
-                    matches.get_flag("dry-run"),
+                    dry_run,
                     &pagination,
                     None,
                     &crate::helpers::modelarmor::SanitizeMode::Warn,

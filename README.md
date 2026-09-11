@@ -104,6 +104,21 @@ gws schema drive.files.list
 gws drive files list --params '{"pageSize": 100}' --page-all | jq -r '.files[].name'
 ```
 
+Discovery-generated API commands and `gws docs +write` support credential-free
+`--dry-run`: they validate inputs and display the request without obtaining a
+token, accessing the keyring, reading or changing stored credentials, or sending
+the API request.
+
+```bash
+# Preview a Docs append without signing in
+gws docs +write --document DOC_ID --text 'Hello, world!' --dry-run
+```
+
+These previews work offline with a fresh cached Discovery schema (24-hour TTL).
+First use or an expired cache can still fetch the schema over the network.
+Other helpers may need authenticated reads to prepare their plans; this guarantee
+applies to raw API commands and `docs +write`.
+
 ## Authentication
 
 The CLI supports multiple auth workflows so it works on your laptop, in CI, and on a server.
