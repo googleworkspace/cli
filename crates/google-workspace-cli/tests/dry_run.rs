@@ -57,6 +57,9 @@ impl NetworkTrap {
         let worker = thread::spawn(move || loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // Accepted sockets may inherit the listener's nonblocking
+                    // mode. Request reads need the timeout below on every OS.
+                    stream.set_nonblocking(false).unwrap();
                     // Record the connection even if the client fails before
                     // sending HTTP (for example, during TLS/proxy setup).
                     let mut requests = captured.lock().unwrap();
@@ -70,6 +73,25 @@ impl NetworkTrap {
                         match stream.read(&mut buffer) {
                             Ok(0) | Err(_) => break,
                             Ok(size) => header.extend_from_slice(&buffer[..size]),
+                        }
+                    }
+                    // TCP may deliver headers and body in separate reads.
+                    // Consume the body before closing the connection, or unread
+                    // request bytes can reset it and hide our synthetic 403.
+                    if let Some(end) = header.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let body_len = String::from_utf8_lossy(&header[..end])
+                            .lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                            .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                            .unwrap_or(0);
+                        let expected_len = end + 4 + body_len;
+                        while header.len() < expected_len {
+                            let remaining = (expected_len - header.len()).min(buffer.len());
+                            match stream.read(&mut buffer[..remaining]) {
+                                Ok(0) | Err(_) => break,
+                                Ok(size) => header.extend_from_slice(&buffer[..size]),
+                            }
                         }
                     }
                     *requests.last_mut().unwrap() = String::from_utf8_lossy(&header).into_owned();
@@ -586,4 +608,44 @@ fn raw_real_request_uses_token_and_preserves_api_failure() {
 #[test]
 fn docs_write_real_request_uses_token_and_preserves_api_failure() {
     assert_authenticated_api_failure(WRITE);
+}
+
+#[test]
+fn network_trap_waits_for_split_request_body_before_responding() {
+    use std::net::TcpStream;
+
+    let trap = NetworkTrap::new();
+    let address = trap
+        .url
+        .strip_prefix("http://")
+        .unwrap()
+        .trim_end_matches('/');
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    stream
+        .write_all(b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\n")
+        .unwrap();
+
+    let mut byte = [0; 1];
+    let error = stream
+        .read(&mut byte)
+        .expect_err("must consume the body before responding");
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+
+    stream.write_all(b"hello").unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+        "{response}"
+    );
+    assert!(trap.requests.lock().unwrap()[0].ends_with("hello"));
 }
