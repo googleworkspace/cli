@@ -21,7 +21,13 @@ use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
 
+mod read;
+
 pub struct DocsHelper;
+
+#[cfg(test)]
+#[path = "docs/read_tests.rs"]
+mod read_tests;
 
 impl Helper for DocsHelper {
     fn inject_commands(
@@ -29,6 +35,7 @@ impl Helper for DocsHelper {
         mut cmd: Command,
         _doc: &crate::discovery::RestDescription,
     ) -> Command {
+        cmd = cmd.subcommand(read::command());
         cmd = cmd.subcommand(
             Command::new("+write")
                 .about("[Helper] Append text to a document")
@@ -63,9 +70,13 @@ TIPS:
         &'a self,
         doc: &'a crate::discovery::RestDescription,
         matches: &'a ArgMatches,
-        _sanitize_config: &'a crate::helpers::modelarmor::SanitizeConfig,
+        sanitize_config: &'a crate::helpers::modelarmor::SanitizeConfig,
     ) -> Pin<Box<dyn Future<Output = Result<bool, GwsError>> + Send + 'a>> {
         Box::pin(async move {
+            if let Some(matches) = matches.subcommand_matches("+read") {
+                read::handle(doc, matches, sanitize_config).await?;
+                return Ok(true);
+            }
             if let Some(matches) = matches.subcommand_matches("+write") {
                 let (params_str, body_str, scopes) = build_write_request(matches, doc)?;
 
