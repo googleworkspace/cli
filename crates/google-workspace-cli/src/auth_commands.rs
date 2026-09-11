@@ -810,16 +810,18 @@ async fn resolve_scopes(
 /// short name equals the service or starts with `service.` (e.g. service
 /// `drive` matches `drive`, `drive.readonly`, `drive.metadata.readonly`).
 ///
-/// The `cloud-platform` scope always passes through since it's a
-/// cross-service platform scope.
+/// The `cloud-platform` scope is a cross-service platform scope, but it's only
+/// included if explicitly selected or if no services filter is active.
 fn scope_matches_service(scope_url: &str, services: &HashSet<String>) -> bool {
     let short = scope_url
         .strip_prefix("https://www.googleapis.com/auth/")
         .unwrap_or(scope_url);
 
-    // cloud-platform is a cross-service scope, always include
+    // cloud-platform is cross-service but should only be included if:
+    // 1. No services filter is active (all services -> include cloud-platform)
+    // 2. Cloud-platform is explicitly selected by the user
     if short == "cloud-platform" {
-        return true;
+        return services.is_empty() || services.contains("cloud-platform");
     }
 
     let prefix = short.split('.').next().unwrap_or(short);
@@ -930,7 +932,7 @@ fn run_discovery_scope_picker(
     relevant_scopes: &[crate::setup::DiscoveredScope],
     services_filter: Option<&HashSet<String>>,
 ) -> Option<Vec<String>> {
-    use crate::setup::{ScopeClassification, PLATFORM_SCOPE};
+    use crate::setup::ScopeClassification;
     use crate::setup_tui::{PickerResult, SelectItem};
 
     let mut recommended_scopes = vec![];
@@ -1100,11 +1102,6 @@ fn run_discovery_scope_picker(
                         }
                     }
                 }
-            }
-
-            // Always include cloud-platform scope
-            if !selected.contains(&PLATFORM_SCOPE.to_string()) {
-                selected.push(PLATFORM_SCOPE.to_string());
             }
 
             // Hierarchical dedup: if we have both a broad scope (e.g. `.../auth/drive`)
@@ -2184,11 +2181,31 @@ mod tests {
     }
 
     #[test]
-    fn scope_matches_service_cloud_platform_always_matches() {
+    fn scope_matches_service_cloud_platform_only_matches_when_explicitly_selected() {
+        // #918 regression: cloud-platform must NOT match when the services
+        // filter is narrowed (e.g. `--services gmail`), because it grants
+        // read/write/delete across all GCP resources.
         let services: HashSet<String> = ["drive"].iter().map(|s| s.to_string()).collect();
+        assert!(
+            !scope_matches_service("https://www.googleapis.com/auth/cloud-platform", &services),
+            "cloud-platform must not pass through a narrowed services filter"
+        );
+
+        // It still matches when the filter explicitly includes it.
+        let with_platform: HashSet<String> = ["drive", "cloud-platform"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(scope_matches_service(
             "https://www.googleapis.com/auth/cloud-platform",
-            &services
+            &with_platform
+        ));
+
+        // Empty services filter (no narrowing) keeps legacy pass-through.
+        let empty: HashSet<String> = HashSet::new();
+        assert!(scope_matches_service(
+            "https://www.googleapis.com/auth/cloud-platform",
+            &empty
         ));
     }
 
