@@ -161,11 +161,13 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
 
 /// Validates that a file path (e.g. `--upload` or `--output`) is safe.
 ///
-/// Rejects paths that escape above CWD via `..` traversal, contain
-/// control characters, or follow symlinks to locations outside CWD.
-/// Absolute paths are allowed (reading an existing file from a known
-/// location is legitimate) but the resolved target must still live
-/// under CWD.
+/// By default, the resolved target must live under CWD. The trusted operator
+/// environment variable `GOOGLE_WORKSPACE_CLI_FILE_ROOT` can select a different
+/// boundary: an existing directory, canonicalized before validation. With an
+/// explicit root, CLI paths must not contain `..` components. Relative CLI paths
+/// always resolve from CWD, not from the configured root. Absolute paths within
+/// the boundary are allowed. Control characters and symlink escapes are rejected.
+/// Directory validators do not use this setting.
 ///
 /// # TOCTOU caveat
 ///
@@ -175,46 +177,125 @@ pub fn validate_safe_dir_path(dir: &str) -> Result<PathBuf, GwsError> {
 /// TOCTOU would require `openat(O_NOFOLLOW)` on each path component,
 /// which is tracked as a follow-up for Unix platforms.
 pub fn validate_safe_file_path(path_str: &str, flag_name: &str) -> Result<PathBuf, GwsError> {
-    reject_dangerous_chars(path_str, flag_name)?;
-
-    let path = Path::new(path_str);
     let cwd = std::env::current_dir()
         .map_err(|e| GwsError::Validation(format!("Failed to determine current directory: {e}")))?;
+    let file_root = std::env::var_os("GOOGLE_WORKSPACE_CLI_FILE_ROOT");
+    validate_file_path_with_root(
+        path_str,
+        flag_name,
+        &cwd,
+        file_root.as_deref().map(Path::new),
+    )
+}
 
-    let resolved = if path.is_absolute() {
-        path.to_path_buf()
+/// Explicit policy keeps filesystem validation independent of process-global env.
+fn validate_file_path_with_root(
+    path_str: &str,
+    flag_name: &str,
+    cwd: &Path,
+    file_root: Option<&Path>,
+) -> Result<PathBuf, GwsError> {
+    reject_dangerous_chars(path_str, flag_name)?;
+
+    let canonical_root = if let Some(root) = file_root {
+        if root.as_os_str().is_empty() {
+            return Err(GwsError::Validation(
+                "GOOGLE_WORKSPACE_CLI_FILE_ROOT must name an existing directory; got an empty value"
+                    .to_string(),
+            ));
+        }
+        // Environment is trusted: relative roots (including `..`) are valid.
+        let canonical = cwd.join(root).canonicalize().map_err(|e| {
+            GwsError::Validation(format!(
+                "GOOGLE_WORKSPACE_CLI_FILE_ROOT {root:?} must name an existing directory: {e}"
+            ))
+        })?;
+        if !canonical.is_dir() {
+            return Err(GwsError::Validation(format!(
+                "GOOGLE_WORKSPACE_CLI_FILE_ROOT {root:?} must name an existing directory"
+            )));
+        }
+        canonical
     } else {
-        cwd.join(path)
-    };
-
-    // For existing files, canonicalize to resolve symlinks.
-    // For non-existing files, get the prefix canonicalized then normalize
-    // the remaining components to resolve any `..` or `.` segments.
-    let canonical = if resolved.exists() {
-        resolved.canonicalize().map_err(|e| {
-            GwsError::Validation(format!("Failed to resolve {flag_name} '{}': {e}", path_str))
+        cwd.canonicalize().map_err(|e| {
+            GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
         })?
+    };
+    let boundary = if file_root.is_some() {
+        format!("GOOGLE_WORKSPACE_CLI_FILE_ROOT directory {canonical_root:?}")
     } else {
-        let raw = normalize_non_existing(&resolved)?;
-        // normalize_non_existing does NOT resolve `..` in the non-existent
-        // suffix. We must resolve them here to prevent bypass via paths like
-        // `non_existent/../../etc/passwd`.
-        normalize_dotdot(&raw)
+        format!("current directory {canonical_root:?}")
     };
 
-    let canonical_cwd = cwd.canonicalize().map_err(|e| {
-        GwsError::Validation(format!("Failed to canonicalize current directory: {e}"))
-    })?;
-
-    if !canonical.starts_with(&canonical_cwd) {
+    let path = Path::new(path_str);
+    if file_root.is_some()
+        && path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
         return Err(GwsError::Validation(format!(
-            "{flag_name} '{}' resolves to '{}' which is outside the current directory",
-            path_str,
-            canonical.display()
+            "{flag_name} must not contain parent traversal ('..') components within the {boundary}; use a path without '..'"
+        )));
+    }
+
+    // Path::join preserves absolute arguments; relative arguments stay CWD-relative.
+    let resolved = cwd.join(path);
+    let canonical = canonicalize_file_path(&resolved).map_err(|e| {
+        GwsError::Validation(format!(
+            "Failed to resolve {flag_name} {path_str:?} within the {boundary}: {e}"
+        ))
+    })?;
+    // Preserve default handling of paths that normalize safely within CWD.
+    let canonical = normalize_dotdot(&canonical);
+
+    if !canonical.starts_with(&canonical_root) {
+        return Err(GwsError::Validation(format!(
+            "{flag_name} {path_str:?} resolves to {canonical:?} which is outside the {boundary}; set GOOGLE_WORKSPACE_CLI_FILE_ROOT to an existing directory containing the intended file"
         )));
     }
 
     Ok(canonical)
+}
+
+/// Canonicalize the existing file or nearest existing parent, then append the
+/// missing suffix. Unlike `exists()`, symlink_metadata does not mistake dangling
+/// symlinks for missing files. Keep this stricter resolver local to file flags.
+fn canonicalize_file_path(path: &Path) -> std::io::Result<PathBuf> {
+    let mut current = path;
+    let mut remaining = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(current) {
+            Ok(_) => {
+                let mut canonical = current.canonicalize()?;
+                if !remaining.is_empty() && !canonical.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "existing file parent must be a directory",
+                    ));
+                }
+                for component in remaining.into_iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = current.file_name().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cannot resolve an existing directory prefix",
+                    )
+                })?;
+                remaining.push(name);
+                current = current.parent().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cannot resolve a file parent",
+                    )
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Resolve `.` and `..` components in a path without touching the filesystem.
@@ -834,5 +915,322 @@ mod tests {
             result.is_err(),
             "traversal via non-existent prefix should be rejected"
         );
+    }
+
+    // Scoped file-root acceptance tests. Only directory-scope checks mutate env;
+    // policy tests pass CWD and the trusted root explicitly.
+    struct FilePathEnvironment {
+        cwd: PathBuf,
+        root: Option<std::ffi::OsString>,
+    }
+
+    impl FilePathEnvironment {
+        fn set(cwd: &Path, root: Option<&Path>) -> Self {
+            let saved = Self {
+                cwd: std::env::current_dir().unwrap(),
+                root: std::env::var_os("GOOGLE_WORKSPACE_CLI_FILE_ROOT"),
+            };
+            std::env::set_current_dir(cwd).unwrap();
+            match root {
+                Some(root) => std::env::set_var("GOOGLE_WORKSPACE_CLI_FILE_ROOT", root),
+                None => std::env::remove_var("GOOGLE_WORKSPACE_CLI_FILE_ROOT"),
+            }
+            saved
+        }
+    }
+
+    impl Drop for FilePathEnvironment {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.cwd).unwrap();
+            match &self.root {
+                Some(root) => std::env::set_var("GOOGLE_WORKSPACE_CLI_FILE_ROOT", root),
+                None => std::env::remove_var("GOOGLE_WORKSPACE_CLI_FILE_ROOT"),
+            }
+        }
+    }
+
+    fn file_path_under_root(
+        path: &Path,
+        flag: &str,
+        cwd: &Path,
+        root: Option<&Path>,
+    ) -> Result<PathBuf, GwsError> {
+        validate_file_path_with_root(path.to_str().unwrap(), flag, cwd, root)
+    }
+
+    #[test]
+    fn file_root_default_preserves_cwd_boundary_and_resolution() {
+        let dir = tempdir().unwrap();
+        let cwd = dir.path().canonicalize().unwrap();
+        fs::create_dir(cwd.join("nested")).unwrap();
+        fs::write(cwd.join("upload.txt"), "synthetic upload").unwrap();
+        for path in [cwd.join("upload.txt"), PathBuf::from("upload.txt")] {
+            assert_eq!(
+                file_path_under_root(&path, "--upload", &cwd, None).unwrap(),
+                cwd.join("upload.txt")
+            );
+        }
+        assert_eq!(
+            file_path_under_root(Path::new("nested/../new.txt"), "--output", &cwd, None).unwrap(),
+            cwd.join("new.txt")
+        );
+        for path in [
+            cwd.parent().unwrap().join("outside.txt"),
+            PathBuf::from("../outside.txt"),
+        ] {
+            let err = file_path_under_root(&path, "--output", &cwd, None)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("outside the current directory"), "{err}");
+            assert!(err.contains("GOOGLE_WORKSPACE_CLI_FILE_ROOT"), "{err}");
+        }
+        assert!(file_path_under_root(
+            Path::new("missing/../../outside.txt"),
+            "--output",
+            &cwd,
+            None
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn file_root_accepts_absolute_output_and_existing_upload() {
+        let cwd = tempdir().unwrap();
+        let root = tempdir().unwrap();
+        let canonical_root = root.path().canonicalize().unwrap();
+        fs::write(root.path().join("upload.txt"), "synthetic upload").unwrap();
+        for (name, flag) in [("new.txt", "--output"), ("upload.txt", "--upload")] {
+            assert_eq!(
+                file_path_under_root(&root.path().join(name), flag, cwd.path(), Some(root.path()))
+                    .unwrap(),
+                canonical_root.join(name)
+            );
+        }
+        assert!(!root.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn file_root_rejects_sibling_even_with_shared_name_prefix() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("allowed");
+        let sibling = dir.path().join("allowed-sibling");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&sibling).unwrap();
+        let err = file_path_under_root(
+            &sibling.join("new.txt"),
+            "--output",
+            dir.path(),
+            Some(&root),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("outside"), "{err}");
+        assert!(err.contains("GOOGLE_WORKSPACE_CLI_FILE_ROOT"), "{err}");
+        assert!(err.contains(root.to_str().unwrap()), "{err}");
+    }
+
+    #[test]
+    fn file_root_rejects_parent_components_even_inside_boundary() {
+        let root = tempdir().unwrap();
+        fs::create_dir(root.path().join("nested")).unwrap();
+        for path in ["nested/../new.txt", "missing/../new.txt", "../outside.txt"] {
+            assert!(
+                file_path_under_root(Path::new(path), "--output", root.path(), Some(root.path()))
+                    .is_err(),
+                "accepted {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_root_rejects_control_and_dangerous_unicode_arguments() {
+        let root = tempdir().unwrap();
+        for path in [
+            "bad\0.txt",
+            "bad\n.txt",
+            "bad\u{202e}.txt",
+            "bad\u{200b}.txt",
+        ] {
+            assert!(
+                file_path_under_root(Path::new(path), "--output", root.path(), Some(root.path()))
+                    .is_err(),
+                "accepted {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_root_rejects_invalid_roots_without_falling_back_to_cwd() {
+        let cwd = tempdir().unwrap();
+        let file = cwd.path().join("file.txt");
+        fs::write(&file, "synthetic file").unwrap();
+        for root in [PathBuf::new(), cwd.path().join("missing"), file] {
+            let err =
+                file_path_under_root(Path::new("new.txt"), "--output", cwd.path(), Some(&root))
+                    .unwrap_err()
+                    .to_string();
+            assert!(err.contains("GOOGLE_WORKSPACE_CLI_FILE_ROOT"), "{err}");
+            assert!(err.contains("directory"), "{err}");
+        }
+    }
+
+    #[test]
+    fn file_root_keeps_relative_arguments_cwd_relative() {
+        let root = tempdir().unwrap();
+        let cwd = root.path().join("working");
+        fs::create_dir(&cwd).unwrap();
+        assert_eq!(
+            file_path_under_root(Path::new("new.txt"), "--output", &cwd, Some(root.path()))
+                .unwrap(),
+            cwd.canonicalize().unwrap().join("new.txt")
+        );
+        let unrelated = tempdir().unwrap();
+        assert!(file_path_under_root(
+            Path::new("new.txt"),
+            "--output",
+            unrelated.path(),
+            Some(root.path())
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn file_root_canonicalizes_trusted_relative_root_with_parent_components() {
+        let root = tempdir().unwrap();
+        let cwd = root.path().join("working");
+        fs::create_dir(&cwd).unwrap();
+        assert_eq!(
+            file_path_under_root(
+                Path::new("new.txt"),
+                "--output",
+                &cwd,
+                Some(Path::new(".."))
+            )
+            .unwrap(),
+            cwd.canonicalize().unwrap().join("new.txt")
+        );
+    }
+
+    #[test]
+    fn file_root_validates_nested_new_file_parents_without_creating_them() {
+        let cwd = tempdir().unwrap();
+        let root = tempdir().unwrap();
+        let output = root.path().join("new/nested/output.bin");
+        assert_eq!(
+            file_path_under_root(&output, "--output", cwd.path(), Some(root.path())).unwrap(),
+            root.path()
+                .canonicalize()
+                .unwrap()
+                .join("new/nested/output.bin")
+        );
+        assert!(!root.path().join("new").exists());
+        let file = root.path().join("file.txt");
+        fs::write(&file, "synthetic file").unwrap();
+        assert!(file_path_under_root(
+            &file.join("output.bin"),
+            "--output",
+            cwd.path(),
+            Some(root.path())
+        )
+        .is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn file_root_does_not_expand_directory_validators() {
+        let cwd = tempdir().unwrap();
+        let root = tempdir().unwrap();
+        let _environment = FilePathEnvironment::set(cwd.path(), Some(root.path()));
+        assert!(validate_safe_output_dir(root.path().to_str().unwrap()).is_err());
+        assert!(validate_safe_dir_path(root.path().to_str().unwrap()).is_err());
+        assert_eq!(
+            validate_safe_output_dir("new").unwrap(),
+            cwd.path().canonicalize().unwrap().join("new")
+        );
+        assert!(validate_safe_dir_path(".").is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn file_root_environment_is_restored_on_unwind() {
+        let cwd = std::env::current_dir().unwrap();
+        let root = std::env::var_os("GOOGLE_WORKSPACE_CLI_FILE_ROOT");
+        let dir = tempdir().unwrap();
+        let result = std::panic::catch_unwind(|| {
+            let _environment = FilePathEnvironment::set(dir.path(), Some(dir.path()));
+            panic!("exercise restoration");
+        });
+        assert!(result.is_err());
+        assert_eq!(std::env::current_dir().unwrap(), cwd);
+        assert_eq!(std::env::var_os("GOOGLE_WORKSPACE_CLI_FILE_ROOT"), root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_root_resolves_inside_symlinks_and_rejects_escapes() {
+        use std::os::unix::fs::symlink;
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir(root.path().join("inside")).unwrap();
+        fs::write(root.path().join("inside/upload.txt"), "inside").unwrap();
+        fs::write(outside.path().join("upload.txt"), "outside").unwrap();
+        symlink(root.path().join("inside"), root.path().join("safe")).unwrap();
+        symlink(outside.path(), root.path().join("escape")).unwrap();
+        for (suffix, flag) in [("upload.txt", "--upload"), ("new/output.bin", "--output")] {
+            assert_eq!(
+                file_path_under_root(
+                    &root.path().join("safe").join(suffix),
+                    flag,
+                    root.path(),
+                    Some(root.path())
+                )
+                .unwrap(),
+                root.path()
+                    .canonicalize()
+                    .unwrap()
+                    .join("inside")
+                    .join(suffix)
+            );
+            assert!(file_path_under_root(
+                &root.path().join("escape").join(suffix),
+                flag,
+                root.path(),
+                Some(root.path())
+            )
+            .is_err());
+        }
+        // A trusted root may itself be a symlink to an existing directory.
+        assert_eq!(
+            file_path_under_root(
+                &root.path().join("safe/upload.txt"),
+                "--upload",
+                outside.path(),
+                Some(&root.path().join("safe"))
+            )
+            .unwrap(),
+            root.path()
+                .canonicalize()
+                .unwrap()
+                .join("inside/upload.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_root_rejects_dangling_symlinks_and_loops() {
+        use std::os::unix::fs::symlink;
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        symlink(outside.path().join("new.txt"), root.path().join("dangling")).unwrap();
+        symlink("loop", root.path().join("loop")).unwrap();
+        for root_policy in [None, Some(root.path())] {
+            for name in ["dangling", "dangling/new.txt", "loop", "loop/new.txt"] {
+                assert!(
+                    file_path_under_root(Path::new(name), "--output", root.path(), root_policy)
+                        .is_err(),
+                    "accepted {name}"
+                );
+            }
+        }
     }
 }

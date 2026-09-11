@@ -266,6 +266,36 @@ Installing this extension gives your Gemini CLI agent direct access to all `gws`
 gws drive files create --json '{"name": "report.pdf"}' --upload ./report.pdf
 ```
 
+### Output and upload file roots
+
+`--output` and `--upload` accept paths within the current working directory
+(CWD) by default, including absolute paths that resolve inside CWD. To allow
+files elsewhere, set a trusted operator environment variable to an existing
+directory:
+
+```bash
+mkdir -p /tmp/gws-files
+export GOOGLE_WORKSPACE_CLI_FILE_ROOT=/tmp/gws-files
+gws drive files get --params '{"fileId":"FILE_ID","alt":"media"}' \
+  --output /tmp/gws-files/report.pdf
+gws drive files create --json '{"name":"report.pdf"}' \
+  --upload /tmp/gws-files/report.pdf
+```
+
+The root replaces the allowed file boundary; relative CLI paths still resolve
+from CWD. For example, `--output report.pdf` is rejected if CWD is outside the
+configured root. The root is canonicalized and must exist as a directory; an
+empty or invalid value fails validation. Relative root settings resolve from
+CWD too. With an explicit root, CLI paths containing `..` components are
+rejected. Control characters and symlinks escaping the boundary are rejected;
+symlinks resolving inside it are allowed, but dangling symlinks are rejected.
+
+This setting affects only these file flags, not `--dir` or `--output-dir`.
+It does not create parent directories or change the default download filename
+when `--output` is omitted. Validation cannot prevent another local process
+from replacing a path component between validation and I/O; choose a root
+whose directories you control. Unset the variable to restore the CWD boundary.
+
 ### Pagination
 
 | Flag                | Description                                    | Default |
@@ -382,6 +412,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
+| `GOOGLE_WORKSPACE_CLI_FILE_ROOT` | Existing directory allowed for `--output` / `--upload` paths (default: CWD); relative CLI paths remain CWD-relative |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_TEMPLATE` | Default Model Armor template |
 | `GOOGLE_WORKSPACE_CLI_SANITIZE_MODE` | `warn` (default) or `block` |
 | `GOOGLE_WORKSPACE_CLI_LOG` | Log level for stderr (e.g., `gws=debug`). Off by default. |
