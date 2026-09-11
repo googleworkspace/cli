@@ -844,11 +844,9 @@ mod tests {
         let canonical_dir = dir.path().canonicalize().unwrap();
         fs::write(canonical_dir.join("test.txt"), "data").unwrap();
 
-        let saved_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&canonical_dir).unwrap();
+        let _environment = FilePathEnvironment::set(&canonical_dir, None);
 
         let result = validate_safe_file_path("test.txt", "--upload");
-        std::env::set_current_dir(&saved_cwd).unwrap();
 
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
     }
@@ -859,11 +857,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 
-        let saved_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&canonical_dir).unwrap();
+        let _environment = FilePathEnvironment::set(&canonical_dir, None);
 
         let result = validate_safe_file_path("../../etc/passwd", "--upload");
-        std::env::set_current_dir(&saved_cwd).unwrap();
 
         assert!(result.is_err(), "path traversal should be rejected");
         assert!(
@@ -873,7 +869,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_file_path_rejects_control_chars() {
+        let dir = tempdir().unwrap();
+        let _environment = FilePathEnvironment::set(dir.path(), None);
         let result = validate_safe_file_path("file\x00.txt", "--output");
         assert!(result.is_err(), "null bytes should be rejected");
     }
@@ -889,11 +888,9 @@ mod tests {
             let link_path = canonical_dir.join("escape");
             std::os::unix::fs::symlink("/tmp", &link_path).unwrap();
 
-            let saved_cwd = std::env::current_dir().unwrap();
-            std::env::set_current_dir(&canonical_dir).unwrap();
+            let _environment = FilePathEnvironment::set(&canonical_dir, None);
 
             let result = validate_safe_file_path("escape/secret.txt", "--output");
-            std::env::set_current_dir(&saved_cwd).unwrap();
 
             assert!(result.is_err(), "symlink escape should be rejected");
         }
@@ -905,11 +902,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let canonical_dir = dir.path().canonicalize().unwrap();
 
-        let saved_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&canonical_dir).unwrap();
+        let _environment = FilePathEnvironment::set(&canonical_dir, None);
 
         let result = validate_safe_file_path("doesnt_exist/../../etc/passwd", "--output");
-        std::env::set_current_dir(&saved_cwd).unwrap();
 
         assert!(
             result.is_err(),
@@ -917,8 +912,8 @@ mod tests {
         );
     }
 
-    // Scoped file-root acceptance tests. Only directory-scope checks mutate env;
-    // policy tests pass CWD and the trusted root explicitly.
+    // Default public-validator and directory-scope tests isolate global state;
+    // scoped file-policy tests pass CWD and the trusted root explicitly.
     struct FilePathEnvironment {
         cwd: PathBuf,
         root: Option<std::ffi::OsString>,
@@ -1012,8 +1007,12 @@ mod tests {
     #[test]
     fn file_root_rejects_sibling_even_with_shared_name_prefix() {
         let dir = tempdir().unwrap();
-        let root = dir.path().join("allowed");
-        let sibling = dir.path().join("allowed-sibling");
+        // A literal backslash on Unix, a separator on Windows; both must be
+        // compared using the escaped canonical representation in diagnostics.
+        let parent = dir.path().join(r"back\slash");
+        fs::create_dir_all(&parent).unwrap();
+        let root = parent.join("allowed");
+        let sibling = parent.join("allowed-sibling");
         fs::create_dir(&root).unwrap();
         fs::create_dir(&sibling).unwrap();
         let err = file_path_under_root(
@@ -1026,7 +1025,10 @@ mod tests {
         .to_string();
         assert!(err.contains("outside"), "{err}");
         assert!(err.contains("GOOGLE_WORKSPACE_CLI_FILE_ROOT"), "{err}");
-        assert!(err.contains(root.to_str().unwrap()), "{err}");
+        assert!(
+            err.contains(&format!("{:?}", root.canonicalize().unwrap())),
+            "{err}"
+        );
     }
 
     #[test]

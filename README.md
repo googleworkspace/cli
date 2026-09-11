@@ -289,6 +289,9 @@ empty or invalid value fails validation. Relative root settings resolve from
 CWD too. With an explicit root, CLI paths containing `..` components are
 rejected. Control characters and symlinks escaping the boundary are rejected;
 symlinks resolving inside it are allowed, but dangling symlinks are rejected.
+These CLI file flags require a UTF-8 canonical path. If a symlink resolves to a
+path with unsupported encoding, the command returns a validation error rather
+than dropping the upload or selecting the default output file.
 
 This setting affects only these file flags, not `--dir` or `--output-dir`.
 It does not create parent directories or change the default download filename

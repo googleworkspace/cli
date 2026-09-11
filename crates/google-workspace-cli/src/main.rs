@@ -225,7 +225,7 @@ async fn run() -> Result<(), GwsError> {
 
     // Validate file paths against traversal before any I/O.
     // Use the returned canonical paths so the validated path is the one
-    // actually used for I/O (closes TOCTOU gap).
+    // actually used for I/O. Local path-replacement races still apply.
     let upload_path_buf = if let Some(p) = upload_path {
         Some(crate::validate::validate_safe_file_path(p, "--upload")?)
     } else {
@@ -236,8 +236,8 @@ async fn run() -> Result<(), GwsError> {
     } else {
         None
     };
-    let upload_path = upload_path_buf.as_deref().and_then(|p| p.to_str());
-    let output_path = output_path_buf.as_deref().and_then(|p| p.to_str());
+    let upload_path = optional_file_path_as_str(upload_path_buf.as_deref(), "--upload")?;
+    let output_path = optional_file_path_as_str(output_path_buf.as_deref(), "--output")?;
 
     let upload = {
         let upload_content_type = matched_args
@@ -297,6 +297,22 @@ async fn run() -> Result<(), GwsError> {
     )
     .await
     .map(|_| ())
+}
+
+// The executor takes strings. An explicit path must never become an omitted
+// argument just because canonicalization found a non-UTF-8 component.
+fn optional_file_path_as_str<'a>(
+    path: Option<&'a std::path::Path>,
+    flag_name: &str,
+) -> Result<Option<&'a str>, GwsError> {
+    path.map(|path| {
+        path.to_str().ok_or_else(|| {
+            GwsError::Validation(format!(
+                "{flag_name} resolves to a path that is not valid UTF-8; choose a path whose canonical components are valid UTF-8"
+            ))
+        })
+    })
+    .transpose()
 }
 
 /// Select the best scope from a method's scope list.
@@ -524,6 +540,57 @@ fn is_version_flag(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_root_path_encoding_preserves_present_and_absent_paths() {
+        for flag in ["--output", "--upload"] {
+            assert_eq!(optional_file_path_as_str(None, flag).unwrap(), None);
+            assert_eq!(
+                optional_file_path_as_str(Some(std::path::Path::new("résumé.pdf")), flag).unwrap(),
+                Some("résumé.pdf")
+            );
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    fn non_utf8_canonical_path() -> std::path::PathBuf {
+        // Construct an OS path in memory: no filesystem support is required.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            std::ffi::OsString::from_vec(b"/files/bytes-\xff/report.pdf".to_vec()).into()
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let mut units: Vec<u16> = r"C:\files\bytes-".encode_utf16().collect();
+            units.push(0xD800); // unpaired surrogate
+            units.extend(r"\report.pdf".encode_utf16());
+            std::ffi::OsString::from_wide(&units).into()
+        }
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn file_root_path_encoding_rejects_explicit_output_instead_of_fallback() {
+        let path = non_utf8_canonical_path();
+        let error = optional_file_path_as_str(Some(&path), "--output").unwrap_err();
+        assert!(matches!(error, GwsError::Validation(_)));
+        let message = error.to_string();
+        assert!(message.contains("--output"), "{message}");
+        assert!(message.contains("UTF-8"), "{message}");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn file_root_path_encoding_rejects_explicit_upload_instead_of_omitting_it() {
+        let path = non_utf8_canonical_path();
+        let error = optional_file_path_as_str(Some(&path), "--upload").unwrap_err();
+        assert!(matches!(error, GwsError::Validation(_)));
+        let message = error.to_string();
+        assert!(message.contains("--upload"), "{message}");
+        assert!(message.contains("UTF-8"), "{message}");
+    }
 
     #[test]
     fn test_parse_pagination_config_defaults() {
