@@ -374,11 +374,21 @@ pub(super) async fn fetch_message_metadata(
         crate::validate::encode_path_segment(message_id)
     );
 
+    // Set quota project from ADC for billing/quota attribution. This mirrors the
+    // header the executor adds for standard resource commands: without it, an ADC
+    // caller with no explicit quota project gets a 403 accessNotConfigured from
+    // gmail.googleapis.com even though the same request via the executor succeeds.
+    let quota_project = auth::get_quota_project();
+
     let resp = crate::client::send_with_retry(|| {
-        client
+        let mut request = client
             .get(&url)
             .bearer_auth(token)
-            .query(&[("format", "full")])
+            .query(&[("format", "full")]);
+        if let Some(quota_project) = &quota_project {
+            request = request.header("x-goog-user-project", quota_project);
+        }
+        request
     })
     .await
     .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch message: {e}")))?;
@@ -452,10 +462,20 @@ async fn fetch_send_as_identities(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<Vec<SendAsIdentity>, GwsError> {
+    // Set quota project from ADC for billing/quota attribution. This mirrors the
+    // header the executor adds for standard resource commands: without it, an ADC
+    // caller with no explicit quota project gets a 403 accessNotConfigured from
+    // gmail.googleapis.com even though the same request via the executor succeeds.
+    let quota_project = auth::get_quota_project();
+
     let resp = crate::client::send_with_retry(|| {
-        client
+        let mut request = client
             .get("https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs")
-            .bearer_auth(token)
+            .bearer_auth(token);
+        if let Some(quota_project) = &quota_project {
+            request = request.header("x-goog-user-project", quota_project);
+        }
+        request
     })
     .await
     .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch sendAs settings: {e}")))?;
@@ -697,9 +717,19 @@ async fn fetch_attachment_data(
         crate::validate::encode_path_segment(attachment_id),
     );
 
-    let resp = crate::client::send_with_retry(|| client.get(&url).bearer_auth(token))
-        .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch attachment: {e}")))?;
+    // Set quota project from ADC for billing/quota attribution. See fetch_message_metadata
+    // above for why this is required to avoid a 403 accessNotConfigured for ADC callers.
+    let quota_project = auth::get_quota_project();
+
+    let resp = crate::client::send_with_retry(|| {
+        let mut request = client.get(&url).bearer_auth(token);
+        if let Some(quota_project) = &quota_project {
+            request = request.header("x-goog-user-project", quota_project);
+        }
+        request
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to fetch attachment: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
