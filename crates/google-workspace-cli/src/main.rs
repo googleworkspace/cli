@@ -324,6 +324,7 @@ pub fn parse_service_and_version(
 ) -> Result<(String, String), GwsError> {
     let mut service_arg = first_arg;
     let mut version_override: Option<String> = None;
+    let mut had_colon = false;
 
     // Check for --api-version flag anywhere in args
     for i in 0..args.len() {
@@ -335,14 +336,34 @@ pub fn parse_service_and_version(
     // Support "service:version" syntax on the service arg itself
     if let Some((svc, ver)) = service_arg.split_once(':') {
         service_arg = svc;
+        had_colon = true;
         if version_override.is_none() {
             version_override = Some(ver.to_string());
         }
     }
 
-    let (api_name, default_version) = services::resolve_service(service_arg)?;
-    let version = version_override.unwrap_or(default_version);
-    Ok((api_name, version))
+    match services::resolve_service(service_arg) {
+        Ok((api_name, default_version)) => {
+            Ok((api_name, version_override.unwrap_or(default_version)))
+        }
+        // "<api>:<version>" was used for a service the hardcoded SERVICES table
+        // doesn't know about. The Discovery-document fetch this eventually feeds
+        // into is generic over arbitrary (service, version) pairs — resolve_service
+        // was the only thing blocking it, so fall back to treating the literal
+        // strings as a Discovery API name/version pair instead of failing outright.
+        Err(e) => {
+            if had_colon {
+                // version_override is always Some here: set either from
+                // --api-version above, or from the colon syntax itself.
+                Ok((
+                    service_arg.to_string(),
+                    version_override.unwrap_or_default(),
+                ))
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
@@ -582,6 +603,35 @@ mod tests {
         assert_eq!(config.page_all, true);
         assert_eq!(config.page_limit, 20);
         assert_eq!(config.page_delay_ms, 500);
+    }
+
+    #[test]
+    fn test_parse_service_and_version_colon_syntax_unlisted_service() {
+        // "chromepolicy:v1" isn't in the hardcoded SERVICES table — this is the
+        // documented escape hatch (the CLI's own error message advertises it),
+        // which previously always errored regardless of the colon syntax.
+        let args = vec!["gws".to_string(), "chromepolicy:v1".to_string()];
+        let result = parse_service_and_version(&args, "chromepolicy:v1");
+        assert_eq!(
+            result.unwrap(),
+            ("chromepolicy".to_string(), "v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_service_and_version_known_service_still_resolves() {
+        let args = vec!["gws".to_string(), "drive".to_string()];
+        let result = parse_service_and_version(&args, "drive");
+        assert_eq!(result.unwrap(), ("drive".to_string(), "v3".to_string()));
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unknown_service_without_colon_still_errors() {
+        // No colon means no explicit version was given — an unlisted service
+        // without one should still be rejected, not silently accepted.
+        let args = vec!["gws".to_string(), "notarealservice".to_string()];
+        let result = parse_service_and_version(&args, "notarealservice");
+        assert!(result.is_err());
     }
 
     #[test]
