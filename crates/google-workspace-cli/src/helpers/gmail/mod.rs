@@ -2431,6 +2431,50 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_original_message_accepts_non_canonical_header_casing() {
+        // Exchange/Outlook style casing: the old case-sensitive match dropped CC and
+        // blew up on the missing From header.
+        let msg = json!({
+            "threadId": "thread-789",
+            "snippet": "",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    { "name": "FROM", "value": "alice@example.com" },
+                    { "name": "TO", "value": "bob@example.com" },
+                    { "name": "cc", "value": "carol@example.com" },
+                    { "name": "CC", "value": "dave@example.com" },
+                    { "name": "Subject", "value": "Hello" },
+                    { "name": "DATE", "value": "Fri, 6 Mar 2026 12:00:00 +0000" },
+                    { "name": "message-id", "value": "<msg@example.com>" },
+                    { "name": "REPLY-TO", "value": "team@example.com" },
+                    { "name": "references", "value": "<ref-1@example.com>" }
+                ],
+                "body": {
+                    "data": URL_SAFE.encode("hi")
+                }
+            }
+        });
+
+        let original = parse_original_message(&msg).unwrap();
+
+        assert_eq!(original.from.email, "alice@example.com");
+        assert_eq!(original.to.len(), 1);
+        assert_eq!(original.to[0].email, "bob@example.com");
+        let cc = original.cc.unwrap();
+        assert_eq!(cc.len(), 2);
+        assert_eq!(cc[0].email, "carol@example.com");
+        assert_eq!(cc[1].email, "dave@example.com");
+        assert_eq!(original.reply_to.unwrap()[0].email, "team@example.com");
+        assert_eq!(original.message_id, "msg@example.com");
+        assert_eq!(original.references, vec!["ref-1@example.com"]);
+        assert_eq!(
+            original.date.as_deref(),
+            Some("Fri, 6 Mar 2026 12:00:00 +0000")
+        );
+    }
+
+    #[test]
     fn test_parse_original_message_multipart_alternative() {
         let msg = json!({
             "threadId": "thread-456",
