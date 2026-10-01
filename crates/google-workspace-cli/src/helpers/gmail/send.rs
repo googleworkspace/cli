@@ -346,6 +346,39 @@ mod tests {
     }
 
     #[test]
+    fn test_send_nameless_primary_identity_omits_from_header() {
+        // The sendAs.list shape for an ordinary account: the primary address is
+        // the default and its displayName is empty. The composed message must
+        // carry no From header so Gmail stamps "Name <address>".
+        let send_as = serde_json::json!({
+            "sendAs": [{
+                "sendAsEmail": "owner@gmail.com",
+                "displayName": "",
+                "replyToAddress": "",
+                "isPrimary": true,
+                "isDefault": true
+            }]
+        });
+        let identities = super::super::parse_send_as_response(&send_as);
+        let config = SendConfig {
+            to: Mailbox::parse_list("bob@example.com"),
+            subject: "Hi".to_string(),
+            body: "Body".to_string(),
+            from: super::super::resolve_sender_from_identities(None, &identities),
+            cc: None,
+            bcc: None,
+            html: false,
+            attachments: vec![],
+        };
+        let raw = create_send_raw_message(&config).unwrap();
+
+        assert!(extract_header(&raw, "From").is_none(), "{raw}");
+        assert!(extract_header(&raw, "To")
+            .unwrap()
+            .contains("bob@example.com"));
+    }
+
+    #[test]
     fn test_send_without_from_has_no_from_header() {
         let config = SendConfig {
             to: Mailbox::parse_list("bob@example.com"),

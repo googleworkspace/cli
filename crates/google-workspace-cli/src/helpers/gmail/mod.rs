@@ -445,6 +445,7 @@ pub(super) fn build_api_error(status: u16, body: &str, context: &str) -> GwsErro
 struct SendAsIdentity {
     mailbox: Mailbox,
     is_default: bool,
+    is_primary: bool,
 }
 
 /// Fetch all send-as identities from the Gmail settings API.
@@ -507,9 +508,14 @@ fn parse_send_as_response(body: &Value) -> Vec<SendAsIdentity> {
                 .get("isDefault")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let is_primary = entry
+                .get("isPrimary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Some(SendAsIdentity {
                 mailbox: Mailbox::parse(&raw),
                 is_default,
+                is_primary,
             })
         })
         .collect()
@@ -518,7 +524,8 @@ fn parse_send_as_response(body: &Value) -> Vec<SendAsIdentity> {
 /// Given pre-fetched send-as identities, resolve the `From` address.
 ///
 /// - `from` is `None` → returns the default send-as identity (or `None` if
-///   no default exists in the list)
+///   no default exists in the list, or if the default is the primary address
+///   with no display name — see below)
 /// - `from` has bare emails → enriches with send-as display names (mailboxes
 ///   that already have a display name pass through unchanged)
 fn resolve_sender_from_identities(
@@ -527,9 +534,19 @@ fn resolve_sender_from_identities(
 ) -> Option<Vec<Mailbox>> {
     match from {
         // No from provided → use default identity.
+        //
+        // Exception: a primary address with an empty send-as `displayName`.
+        // Gmail reports that for accounts whose name comes from the Google
+        // account / directory profile (the common case for both consumer and
+        // Workspace accounts). Writing it as an explicit bare
+        // `From: user@example.com` makes Gmail deliver the address without a
+        // name. Omitting the header instead lets Gmail stamp the account's own
+        // `Name <address>`, exactly as the Gmail web client does, with no
+        // extra scope or API required. A nameless non-primary alias keeps its
+        // explicit address so the message is still sent from that alias.
         None => identities
             .iter()
-            .find(|id| id.is_default)
+            .find(|id| id.is_default && (id.mailbox.name.is_some() || !id.is_primary))
             .map(|id| vec![id.mailbox.clone()]),
         // Enrich bare emails (no display name) from the send-as list.
         // Mailboxes that already have a display name pass through unchanged.
@@ -3251,10 +3268,12 @@ mod tests {
         assert_eq!(ids[0].mailbox.email, "malo@intelligence.org");
         assert_eq!(ids[0].mailbox.name.as_deref(), Some("Malo Bourgon"));
         assert!(ids[0].is_default);
+        assert!(ids[0].is_primary);
 
         assert_eq!(ids[1].mailbox.email, "malo@work.com");
         assert_eq!(ids[1].mailbox.name.as_deref(), Some("Malo (Work)"));
         assert!(!ids[1].is_default);
+        assert!(!ids[1].is_primary);
 
         // Empty displayName becomes None
         assert_eq!(ids[2].mailbox.email, "noreply@example.com");
@@ -3290,6 +3309,7 @@ mod tests {
                     email: "malo@intelligence.org".to_string(),
                 },
                 is_default: true,
+                is_primary: true,
             },
             SendAsIdentity {
                 mailbox: Mailbox {
@@ -3297,6 +3317,7 @@ mod tests {
                     email: "malo@work.com".to_string(),
                 },
                 is_default: false,
+                is_primary: false,
             },
         ]
     }
@@ -3373,23 +3394,48 @@ mod tests {
                 email: "alias@example.com".to_string(),
             },
             is_default: false,
+            is_primary: false,
         }];
         let result = resolve_sender_from_identities(None, &ids);
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_resolve_sender_empty_display_name_treated_as_none() {
+    fn test_resolve_sender_nameless_primary_default_omits_from() {
+        // Gmail returns an empty displayName for a primary address whose name
+        // comes from the account. An explicit bare From would strip the name
+        // from delivered mail, so no From is returned and Gmail stamps it.
         let ids = vec![SendAsIdentity {
             mailbox: Mailbox {
                 name: None,
                 email: "bare@example.com".to_string(),
             },
             is_default: true,
+            is_primary: true,
         }];
-        let result = resolve_sender_from_identities(None, &ids);
-        let addrs = result.unwrap();
+        assert!(resolve_sender_from_identities(None, &ids).is_none());
+
+        // An explicitly requested bare address is still preserved verbatim.
+        let from = [Mailbox::parse("bare@example.com")];
+        let addrs = resolve_sender_from_identities(Some(&from), &ids).unwrap();
         assert_eq!(addrs[0].email, "bare@example.com");
+        assert!(addrs[0].name.is_none());
+    }
+
+    #[test]
+    fn test_resolve_sender_nameless_alias_default_keeps_address() {
+        // A nameless default that is not the primary address must stay
+        // explicit, or Gmail would send from the primary instead of the alias.
+        let ids = vec![SendAsIdentity {
+            mailbox: Mailbox {
+                name: None,
+                email: "alias@example.com".to_string(),
+            },
+            is_default: true,
+            is_primary: false,
+        }];
+        let addrs = resolve_sender_from_identities(None, &ids).unwrap();
+        assert_eq!(addrs[0].email, "alias@example.com");
         assert!(addrs[0].name.is_none());
     }
 
