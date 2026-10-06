@@ -58,6 +58,9 @@ The authenticated user for the request is made the data owner of the new calenda
 
 Note: We recommend to authenticate as the intended data owner of the calendar. You can use domain-wide delegation of authority to allow applications to act on behalf of a specific user. Don't use a service account for authentication. If you use a service account for authentication, the service account is the data owner, which can lead to unexpected behavior.
   - `patch` — Updates metadata for a calendar. This method supports patch semantics.
+  - `transferOwnership` — Transfers a secondary calendar between users within a Google Workspace organization. Requires user authentication with Manage Calendars administrator privilege, and one of the following authorization scopes: 
+- https://www.googleapis.com/auth/calendar 
+- https://www.googleapis.com/auth/calendar.calendars In the request, set useAdminAccess to true. The secondary calendar must be active to be transferred. Transferring disabled or deleted calendars isn't supported.
   - `update` — Updates metadata for a calendar.
 
 ### channels
