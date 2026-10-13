@@ -240,7 +240,7 @@ All variables can also live in a `.env` file (loaded via `dotenvy`).
 
 ## Cursor Cloud specific instructions
 
-The default Cloud Agent image ships Rust 1.83. This repository's lockfile includes Edition 2024 crates, which need stable Rust (1.85 or newer). Before `cargo fetch`, `cargo test`, or `cargo clippy`, install and select stable:
+Cloud Agent install is defined in `.cursor/environment.json`. The default Cloud Agent image ships Rust 1.83. This repository's lockfile includes Edition 2024 crates, which need stable Rust (1.85 or newer). Before `cargo fetch`, `cargo test`, or `cargo clippy`, install and select stable:
 
 ```bash
 rustup toolchain install stable --profile minimal --component rustfmt,clippy

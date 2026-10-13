@@ -1,0 +1,4 @@
+{
+  "name": "gws",
+  "install": "rustup toolchain install stable --profile minimal --component rustfmt,clippy\nrustup default stable\ncargo fetch --locked\npnpm install --frozen-lockfile --ignore-scripts"
+}
