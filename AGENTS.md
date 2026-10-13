@@ -237,3 +237,20 @@ See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md)
 | `GOOGLE_WORKSPACE_CLI_LOG_FILE` | Directory for JSON-line log files with daily rotation. Off by default. |
 
 All variables can also live in a `.env` file (loaded via `dotenvy`).
+
+## Cursor Cloud specific instructions
+
+Cloud Agent install is defined in `.cursor/environment.json`. The default Cloud Agent image ships Rust 1.83. This repository's lockfile includes Edition 2024 crates, which need stable Rust (1.85 or newer). Before `cargo fetch`, `cargo test`, or `cargo clippy`, install and select stable:
+
+```bash
+rustup toolchain install stable --profile minimal --component rustfmt,clippy
+rustup default stable
+```
+
+`pnpm install` runs `lefthook install` through the `prepare` script. That command fails while Cursor sets `core.hooksPath`. Install Node dependencies with:
+
+```bash
+pnpm install --frozen-lockfile --ignore-scripts
+```
+
+`gws schema <service.resource.method>` and `gws <service> <resource> <method> --help` fetch Discovery documents from `www.googleapis.com` and do not need Google credentials. Calling a live API method needs OAuth (`gws auth login`) or `GOOGLE_WORKSPACE_CLI_TOKEN`.
