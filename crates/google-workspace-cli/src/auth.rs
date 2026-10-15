@@ -137,6 +137,9 @@ enum Credential {
 ///
 /// Long-running helpers use this trait so they can request a fresh token before
 /// each API call instead of holding a single token string until it expires.
+// async-trait adds `#[must_use]` with no reason on the boxed future. That
+// future is already must-use, so stable Clippy rejects the attribute.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait AccessTokenProvider: Send + Sync {
     async fn access_token(&self) -> anyhow::Result<String>;
