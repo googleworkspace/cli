@@ -785,6 +785,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_load_credentials_encrypted_takes_priority_over_default() {
         // Encrypted credentials should be loaded before the default plaintext path
         let enc_json = r#"{
