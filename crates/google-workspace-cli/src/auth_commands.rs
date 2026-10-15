@@ -345,6 +345,31 @@ fn token_cache_path() -> PathBuf {
     config_dir().join("token_cache.json")
 }
 
+/// Remove cached OAuth access tokens so that the next API call mints a fresh
+/// token from the new credentials. Called after a successful `auth login`:
+/// the cache is keyed by scope set, not by account or grant, so an entry
+/// minted under a previous grant would otherwise keep being served (with the
+/// old scopes, or even as the old account) until it expires. A missing file
+/// is fine; any other failure is an error, because a login that leaves stale
+/// tokens in place has not actually taken effect.
+fn clear_token_caches(config_dir: &std::path::Path) -> Result<(), GwsError> {
+    for name in ["token_cache.json", "sa_token_cache.json"] {
+        let path = config_dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(GwsError::Auth(format!(
+                    "Credentials were saved, but the stale token cache {} could not be removed: {e}. \
+                     Remove it manually or run `gws auth logout` and log in again.",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Which scope set to use for login.
 enum ScopeMode {
     /// Use the default scopes (MINIMAL_SCOPES).
@@ -643,6 +668,11 @@ async fn handle_login_inner(
     // Save encrypted credentials
     let enc_path = credential_store::save_encrypted(&creds_str)
         .map_err(|e| GwsError::Auth(format!("Failed to encrypt credentials: {e}")))?;
+
+    // Drop access tokens cached under the previous grant so the new scopes take
+    // effect immediately (see googleworkspace/cli#764 and #876).
+    clear_token_caches(&config)?;
+    crate::timezone::invalidate_cache();
 
     let output = json!({
         "status": "success",
@@ -1898,6 +1928,43 @@ mod tests {
         let path = token_cache_path();
         assert!(path.ends_with("token_cache.json"));
         assert!(path.starts_with(config_dir()));
+    }
+
+    #[test]
+    fn clear_token_caches_removes_both_cache_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_cache = dir.path().join("token_cache.json");
+        let second_cache = dir.path().join("sa_token_cache.json");
+        let unrelated = dir.path().join("unrelated_settings.json");
+        std::fs::write(&first_cache, "dummy").unwrap();
+        std::fs::write(&second_cache, "dummy").unwrap();
+        std::fs::write(&unrelated, "dummy").unwrap();
+
+        clear_token_caches(dir.path()).unwrap();
+
+        assert!(!first_cache.exists());
+        assert!(!second_cache.exists());
+        assert!(unrelated.exists());
+    }
+
+    #[test]
+    fn clear_token_caches_is_noop_when_files_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(clear_token_caches(dir.path()).is_ok());
+        assert!(dir.path().exists());
+    }
+
+    #[test]
+    fn clear_token_caches_errors_when_cache_cannot_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("token_cache.json")).unwrap();
+
+        let result = clear_token_caches(dir.path());
+
+        assert!(result.is_err());
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("token_cache.json"));
+        assert!(message.contains("could not be removed"));
     }
 
     #[tokio::test]
