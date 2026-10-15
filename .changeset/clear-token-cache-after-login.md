@@ -2,4 +2,4 @@
 "@googleworkspace/cli": patch
 ---
 
-Clear cached OAuth access tokens after `gws auth login` so newly granted scopes take effect immediately instead of a 403 "insufficient authentication scopes" until the old cached token expires
+Clear cached OAuth access tokens after `gws auth login` so newly granted scopes take effect immediately instead of a 403 "insufficient authentication scopes" until the old cached token expires. `gws auth logout` now clears them through the same code path, which also removes a check-then-delete race.

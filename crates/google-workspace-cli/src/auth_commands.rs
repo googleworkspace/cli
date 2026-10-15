@@ -346,28 +346,30 @@ fn token_cache_path() -> PathBuf {
 }
 
 /// Remove cached OAuth access tokens so that the next API call mints a fresh
-/// token from the new credentials. Called after a successful `auth login`:
+/// token from the new credentials. Called by `auth login` (after saving new
+/// credentials) and by `auth logout`:
 /// the cache is keyed by scope set, not by account or grant, so an entry
 /// minted under a previous grant would otherwise keep being served (with the
 /// old scopes, or even as the old account) until it expires. A missing file
-/// is fine; any other failure is an error, because a login that leaves stale
-/// tokens in place has not actually taken effect.
-fn clear_token_caches(config_dir: &std::path::Path) -> Result<(), GwsError> {
+/// is fine and is not listed; any other failure is an error, because leaving
+/// stale tokens in place means the change has not actually taken effect.
+/// Returns the paths that were actually removed, in order.
+fn clear_token_caches(config_dir: &std::path::Path) -> Result<Vec<PathBuf>, GwsError> {
+    let mut removed = Vec::new();
     for name in ["token_cache.json", "sa_token_cache.json"] {
         let path = config_dir.join(name);
         match std::fs::remove_file(&path) {
-            Ok(()) => {}
+            Ok(()) => removed.push(path),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
                 return Err(GwsError::Auth(format!(
-                    "Credentials were saved, but the stale token cache {} could not be removed: {e}. \
-                     Remove it manually or run `gws auth logout` and log in again.",
+                    "token cache {} could not be removed: {e}",
                     path.display()
                 )));
             }
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Which scope set to use for login.
@@ -671,7 +673,12 @@ async fn handle_login_inner(
 
     // Drop access tokens cached under the previous grant so the new scopes take
     // effect immediately (see googleworkspace/cli#764 and #876).
-    clear_token_caches(&config)?;
+    clear_token_caches(&config).map_err(|e| {
+        GwsError::Auth(format!(
+            "Credentials were saved, but {e}. \
+             Remove it manually or run `gws auth logout` and log in again."
+        ))
+    })?;
     crate::timezone::invalidate_cache();
 
     let output = json!({
@@ -1486,12 +1493,10 @@ async fn handle_status() -> Result<(), GwsError> {
 fn handle_logout() -> Result<(), GwsError> {
     let plain_path = plain_credentials_path();
     let enc_path = credential_store::encrypted_credentials_path();
-    let token_cache = token_cache_path();
-    let sa_token_cache = config_dir().join("sa_token_cache.json");
 
     let mut removed = Vec::new();
 
-    for path in [&enc_path, &plain_path, &token_cache, &sa_token_cache] {
+    for path in [&enc_path, &plain_path] {
         if path.exists() {
             std::fs::remove_file(path).map_err(|e| {
                 GwsError::Validation(format!("Failed to remove {}: {e}", path.display()))
@@ -1499,6 +1504,10 @@ fn handle_logout() -> Result<(), GwsError> {
             removed.push(path.display().to_string());
         }
     }
+
+    let removed_caches =
+        clear_token_caches(&config_dir()).map_err(|e| GwsError::Validation(e.to_string()))?;
+    removed.extend(removed_caches.iter().map(|path| path.display().to_string()));
 
     // Invalidate cached account timezone (may belong to old account)
     crate::timezone::invalidate_cache();
@@ -1940,8 +1949,9 @@ mod tests {
         std::fs::write(&second_cache, "dummy").unwrap();
         std::fs::write(&unrelated, "dummy").unwrap();
 
-        clear_token_caches(dir.path()).unwrap();
+        let removed = clear_token_caches(dir.path()).unwrap();
 
+        assert_eq!(removed, vec![first_cache.clone(), second_cache.clone()]);
         assert!(!first_cache.exists());
         assert!(!second_cache.exists());
         assert!(unrelated.exists());
@@ -1950,7 +1960,8 @@ mod tests {
     #[test]
     fn clear_token_caches_is_noop_when_files_absent() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(clear_token_caches(dir.path()).is_ok());
+        let removed = clear_token_caches(dir.path()).unwrap();
+        assert!(removed.is_empty());
         assert!(dir.path().exists());
     }
 
@@ -1965,6 +1976,55 @@ mod tests {
         let message = result.unwrap_err().to_string();
         assert!(message.contains("token_cache.json"));
         assert!(message.contains("could not be removed"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn handle_logout_reports_removed_token_caches() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join("credentials.enc");
+        let first_cache = dir.path().join("token_cache.json");
+        let second_cache = dir.path().join("sa_token_cache.json");
+        std::fs::write(&credentials, "dummy").unwrap();
+        std::fs::write(&first_cache, "dummy").unwrap();
+        std::fs::write(&second_cache, "dummy").unwrap();
+
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+                dir.path().to_str().unwrap(),
+            );
+        }
+        let result = handle_logout();
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
+        }
+
+        assert!(result.is_ok());
+        assert!(!credentials.exists());
+        assert!(!first_cache.exists());
+        assert!(!second_cache.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn handle_logout_errors_when_cache_cannot_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("token_cache.json")).unwrap();
+
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+                dir.path().to_str().unwrap(),
+            );
+        }
+        let result = handle_logout();
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CONFIG_DIR");
+        }
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("token_cache.json"));
     }
 
     #[tokio::test]
