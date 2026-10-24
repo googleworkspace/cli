@@ -91,6 +91,12 @@ struct ExecutionInput {
     is_upload: bool,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum BodyValidationMode {
+    Strict,
+    Patch,
+}
+
 /// Parse parameters and body JSON, validate against schema, check required params, and build the URL.
 fn parse_and_validate_inputs(
     doc: &RestDescription,
@@ -106,21 +112,51 @@ fn parse_and_validate_inputs(
         Map::new()
     };
 
-    let body: Option<Value> = if let Some(b) = body_json {
+    let body = parse_request_body(doc, method, body_json)?;
+    validate_required_parameters(method, &params)?;
+
+    let (full_url, query_params) = build_url(doc, method, &params, is_media_upload)?;
+    let is_upload = is_media_upload && method.supports_media_upload;
+
+    Ok(ExecutionInput {
+        params,
+        body,
+        full_url,
+        query_params,
+        is_upload,
+    })
+}
+
+fn parse_request_body(
+    doc: &RestDescription,
+    method: &RestMethod,
+    body_json: Option<&str>,
+) -> Result<Option<Value>, GwsError> {
+    if let Some(b) = body_json {
         let val: Value = serde_json::from_str(b)
             .map_err(|e| GwsError::Validation(format!("Invalid --json body: {e}")))?;
 
         if let Some(ref req_ref) = method.request {
             if let Some(ref schema_name) = req_ref.schema_ref {
-                validate_body_against_schema(&val, schema_name, doc)?;
+                let mode = if method.http_method == "PATCH" {
+                    BodyValidationMode::Patch
+                } else {
+                    BodyValidationMode::Strict
+                };
+                validate_body_against_schema(&val, schema_name, doc, mode)?;
             }
         }
 
-        Some(val)
+        Ok(Some(val))
     } else {
-        None
-    };
+        Ok(None)
+    }
+}
 
+fn validate_required_parameters(
+    method: &RestMethod,
+    params: &Map<String, Value>,
+) -> Result<(), GwsError> {
     for param_name in &method.parameter_order {
         if let Some(param_def) = method.parameters.get(param_name) {
             if param_def.required
@@ -144,16 +180,7 @@ fn parse_and_validate_inputs(
         }
     }
 
-    let (full_url, query_params) = build_url(doc, method, &params, is_media_upload)?;
-    let is_upload = is_media_upload && method.supports_media_upload;
-
-    Ok(ExecutionInput {
-        params,
-        body,
-        full_url,
-        query_params,
-        is_upload,
-    })
+    Ok(())
 }
 
 /// Build an HTTP request with auth, query params, page token, and body/multipart attachment.
@@ -996,9 +1023,10 @@ fn validate_body_against_schema(
     body: &Value,
     schema_name: &str,
     doc: &RestDescription,
+    mode: BodyValidationMode,
 ) -> Result<(), GwsError> {
     let mut errors = Vec::new();
-    validate_value(body, schema_name, doc, "$", &mut errors);
+    validate_value(body, schema_name, doc, mode, false, "$", &mut errors);
 
     if !errors.is_empty() {
         return Err(GwsError::Validation(format!(
@@ -1014,6 +1042,8 @@ fn validate_value(
     value: &Value,
     schema_ref_name: &str,
     doc: &RestDescription,
+    mode: BodyValidationMode,
+    allow_null: bool,
     path: &str,
     errors: &mut Vec<String>,
 ) {
@@ -1025,10 +1055,22 @@ fn validate_value(
         }
     };
 
+    if allow_null && value.is_null() {
+        return;
+    }
+
     // If the top-level schema is an object
     if schema.schema_type.as_deref() == Some("object") || !schema.properties.is_empty() {
         if let Value::Object(obj) = value {
-            validate_properties(obj, &schema.properties, &schema.required, doc, path, errors);
+            validate_properties(
+                obj,
+                &schema.properties,
+                &schema.required,
+                doc,
+                mode,
+                path,
+                errors,
+            );
         } else {
             errors.push(format!("{path}: Expected object"));
         }
@@ -1040,6 +1082,7 @@ fn validate_properties(
     properties: &HashMap<String, crate::discovery::JsonSchemaProperty>,
     required_keys: &[String],
     doc: &RestDescription,
+    mode: BodyValidationMode,
     path: &str,
     errors: &mut Vec<String>,
 ) {
@@ -1068,7 +1111,16 @@ fn validate_properties(
         }
 
         let prop_schema = &properties[key];
-        validate_property(val, prop_schema, doc, &current_path, errors);
+        let allow_null = mode == BodyValidationMode::Patch && !required_keys.contains(key);
+        validate_property(
+            val,
+            prop_schema,
+            doc,
+            mode,
+            allow_null,
+            &current_path,
+            errors,
+        );
     }
 }
 
@@ -1076,29 +1128,24 @@ fn validate_property(
     value: &Value,
     prop_schema: &crate::discovery::JsonSchemaProperty,
     doc: &RestDescription,
+    mode: BodyValidationMode,
+    allow_null: bool,
     path: &str,
     errors: &mut Vec<String>,
 ) {
     // 1. Resolve $ref if present
     if let Some(ref_name) = &prop_schema.schema_ref {
-        validate_value(value, ref_name, doc, path, errors);
+        validate_value(value, ref_name, doc, mode, allow_null, path, errors);
+        return;
+    }
+
+    if allow_null && value.is_null() {
         return;
     }
 
     // 2. Type checking
     if let Some(expected_type) = &prop_schema.prop_type {
-        let type_matches = match (expected_type.as_str(), value) {
-            ("string", Value::String(_)) => true,
-            ("integer", Value::Number(n)) => n.is_i64() || n.is_u64(),
-            ("number", Value::Number(_)) => true,
-            ("boolean", Value::Bool(_)) => true,
-            ("array", Value::Array(_)) => true,
-            ("object", Value::Object(_)) => true,
-            ("any", _) => true,
-            _ => false,
-        };
-
-        if !type_matches {
+        if !property_type_matches(expected_type, value) {
             errors.push(format!(
                 "{path}: Expected type '{expected_type}', found {}",
                 get_value_type(value)
@@ -1108,25 +1155,76 @@ fn validate_property(
     }
 
     // 3. Array items validation
+    validate_array_items(value, prop_schema, doc, path, errors);
+
+    // 4. Object properties validation
+    validate_object_properties(value, prop_schema, doc, mode, path, errors);
+
+    // 5. Enum validation
+    validate_enum_value(value, prop_schema, path, errors);
+}
+
+fn property_type_matches(expected_type: &str, value: &Value) -> bool {
+    match (expected_type, value) {
+        ("string", Value::String(_)) => true,
+        ("integer", Value::Number(n)) => n.is_i64() || n.is_u64(),
+        ("number", Value::Number(_)) => true,
+        ("boolean", Value::Bool(_)) => true,
+        ("array", Value::Array(_)) => true,
+        ("object", Value::Object(_)) => true,
+        ("any", _) => true,
+        _ => false,
+    }
+}
+
+fn validate_array_items(
+    value: &Value,
+    prop_schema: &crate::discovery::JsonSchemaProperty,
+    doc: &RestDescription,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
     if prop_schema.prop_type.as_deref() == Some("array") {
         if let Some(items_schema) = &prop_schema.items {
             if let Value::Array(arr) = value {
                 for (i, item) in arr.iter().enumerate() {
                     let item_path = format!("{path}[{i}]");
-                    validate_property(item, items_schema, doc, &item_path, errors);
+                    validate_property(
+                        item,
+                        items_schema,
+                        doc,
+                        BodyValidationMode::Strict,
+                        false,
+                        &item_path,
+                        errors,
+                    );
                 }
             }
         }
     }
+}
 
-    // 4. Object properties validation
+fn validate_object_properties(
+    value: &Value,
+    prop_schema: &crate::discovery::JsonSchemaProperty,
+    doc: &RestDescription,
+    mode: BodyValidationMode,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
     if prop_schema.prop_type.as_deref() == Some("object") && !prop_schema.properties.is_empty() {
         if let Value::Object(obj) = value {
-            validate_properties(obj, &prop_schema.properties, &[], doc, path, errors);
+            validate_properties(obj, &prop_schema.properties, &[], doc, mode, path, errors);
         }
     }
+}
 
-    // 5. Enum validation
+fn validate_enum_value(
+    value: &Value,
+    prop_schema: &crate::discovery::JsonSchemaProperty,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
     if let Some(enum_values) = &prop_schema.enum_values {
         if let Value::String(s) = value {
             if !enum_values.contains(s) {
@@ -1194,6 +1292,622 @@ mod tests {
     };
     use serde_json::json;
 
+    fn patch_validation_doc() -> RestDescription {
+        serde_json::from_value(json!({
+            "name": "synthetic",
+            "version": "v1",
+            "rootUrl": "https://gws-validation.invalid/",
+            "servicePath": "calendar/v3/",
+            "schemas": {
+                "Event": {
+                    "type": "object",
+                    "properties": {
+                        "start": {"$ref": "EventDateTime"},
+                        "end": {"$ref": "EventDateTime"}
+                    }
+                },
+                "EventDateTime": {
+                    "type": "object",
+                    "properties": {
+                        "date": {"type": "string"},
+                        "dateTime": {"type": "string"}
+                    }
+                },
+                "Synthetic": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "count": {"type": "integer"},
+                        "ratio": {"type": "number"},
+                        "enabled": {"type": "boolean"},
+                        "status": {"type": "string", "enum": ["ACTIVE", "INACTIVE"]},
+                        "inline": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "child": {"$ref": "Child"}
+                            }
+                        },
+                        "reference": {"$ref": "Child"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "rows": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": {"type": "string"},
+                                    "child": {"$ref": "Child"},
+                                    "inline": {
+                                        "type": "object",
+                                        "properties": {"label": {"type": "string"}}
+                                    },
+                                    "groups": {"type": "array", "items": {"$ref": "Child"}}
+                                }
+                            }
+                        },
+                        "refs": {"type": "array", "items": {"$ref": "Child"}},
+                        "matrix": {
+                            "type": "array",
+                            "items": {"type": "array", "items": {"$ref": "Child"}}
+                        },
+                        "missing": {"$ref": "Missing"},
+                        "any": {"type": "any"},
+                        "untyped": {}
+                    }
+                },
+                "Child": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "label": {"type": "string"},
+                        "nested": {
+                            "type": "object",
+                            "properties": {"label": {"type": "string"}}
+                        }
+                    }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    fn patch_validation_method(http_method: &str, schema_name: &str) -> RestMethod {
+        serde_json::from_value(json!({
+            "id": "synthetic.events.patch",
+            "httpMethod": http_method,
+            "path": "calendars/{calendarId}/events/{eventId}",
+            "parameterOrder": ["calendarId", "eventId"],
+            "parameters": {
+                "calendarId": {"type": "string", "location": "path", "required": true},
+                "eventId": {"type": "string", "location": "path", "required": true}
+            },
+            "request": {"$ref": schema_name}
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_patch_calendar_null_clears_dry_run() {
+        let doc = patch_validation_doc();
+        let method = patch_validation_method("PATCH", "Event");
+        let body = r#"{"start":{"date":null,"dateTime":"2026-10-10T10:00:00-07:00"},"end":{"date":null,"dateTime":"2026-10-10T11:00:00-07:00"}}"#;
+        let result = execute_method(
+            &doc,
+            &method,
+            Some(r#"{"calendarId":"synthetic-test","eventId":"synthetic-event"}"#),
+            Some(body),
+            None,
+            AuthMethod::None,
+            None,
+            None,
+            true,
+            &PaginationConfig::default(),
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::default(),
+            true,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "Expected successful PATCH dry-run: {result:?}"
+        );
+        let produced = result.unwrap().unwrap();
+        assert_eq!(produced["dry_run"], true);
+        assert_eq!(produced["method"], "PATCH");
+        assert_eq!(
+            produced["url"],
+            "https://gws-validation.invalid/calendar/v3/calendars/synthetic%2Dtest/events/synthetic%2Devent"
+        );
+        assert_eq!(
+            produced["body"],
+            serde_json::from_str::<Value>(body).unwrap()
+        );
+        assert_eq!(produced["body"]["start"]["date"], Value::Null);
+        assert_eq!(produced["body"]["end"]["date"], Value::Null);
+    }
+
+    fn validate_synthetic_body(
+        doc: &RestDescription,
+        http_method: &str,
+        body: &Value,
+    ) -> Result<ExecutionInput, GwsError> {
+        let method = patch_validation_method(http_method, "Synthetic");
+        parse_and_validate_inputs(
+            doc,
+            &method,
+            Some(r#"{"calendarId":"synthetic-test","eventId":"synthetic-event"}"#),
+            Some(&body.to_string()),
+            false,
+        )
+    }
+
+    async fn produce_calendar_body(
+        http_method: &str,
+        body: &Value,
+    ) -> Result<Option<Value>, GwsError> {
+        execute_method(
+            &patch_validation_doc(),
+            &patch_validation_method(http_method, "Event"),
+            Some(r#"{"calendarId":"synthetic-test","eventId":"synthetic-event"}"#),
+            Some(&body.to_string()),
+            None,
+            AuthMethod::None,
+            None,
+            None,
+            true,
+            &PaginationConfig::default(),
+            None,
+            &crate::helpers::modelarmor::SanitizeMode::Warn,
+            &crate::formatter::OutputFormat::default(),
+            true,
+        )
+        .await
+    }
+
+    fn assert_calendar_request(produced: &Value, http_method: &str, body: &Value) {
+        assert_eq!(produced["dry_run"], true);
+        assert_eq!(produced["method"], http_method);
+        assert_eq!(
+            produced["url"],
+            "https://gws-validation.invalid/calendar/v3/calendars/synthetic%2Dtest/events/synthetic%2Devent"
+        );
+        assert_eq!(produced["body"], *body);
+    }
+
+    #[tokio::test]
+    async fn test_patch_calendar_reverse_conversion_dry_run() {
+        let body = json!({
+            "start": {"dateTime": null, "date": "2026-10-10"},
+            "end": {"dateTime": null, "date": "2026-10-11"}
+        });
+        let produced = produce_calendar_body("PATCH", &body)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_calendar_request(&produced, "PATCH", &body);
+        assert_eq!(produced["body"]["start"]["dateTime"], Value::Null);
+        assert_eq!(produced["body"]["end"]["dateTime"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_calendar_put_post_null_rejected_dry_run() {
+        let cases = [
+            (
+                json!({
+                    "start": {"date": null, "dateTime": "2026-10-10T10:00:00-07:00"},
+                    "end": {"date": null, "dateTime": "2026-10-10T11:00:00-07:00"}
+                }),
+                ["start.date:", "end.date:"],
+            ),
+            (
+                json!({
+                    "start": {"dateTime": null, "date": "2026-10-10"},
+                    "end": {"dateTime": null, "date": "2026-10-11"}
+                }),
+                ["start.dateTime:", "end.dateTime:"],
+            ),
+        ];
+        for http_method in ["PUT", "POST"] {
+            for (body, paths) in &cases {
+                let error = produce_calendar_body(http_method, body)
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                for path in paths {
+                    assert!(error.contains(path), "{http_method}: {error}");
+                }
+                assert!(error.contains("Expected type 'string', found null"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_calendar_valid_body_dry_run_methods() {
+        let body = json!({
+            "start": {"date": "2026-10-10"},
+            "end": {"date": "2026-10-11"}
+        });
+        for http_method in ["PATCH", "PUT", "POST"] {
+            let produced = produce_calendar_body(http_method, &body)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_calendar_request(&produced, http_method, &body);
+        }
+    }
+
+    #[test]
+    fn test_patch_optional_properties_null_retained() {
+        let body = json!({
+            "text": null, "count": null, "ratio": null, "enabled": null,
+            "status": null, "inline": null, "reference": null, "tags": null
+        });
+        let input = validate_synthetic_body(&patch_validation_doc(), "PATCH", &body).unwrap();
+        assert_eq!(input.body, Some(body));
+    }
+
+    #[test]
+    fn test_patch_nested_optional_null_retained() {
+        for body in [
+            json!({
+                "inline": {"label": null, "child": {"id": "synthetic-child", "label": null}},
+                "reference": {"id": "synthetic-child", "nested": {"label": null}}
+            }),
+            json!({
+                "inline": {"child": null},
+                "reference": {"id": "synthetic-child", "nested": null}
+            }),
+        ] {
+            let input = validate_synthetic_body(&patch_validation_doc(), "PATCH", &body).unwrap();
+            assert_eq!(input.body, Some(body));
+        }
+    }
+
+    #[test]
+    fn test_patch_required_parent_allows_optional_child_null() {
+        let mut doc = patch_validation_doc();
+        doc.schemas.get_mut("Synthetic").unwrap().required = vec!["reference".to_string()];
+        let body = json!({"reference": {"id": "synthetic-child", "label": null}});
+        let input = validate_synthetic_body(&doc, "PATCH", &body).unwrap();
+        assert_eq!(input.body, Some(body));
+    }
+
+    #[test]
+    fn test_non_patch_null_properties_rejected() {
+        let doc = patch_validation_doc();
+        let cases = [
+            (json!({"text": null}), "text: Expected type 'string'"),
+            (json!({"count": null}), "count: Expected type 'integer'"),
+            (json!({"ratio": null}), "ratio: Expected type 'number'"),
+            (json!({"enabled": null}), "enabled: Expected type 'boolean'"),
+            (json!({"status": null}), "status: Expected type 'string'"),
+            (json!({"inline": null}), "inline: Expected type 'object'"),
+            (json!({"reference": null}), "reference: Expected object"),
+            (json!({"tags": null}), "tags: Expected type 'array'"),
+            (
+                json!({"inline": {"label": null}}),
+                "inline.label: Expected type 'string'",
+            ),
+            (
+                json!({"reference": {"id": "synthetic-child", "label": null}}),
+                "reference.label: Expected type 'string'",
+            ),
+        ];
+        for http_method in ["PUT", "POST", "GET", "DELETE", "patch"] {
+            for (body, expected) in &cases {
+                let error = validate_synthetic_body(&doc, http_method, body)
+                    .err()
+                    .expect("Non-PATCH null must fail")
+                    .to_string();
+                assert!(error.contains(expected), "{http_method}, {body}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_required_properties_missing_or_null_rejected() {
+        let cases = [
+            ("text", "text: Expected type 'string'"),
+            ("count", "count: Expected type 'integer'"),
+            ("ratio", "ratio: Expected type 'number'"),
+            ("enabled", "enabled: Expected type 'boolean'"),
+            ("status", "status: Expected type 'string'"),
+            ("inline", "inline: Expected type 'object'"),
+            ("reference", "reference: Expected object"),
+            ("tags", "tags: Expected type 'array'"),
+        ];
+        for http_method in ["PATCH", "PUT", "POST"] {
+            for (key, expected) in cases {
+                let mut doc = patch_validation_doc();
+                doc.schemas.get_mut("Synthetic").unwrap().required = vec![key.to_string()];
+                let missing = validate_synthetic_body(&doc, http_method, &json!({}))
+                    .err()
+                    .expect("Required property must be present")
+                    .to_string();
+                assert!(
+                    missing.contains(&format!("Missing required property '{key}'")),
+                    "{missing}"
+                );
+                let null = validate_synthetic_body(&doc, http_method, &json!({key: null}))
+                    .err()
+                    .expect("Required typed property must reject null")
+                    .to_string();
+                assert!(null.contains(expected), "{http_method}: {null}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_named_nested_required_fields_rejected() {
+        for body in [json!({"reference": {}}), json!({"reference": {"id": null}})] {
+            let error = validate_synthetic_body(&patch_validation_doc(), "PATCH", &body)
+                .err()
+                .expect("Named schema required child must fail")
+                .to_string();
+            assert!(error.contains("reference"), "{error}");
+            assert!(error.contains("id"), "{error}");
+        }
+    }
+
+    #[test]
+    fn test_replacement_array_descendants_remain_strict() {
+        let doc = patch_validation_doc();
+        let cases = [
+            (json!({"tags": [null]}), "tags[0]: Expected type 'string'"),
+            (json!({"tags": [42]}), "tags[0]: Expected type 'string'"),
+            (json!({"rows": [null]}), "rows[0]: Expected type 'object'"),
+            (json!({"rows": [42]}), "rows[0]: Expected type 'object'"),
+            (
+                json!({"rows": [{"label": null}]}),
+                "rows[0].label: Expected type 'string'",
+            ),
+            (
+                json!({"rows": [{"child": null}]}),
+                "rows[0].child: Expected object",
+            ),
+            (
+                json!({"rows": [{"child": {"id": "synthetic-child", "label": null}}]}),
+                "rows[0].child.label: Expected type 'string'",
+            ),
+            (
+                json!({"rows": [{"inline": {"label": null}}]}),
+                "rows[0].inline.label: Expected type 'string'",
+            ),
+            (
+                json!({"rows": [{"groups": null}]}),
+                "rows[0].groups: Expected type 'array'",
+            ),
+            (
+                json!({"rows": [{"groups": [{"id": "synthetic-child", "label": null}]}]}),
+                "rows[0].groups[0].label: Expected type 'string'",
+            ),
+            (json!({"refs": [null]}), "refs[0]: Expected object"),
+            (
+                json!({"refs": [{"id": "synthetic-child", "label": null}]}),
+                "refs[0].label: Expected type 'string'",
+            ),
+            (
+                json!({"refs": [{"id": "synthetic-child", "nested": {"label": null}}]}),
+                "refs[0].nested.label: Expected type 'string'",
+            ),
+            (
+                json!({"matrix": [[{"id": "synthetic-child", "label": null}]]}),
+                "matrix[0][0].label: Expected type 'string'",
+            ),
+            (
+                json!({"matrix": [null]}),
+                "matrix[0]: Expected type 'array'",
+            ),
+        ];
+        for http_method in ["PATCH", "PUT", "POST"] {
+            for (body, expected) in &cases {
+                let error = validate_synthetic_body(&doc, http_method, body)
+                    .err()
+                    .expect("Replacement array must remain strict")
+                    .to_string();
+                assert!(error.contains(expected), "{http_method}, {body}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_valid_typed_bodies_and_empty_arrays() {
+        let doc = patch_validation_doc();
+        let cases = [
+            json!({"tags": [], "rows": [], "refs": [], "matrix": []}),
+            json!({
+                "text": "synthetic", "count": 1, "ratio": 1.5, "enabled": false,
+                "status": "ACTIVE", "tags": ["synthetic-tag"],
+                "inline": {"label": "synthetic-label"},
+                "reference": {"id": "synthetic-child"},
+                "rows": [{"label": "synthetic-label", "groups": [{"id": "synthetic-child"}]}],
+                "refs": [{"id": "synthetic-child"}],
+                "matrix": [[{"id": "synthetic-child"}]]
+            }),
+            json!({"count": -1, "ratio": 2}),
+            json!({"count": u64::MAX}),
+        ];
+        for http_method in ["PATCH", "PUT", "POST"] {
+            for body in &cases {
+                let input = validate_synthetic_body(&doc, http_method, body).unwrap();
+                assert_eq!(input.body.as_ref(), Some(body));
+            }
+        }
+    }
+
+    #[test]
+    fn test_unknown_null_properties_rejected() {
+        let cases = [
+            (json!({"unknown": null}), "unknown: Unknown property"),
+            (
+                json!({"inline": {"unknown": null}}),
+                "inline.unknown: Unknown property",
+            ),
+            (
+                json!({"reference": {"id": "synthetic-child", "unknown": null}}),
+                "reference.unknown: Unknown property",
+            ),
+            (
+                json!({"rows": [{"unknown": null}]}),
+                "rows[0].unknown: Unknown property",
+            ),
+        ];
+        for (body, expected) in cases {
+            let error = validate_synthetic_body(&patch_validation_doc(), "PATCH", &body)
+                .err()
+                .expect("Unknown property must fail even when null")
+                .to_string();
+            assert!(error.contains(expected), "{body}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_missing_schema_rejected_including_null_reference() {
+        let doc = patch_validation_doc();
+        for http_method in ["PATCH", "PUT", "POST"] {
+            let method = patch_validation_method(http_method, "MissingRoot");
+            for body in ["{}", "null"] {
+                let error = parse_and_validate_inputs(&doc, &method, None, Some(body), false)
+                    .err()
+                    .expect("Missing root schema must fail")
+                    .to_string();
+                assert!(
+                    error.contains("$: Schema 'MissingRoot' not found"),
+                    "{error}"
+                );
+            }
+            for body in [json!({"missing": null}), json!({"missing": {}})] {
+                let error = validate_synthetic_body(&doc, http_method, &body)
+                    .err()
+                    .expect("Missing property schema must fail")
+                    .to_string();
+                assert!(
+                    error.contains("missing: Schema 'Missing' not found"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_wrong_non_null_types_and_enum_rejected() {
+        let cases = [
+            (json!({"text": 1}), "text: Expected type 'string'"),
+            (json!({"count": 1.5}), "count: Expected type 'integer'"),
+            (json!({"ratio": "1"}), "ratio: Expected type 'number'"),
+            (
+                json!({"enabled": "true"}),
+                "enabled: Expected type 'boolean'",
+            ),
+            (
+                json!({"status": "UNKNOWN"}),
+                "status: Value 'UNKNOWN' is not a valid enum member",
+            ),
+            (json!({"inline": []}), "inline: Expected type 'object'"),
+            (
+                json!({"reference": "synthetic"}),
+                "reference: Expected object",
+            ),
+            (json!({"tags": {}}), "tags: Expected type 'array'"),
+        ];
+        for http_method in ["PATCH", "PUT", "POST"] {
+            for (body, expected) in &cases {
+                let error = validate_synthetic_body(&patch_validation_doc(), http_method, body)
+                    .err()
+                    .expect("Invalid non-null value must fail")
+                    .to_string();
+                assert!(error.contains(expected), "{http_method}, {body}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_root_body_remains_strict() {
+        for http_method in ["PATCH", "PUT", "POST"] {
+            for body in [json!(null), json!("synthetic"), json!(42), json!([])] {
+                let error = validate_synthetic_body(&patch_validation_doc(), http_method, &body)
+                    .err()
+                    .expect("Object root must remain strict")
+                    .to_string();
+                assert!(error.contains("$: Expected object"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_input_validation_errors_preserved() {
+        let doc = patch_validation_doc();
+        let method = patch_validation_method("PATCH", "Synthetic");
+        let cases = [
+            (Some("{"), Some("{}"), "Invalid --params JSON:"),
+            (Some("[]"), Some("{}"), "Invalid --params JSON:"),
+            (None, Some("{"), "Invalid --json body:"),
+            (
+                None,
+                Some("{}"),
+                "Required path parameter calendarId is missing.",
+            ),
+            (
+                Some(r#"{"calendarId":"synthetic-test"}"#),
+                Some("{}"),
+                "Required path parameter eventId is missing.",
+            ),
+        ];
+        for (params, body, expected) in cases {
+            let error = parse_and_validate_inputs(&doc, &method, params, body, false)
+                .err()
+                .expect("Invalid input must fail")
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+        let mut query_method = patch_validation_method("PATCH", "Synthetic");
+        query_method.parameter_order.clear();
+        query_method.parameters.clear();
+        query_method.parameters.insert(
+            "syntheticQuery".to_string(),
+            MethodParameter {
+                required: true,
+                location: Some("query".to_string()),
+                ..Default::default()
+            },
+        );
+        let error = parse_and_validate_inputs(&doc, &query_method, None, None, false)
+            .err()
+            .expect("Required query parameter must fail")
+            .to_string();
+        assert!(
+            error.contains("Required parameter 'syntheticQuery' is missing."),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn test_absent_body_and_schema_free_body_preserved() {
+        let doc = patch_validation_doc();
+        let mut method = patch_validation_method("PATCH", "Synthetic");
+        let params = Some(r#"{"calendarId":"synthetic-test","eventId":"synthetic-event"}"#);
+        let input = parse_and_validate_inputs(&doc, &method, params, None, false).unwrap();
+        assert_eq!(input.body, None);
+        method.request = None;
+        let input = parse_and_validate_inputs(&doc, &method, params, Some("null"), false).unwrap();
+        assert_eq!(input.body, Some(Value::Null));
+        method.request = Some(crate::discovery::SchemaRef::default());
+        let input = parse_and_validate_inputs(&doc, &method, params, Some("42"), false).unwrap();
+        assert_eq!(input.body, Some(json!(42)));
+    }
+
+    #[test]
+    fn test_existing_untyped_null_behavior_preserved() {
+        let body = json!({"any": null, "untyped": null});
+        for http_method in ["PATCH", "PUT", "POST"] {
+            let input =
+                validate_synthetic_body(&patch_validation_doc(), http_method, &body).unwrap();
+            assert_eq!(input.body, Some(body.clone()));
+        }
+    }
+
     #[test]
     fn test_pagination_config_default() {
         let config = PaginationConfig::default();
@@ -1253,7 +1967,9 @@ mod tests {
         };
 
         let body = json!({ "name": "My File" });
-        assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+        assert!(
+            validate_body_against_schema(&body, "File", &doc, BodyValidationMode::Strict).is_ok()
+        );
     }
 
     #[test]
@@ -1283,7 +1999,7 @@ mod tests {
         };
 
         let body = json!({ "name": "My File", "invalidField": 123 });
-        let result = validate_body_against_schema(&body, "File", &doc);
+        let result = validate_body_against_schema(&body, "File", &doc, BodyValidationMode::Strict);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unknown property"));
     }
@@ -1373,23 +2089,31 @@ mod tests {
             "tags": ["one", "two"],
             "parent": { "id": "123" }
         });
-        assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+        assert!(
+            validate_body_against_schema(&body, "File", &doc, BodyValidationMode::Strict).is_ok()
+        );
 
         // Missing Required Field
         let body_missing = json!({ "name": "My File" });
-        let err = validate_body_against_schema(&body_missing, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_missing, "File", &doc, BodyValidationMode::Strict)
+                .unwrap_err();
         assert!(err
             .to_string()
             .contains("Missing required property 'status'"));
 
         // Invalid Enum Value
         let body_bad_enum = json!({ "name": "My File", "status": "UNKNOWN" });
-        let err = validate_body_against_schema(&body_bad_enum, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_bad_enum, "File", &doc, BodyValidationMode::Strict)
+                .unwrap_err();
         assert!(err.to_string().contains("not a valid enum member"));
 
         // Invalid Type
         let body_bad_type = json!({ "name": "My File", "status": "ACTIVE", "count": "10" });
-        let err = validate_body_against_schema(&body_bad_type, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_bad_type, "File", &doc, BodyValidationMode::Strict)
+                .unwrap_err();
         assert!(err
             .to_string()
             .contains("Expected type 'integer', found string"));
@@ -1400,12 +2124,20 @@ mod tests {
             "status": "ACTIVE",
             "parent": { "invalidField": "123" }
         });
-        let err = validate_body_against_schema(&body_bad_ref, "File", &doc).unwrap_err();
+        let err =
+            validate_body_against_schema(&body_bad_ref, "File", &doc, BodyValidationMode::Strict)
+                .unwrap_err();
         assert!(err.to_string().contains("Unknown property"));
 
         // Expected Object Type Failure
         let body_not_object = json!([]);
-        let err = validate_body_against_schema(&body_not_object, "File", &doc).unwrap_err();
+        let err = validate_body_against_schema(
+            &body_not_object,
+            "File",
+            &doc,
+            BodyValidationMode::Strict,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("Expected object"));
     }
     #[tokio::test]
