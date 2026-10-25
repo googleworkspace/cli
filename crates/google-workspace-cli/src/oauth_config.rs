@@ -57,16 +57,59 @@ pub fn client_config_path() -> PathBuf {
     crate::auth_commands::config_dir().join("client_secret.json")
 }
 
+/// Wrappers the Cloud Console uses around the installed-app credentials.
+const CLIENT_DOCUMENT_SCOPES: [&str; 2] = ["installed", "web"];
+
+/// Recovers `client_id`/`client_secret` from a pasted `client_secret.json` document.
+///
+/// The Console only offers the OAuth client as a downloadable document, so users
+/// paste that whole document into the setup prompts. Storing it verbatim wrote a
+/// double-serialized config whose `client_id` was the document itself, which every
+/// later login rejects with `401 invalid_client`.
+pub fn extract_client_credentials(value: &str) -> Option<(String, String)> {
+    let parsed: serde_json::Value = serde_json::from_str(value).ok()?;
+    let document = parsed.as_object()?;
+    for scope in CLIENT_DOCUMENT_SCOPES {
+        let Some(credentials) = document.get(scope).and_then(|value| value.as_object()) else {
+            continue;
+        };
+        let (Some(raw_id), Some(raw_secret)) = (
+            credentials
+                .get("client_id")
+                .and_then(|value| value.as_str()),
+            credentials
+                .get("client_secret")
+                .and_then(|value| value.as_str()),
+        ) else {
+            continue;
+        };
+        let (client_id, client_secret) = (raw_id.trim(), raw_secret.trim());
+        if !client_id.is_empty() && !client_secret.is_empty() {
+            return Some((client_id.to_string(), client_secret.to_string()));
+        }
+    }
+    None
+}
+
 /// Saves OAuth client configuration in the standard Google Cloud Console format.
 pub fn save_client_config(
     client_id: &str,
     client_secret: &str,
     project_id: &str,
 ) -> anyhow::Result<PathBuf> {
+    // A pasted document carries both halves of the pair, so it wins whichever
+    // prompt it arrived in; plain values are stored exactly as given.
+    let (client_id, client_secret) = match extract_client_credentials(client_id)
+        .or_else(|| extract_client_credentials(client_secret))
+    {
+        Some((pasted_id, pasted_secret)) => (pasted_id, pasted_secret),
+        None => (client_id.to_string(), client_secret.to_string()),
+    };
+
     let config = ClientSecretFile {
         installed: InstalledConfig {
-            client_id: client_id.to_string(),
-            client_secret: client_secret.to_string(),
+            client_id,
+            client_secret,
             project_id: project_id.to_string(),
             auth_uri: "https://accounts.google.com/o/oauth2/auth".to_string(),
             token_uri: "https://oauth2.googleapis.com/token".to_string(),
@@ -219,6 +262,95 @@ mod tests {
                 std::env::remove_var(&self.key);
             }
         }
+    }
+
+    // A user pasting the downloaded client_secret.json into the setup prompts.
+    const PASTED_DOCUMENT: &str = r#"{
+        "installed": {
+            "client_id": "123-abc.apps.googleusercontent.com",
+            "project_id": "pasted-project",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": "GOCSPX-pasted",
+            "redirect_uris": ["http://localhost"]
+        }
+    }"#;
+
+    #[test]
+    fn test_extract_client_credentials_from_installed_document() {
+        let (client_id, client_secret) = extract_client_credentials(PASTED_DOCUMENT).unwrap();
+        assert_eq!(client_id, "123-abc.apps.googleusercontent.com");
+        assert_eq!(client_secret, "GOCSPX-pasted");
+    }
+
+    #[test]
+    fn test_extract_client_credentials_from_web_document() {
+        let document = r#"{
+            "web": {
+                "client_id": "999-web.apps.googleusercontent.com",
+                "client_secret": "GOCSPX-web"
+            }
+        }"#;
+        let (client_id, client_secret) = extract_client_credentials(document).unwrap();
+        assert_eq!(client_id, "999-web.apps.googleusercontent.com");
+        assert_eq!(client_secret, "GOCSPX-web");
+    }
+
+    #[test]
+    fn test_extract_client_credentials_ignores_other_input() {
+        assert!(extract_client_credentials("123-abc.apps.googleusercontent.com").is_none());
+        assert!(extract_client_credentials("").is_none());
+        assert!(extract_client_credentials(r#"{"foo": "bar"}"#).is_none());
+        // A document missing the secret cannot supply the pair.
+        assert!(extract_client_credentials(r#"{"installed": {"client_id": "only-id"}}"#).is_none());
+        // An empty secret is not a usable credential either.
+        assert!(extract_client_credentials(
+            r#"{"installed": {"client_id": "id", "client_secret": "  "}}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_save_expands_pasted_client_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env_guard = EnvGuard::new(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            dir.path().to_str().unwrap(),
+        );
+
+        save_client_config(PASTED_DOCUMENT, PASTED_DOCUMENT, "my-project").unwrap();
+
+        let config = load_client_config().unwrap();
+        assert_eq!(config.client_id, "123-abc.apps.googleusercontent.com");
+        assert_eq!(config.client_secret, "GOCSPX-pasted");
+        assert_eq!(config.project_id, "my-project");
+
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(client_config_path()).unwrap()).unwrap();
+        assert_eq!(
+            stored["installed"]["client_id"],
+            "123-abc.apps.googleusercontent.com"
+        );
+        assert_eq!(stored["installed"]["client_secret"], "GOCSPX-pasted");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_save_keeps_plain_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env_guard = EnvGuard::new(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            dir.path().to_str().unwrap(),
+        );
+
+        save_client_config("123-abc.apps.googleusercontent.com", "GOCSPX-plain", "p").unwrap();
+
+        let config = load_client_config().unwrap();
+        assert_eq!(config.client_id, "123-abc.apps.googleusercontent.com");
+        assert_eq!(config.client_secret, "GOCSPX-plain");
+        assert_eq!(config.project_id, "p");
     }
 
     #[test]
