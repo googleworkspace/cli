@@ -278,6 +278,7 @@ fn resolve_schema_refs(
 ) {
     match val {
         Value::Object(map) => {
+            let mut expanded_ref = None;
             // Check if this object is a reference
             if let Some(ref_name) = map
                 .get("$ref")
@@ -288,11 +289,7 @@ fn resolve_schema_refs(
                 if !seen.contains(&ref_name) {
                     if let Some(schema) = doc.schemas.get(&ref_name) {
                         seen.insert(ref_name.clone());
-                        let mut resolved = schema_to_json(schema);
-                        // Recursively resolve the resolved schema
-                        resolve_schema_refs(&mut resolved, doc, seen);
-                        seen.remove(&ref_name);
-
+                        let resolved = schema_to_json(schema);
                         // Merge resolved schema into current object, but preserve existing fields
                         // (though usually $ref stands alone)
                         if let Value::Object(resolved_map) = resolved {
@@ -300,6 +297,7 @@ fn resolve_schema_refs(
                                 map.entry(k).or_insert(v);
                             }
                         }
+                        expanded_ref = Some(ref_name);
                     }
                 }
             }
@@ -307,6 +305,10 @@ fn resolve_schema_refs(
             // Recurse into all fields
             for (_, v) in map.iter_mut() {
                 resolve_schema_refs(v, doc, seen);
+            }
+
+            if let Some(ref_name) = expanded_ref {
+                seen.remove(&ref_name);
             }
         }
         Value::Array(arr) => {
@@ -464,5 +466,151 @@ mod tests {
 
         let f_node = &val["properties"]["f"];
         assert_eq!(f_node["type"], "integer");
+    }
+
+    #[test]
+    fn test_resolve_schema_refs_self_recursive_array_preserves_fields() {
+        let doc = RestDescription {
+            schemas: serde_json::from_value(json!({
+                "Part": {
+                    "type": "object",
+                    "properties": {
+                        "filename": { "type": "string" },
+                        "parts": { "type": "array", "items": { "$ref": "Part" } },
+                        "body": { "$ref": "Body" }
+                    }
+                },
+                "Body": {
+                    "type": "object",
+                    "properties": { "data": { "type": "string" } }
+                }
+            }))
+            .unwrap(),
+            ..Default::default()
+        };
+        let mut val = json!({ "$ref": "Part" });
+
+        resolve_schema_refs(&mut val, &doc, &mut std::collections::HashSet::new());
+
+        assert_eq!(
+            val,
+            json!({
+                "$ref": "Part",
+                "type": "object",
+                "properties": {
+                    "filename": { "type": "string" },
+                    "parts": { "type": "array", "items": { "$ref": "Part" } },
+                    "body": {
+                        "$ref": "Body",
+                        "type": "object",
+                        "properties": { "data": { "type": "string" } }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_resolve_schema_refs_mutual_cycle_preserves_fields() {
+        let doc = RestDescription {
+            schemas: serde_json::from_value(json!({
+                "First": {
+                    "type": "object",
+                    "properties": { "next": { "$ref": "Second" } }
+                },
+                "Second": {
+                    "type": "object",
+                    "properties": {
+                        "previous": { "$ref": "First" },
+                        "name": { "type": "string" }
+                    }
+                }
+            }))
+            .unwrap(),
+            ..Default::default()
+        };
+        let mut val = json!({ "$ref": "First" });
+
+        resolve_schema_refs(&mut val, &doc, &mut std::collections::HashSet::new());
+
+        assert_eq!(
+            val["properties"]["next"],
+            json!({
+                "$ref": "Second",
+                "type": "object",
+                "properties": {
+                    "previous": { "$ref": "First" },
+                    "name": { "type": "string" }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_resolve_schema_refs_sibling_branches_preserve_overrides() {
+        let doc = RestDescription {
+            schemas: serde_json::from_value(json!({
+                "Target": { "type": "string", "description": "Schema description" }
+            }))
+            .unwrap(),
+            ..Default::default()
+        };
+        let mut val = json!([
+            { "$ref": "Target", "description": "Field description" },
+            { "$ref": "Target" },
+            { "$ref": "Missing", "description": "Unknown schema" }
+        ]);
+
+        resolve_schema_refs(&mut val, &doc, &mut std::collections::HashSet::new());
+
+        assert_eq!(
+            val,
+            json!([
+                {
+                    "$ref": "Target",
+                    "type": "string",
+                    "description": "Field description"
+                },
+                {
+                    "$ref": "Target",
+                    "type": "string",
+                    "description": "Schema description"
+                },
+                { "$ref": "Missing", "description": "Unknown schema" }
+            ])
+        );
+    }
+
+    #[test]
+    fn test_resolve_schema_refs_schema_lookup_preserves_non_cyclic_fields() {
+        let doc = RestDescription {
+            schemas: serde_json::from_value(json!({
+                "Part": {
+                    "type": "object",
+                    "properties": {
+                        "child": { "$ref": "Part" },
+                        "body": { "$ref": "Body" }
+                    }
+                },
+                "Body": { "type": "string" }
+            }))
+            .unwrap(),
+            ..Default::default()
+        };
+        let mut val = schema_to_json(&doc.schemas["Part"]);
+        let mut seen = std::collections::HashSet::from(["Part".to_string()]);
+
+        resolve_schema_refs(&mut val, &doc, &mut seen);
+
+        assert_eq!(
+            val,
+            json!({
+                "type": "object",
+                "properties": {
+                    "child": { "$ref": "Part" },
+                    "body": { "$ref": "Body", "type": "string" }
+                }
+            })
+        );
     }
 }
