@@ -17,29 +17,29 @@ name: Automation
 on:
   push:
     branches: [main]
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   format:
     name: Format
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GOOGLEWORKSPACE_BOT_TOKEN }}
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           components: rustfmt
 
       - name: Run cargo fmt
@@ -54,8 +54,11 @@ jobs:
 
   file-labeler:
     name: File Labeler
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/labeler@8558fd74291d67161a8a78ce36a881fa63b766a9 # v5
         with:
@@ -65,9 +68,12 @@ jobs:
   gemini-review:
     name: Gemini Review
     if: >-
-      github.event_name == 'pull_request_target' &&
+      github.event_name == 'pull_request' &&
       github.event.action == 'synchronize'
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     concurrency:
       group: gemini-review-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -109,6 +115,9 @@ jobs:
       github.event_name == 'pull_request_review' &&
       github.event.review.user.login == 'gemini-code-assist[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
     steps:
       - name: Add reviewed label if review matches HEAD
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
