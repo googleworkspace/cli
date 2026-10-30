@@ -2,7 +2,7 @@
 name: recipe-share-event-materials
 description: "Share Google Drive files with all attendees of a Google Calendar event."
 metadata:
-  version: 0.22.5
+  version: 0.23.0
   openclaw:
     category: "recipe"
     domain: "productivity"
