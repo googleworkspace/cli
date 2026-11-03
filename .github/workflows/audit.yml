@@ -38,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@a37010ded18ff788be4440302bd6830b1ae50d8b # cargo-llvm-cov
