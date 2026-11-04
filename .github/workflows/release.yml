@@ -69,12 +69,13 @@ jobs:
             archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v4.3.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install cross
@@ -114,11 +115,11 @@ jobs:
 
       - name: Attest
         if: github.ref_type == 'tag'
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        uses: actions/attest-build-provenance@v3.0.0
         with:
           subject-path: google-workspace-cli-${{ matrix.target }}.${{ matrix.archive }}
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: binary-${{ matrix.target }}
           path: |
@@ -130,11 +131,11 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v4.3.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           pattern: binary-*
           path: artifacts/
@@ -193,11 +194,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prerelease == 'false' }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v4.3.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      - uses: actions/setup-node@v6.3.0
         with:
           node-version: '20.x'
           registry-url: 'https://wombat-dressing-room.appspot.com'
@@ -213,11 +214,13 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.prerelease == 'false' }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@v4.3.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
 
       # Publish library crate first (CLI depends on it)
       - name: Publish google-workspace
