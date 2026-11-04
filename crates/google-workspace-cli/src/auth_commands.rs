@@ -925,6 +925,13 @@ fn is_recommended_scope(
     }
 }
 
+/// Determine if a discovered scope belongs in the "Read Only" template.
+fn is_readonly_scope(entry: &crate::setup::DiscoveredScope) -> bool {
+    entry.is_readonly
+        && !entry.short.starts_with("admin.")
+        && !entry.short.starts_with("cloud-identity.")
+}
+
 /// Run the rich discovery-based scope picker with templates.
 fn run_discovery_scope_picker(
     relevant_scopes: &[crate::setup::DiscoveredScope],
@@ -963,7 +970,7 @@ fn run_discovery_scope_picker(
         if is_recommended_scope(entry, &all_shorts, services_filter.is_some()) {
             recommended_scopes.push(entry.short.to_string());
         }
-        if entry.is_readonly {
+        if is_readonly_scope(entry) {
             readonly_scopes.push(entry.short.to_string());
         }
         // For "Full Access": skip if a broader scope exists (hierarchical dedup)
@@ -985,7 +992,8 @@ fn run_discovery_scope_picker(
         },
         SelectItem {
             label: "🔒 Read Only".to_string(),
-            description: "Selects only readonly scopes for enabled APIs".to_string(),
+            description: "Selects readonly scopes except Admin and Cloud Identity scopes"
+                .to_string(),
             selected: false,
             is_fixed: false,
             is_template: true,
@@ -1085,7 +1093,7 @@ fn run_discovery_scope_picker(
                     if is_app_only_scope(&entry.url) {
                         continue;
                     }
-                    if entry.is_readonly {
+                    if is_readonly_scope(entry) {
                         selected.push(entry.url.to_string());
                     }
                 }
@@ -2022,6 +2030,77 @@ mod tests {
         // HashMap<String, TokenInfo> format from EncryptedTokenStorage
         let data = r#"{"key":{"access_token":"ya29","refresh_token":"1//tok"}}"#;
         assert_eq!(extract_refresh_token(data), Some("1//tok".to_string()));
+    }
+
+    #[test]
+    fn readonly_preset_excludes_workspace_admin_scopes() {
+        for short in [
+            "cloud-identity.devices.readonly",
+            "cloud-identity.groups.readonly",
+            "admin.directory.device.chromeos.readonly",
+            "admin.directory.user.readonly",
+        ] {
+            let entry = discovered_scope(short);
+            assert!(
+                !is_readonly_scope(&entry),
+                "unexpected preset scope: {short}"
+            );
+            // Admin scopes remain eligible for Full Access and manual selection.
+            assert!(!is_app_only_scope(&entry.url));
+        }
+    }
+
+    #[test]
+    fn readonly_preset_preserves_other_readonly_scopes() {
+        for short in [
+            "drive.readonly",
+            "gmail.readonly",
+            "calendar.readonly",
+            "documents.readonly",
+            "spreadsheets.readonly",
+            "presentations.readonly",
+            "classroom.courses.readonly",
+            "classroom.rosters.readonly",
+            "directory.readonly",
+            "chat.admin.spaces.readonly",
+        ] {
+            assert!(is_readonly_scope(&discovered_scope(short)), "{short}");
+        }
+    }
+
+    #[test]
+    fn readonly_preset_excludes_write_scopes() {
+        for short in [
+            "drive",
+            "gmail.modify",
+            "calendar",
+            "cloud-identity.devices",
+        ] {
+            assert!(!is_readonly_scope(&discovered_scope(short)), "{short}");
+        }
+    }
+
+    #[test]
+    fn resolve_scopes_preserves_explicit_admin_scopes() {
+        let scopes = vec![
+            discovered_scope("cloud-identity.devices.readonly").url,
+            discovered_scope("admin.directory.user.readonly").url,
+        ];
+        assert_eq!(
+            run_resolve_scopes(ScopeMode::Custom(scopes.clone()), None),
+            scopes
+        );
+    }
+
+    fn discovered_scope(short: &str) -> crate::setup::DiscoveredScope {
+        crate::setup::DiscoveredScope {
+            url: format!("https://www.googleapis.com/auth/{short}"),
+            short: short.to_string(),
+            description: String::new(),
+            api_name: "Synthetic API".to_string(),
+            is_readonly: short.ends_with(".readonly"),
+            classification: crate::setup::ScopeClassification::Sensitive,
+        }
     }
 
     // ── is_workspace_admin_scope tests ──────────────────────────────────
