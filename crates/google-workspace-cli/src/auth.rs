@@ -352,38 +352,22 @@ async fn load_credentials_inner(
     }
 
     // 2. Encrypted credentials
+    //
+    // If decryption fails, keep `credentials.enc` and its token caches on disk.
+    // The usual cause is a key that cannot be read in this process (for example
+    // the OS keyring is unavailable, or the file was written with
+    // GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file and this process uses the
+    // keyring backend). Deleting the file in that case destroys a login that
+    // still works from other environments. A later `gws auth login` overwrites
+    // the file, so there is nothing to clean up here.
+    let mut enc_error: Option<anyhow::Error> = None;
     if enc_path.exists() {
         match credential_store::load_encrypted_from_path(enc_path) {
             Ok(json_str) => {
                 return parse_credential_file(enc_path, &json_str).await;
             }
             Err(e) => {
-                // Decryption failed — the encryption key likely changed (e.g. after
-                // an upgrade that migrated keys between keyring and file storage).
-                // Remove the stale file so the next `gws auth login` starts fresh,
-                // and fall through to other credential sources (plaintext, ADC).
-                eprintln!(
-                    "Warning: removing undecryptable credentials file ({}): {e:#}",
-                    enc_path.display()
-                );
-                if let Err(err) = tokio::fs::remove_file(enc_path).await {
-                    eprintln!(
-                        "Warning: failed to remove stale credentials file '{}': {err}",
-                        enc_path.display()
-                    );
-                }
-                // Also remove stale token caches that used the old key.
-                for cache_file in ["token_cache.json", "sa_token_cache.json"] {
-                    let path = enc_path.with_file_name(cache_file);
-                    if let Err(err) = tokio::fs::remove_file(&path).await {
-                        if err.kind() != std::io::ErrorKind::NotFound {
-                            eprintln!(
-                                "Warning: failed to remove stale token cache '{}': {err}",
-                                path.display()
-                            );
-                        }
-                    }
-                }
+                enc_error = Some(e);
                 // Fall through to remaining credential sources below.
             }
         }
@@ -423,6 +407,16 @@ async fn load_credentials_inner(
                 .with_context(|| format!("Failed to read ADC from {}", well_known.display()))?;
             return parse_credential_file(&well_known, &content).await;
         }
+    }
+
+    if let Some(e) = enc_error {
+        anyhow::bail!(
+            "Could not decrypt saved credentials at {}: {e:#}\n\
+             The file was left in place. If it was saved with \
+             GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file, set that variable to `file` and retry. \
+             Otherwise run `gws auth login` to replace it.",
+            enc_path.display()
+        );
     }
 
     anyhow::bail!(
@@ -825,9 +819,9 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn test_load_credentials_corrupt_encrypted_file_is_removed() {
-        // When credentials.enc cannot be decrypted, the file should be removed
-        // automatically and the function should fall through to other sources.
+    async fn test_load_credentials_corrupt_encrypted_file_is_preserved() {
+        // When credentials.enc cannot be decrypted and no other source exists,
+        // the file must be kept and the error must explain the decryption failure.
         let tmp = tempfile::tempdir().unwrap();
         let _home_guard = EnvVarGuard::set("HOME", tmp.path());
         let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
@@ -844,17 +838,48 @@ mod tests {
         let result =
             load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist")).await;
 
-        // Should fall through to "No credentials found" (not a decryption error).
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("No credentials found"),
-            "Should fall through to final error, got: {msg}"
+            msg.contains("Could not decrypt saved credentials"),
+            "Should report the decryption failure, got: {msg}"
         );
         assert!(
-            !enc_path.exists(),
-            "Stale credentials.enc must be removed after decryption failure"
+            msg.contains("GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND"),
+            "Should point at the keyring backend setting, got: {msg}"
         );
+        assert!(
+            enc_path.exists(),
+            "credentials.enc must not be deleted after a decryption failure"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_load_credentials_decryption_failure_keeps_token_caches() {
+        // A decryption failure must not delete the token caches either.
+        let tmp = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _adc_guard = EnvVarGuard::remove("GOOGLE_APPLICATION_CREDENTIALS");
+
+        let dir = tempfile::tempdir().unwrap();
+        let enc_path = dir.path().join("credentials.enc");
+        let token_cache = dir.path().join("token_cache.json");
+        let sa_token_cache = dir.path().join("sa_token_cache.json");
+
+        tokio::fs::write(&enc_path, b"not-valid-encrypted-data-at-all-1234567890")
+            .await
+            .unwrap();
+        tokio::fs::write(&token_cache, b"cache").await.unwrap();
+        tokio::fs::write(&sa_token_cache, b"cache").await.unwrap();
+
+        let result =
+            load_credentials_inner(None, &enc_path, &PathBuf::from("/does/not/exist")).await;
+
+        assert!(result.is_err());
+        assert!(enc_path.exists(), "credentials.enc must be kept");
+        assert!(token_cache.exists(), "token_cache.json must be kept");
+        assert!(sa_token_cache.exists(), "sa_token_cache.json must be kept");
     }
 
     #[tokio::test]
@@ -893,7 +918,10 @@ mod tests {
             }
             _ => panic!("Expected AuthorizedUser from plaintext fallback"),
         }
-        assert!(!enc_path.exists(), "Stale credentials.enc must be removed");
+        assert!(
+            enc_path.exists(),
+            "credentials.enc must not be deleted when falling through"
+        );
     }
 
     #[tokio::test]
