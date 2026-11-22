@@ -30,7 +30,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The "installed" application config from Google Cloud Console.
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,13 +52,32 @@ pub struct ClientSecretFile {
     pub installed: InstalledConfig,
 }
 
-/// Returns the path for the client secret config file.
+/// Returns the path the active profile's client config is written to.
 pub fn client_config_path() -> PathBuf {
-    crate::auth_commands::config_dir().join("client_secret.json")
+    crate::profile::profile_dir().join(crate::profile::CLIENT_CONFIG_FILE)
 }
 
-/// Saves OAuth client configuration in the standard Google Cloud Console format.
+/// Returns the client config path to read for the active profile: its own
+/// `client_secret.json`, else the shared one in the base config directory.
+pub fn resolved_client_config_path() -> PathBuf {
+    crate::profile::resolve_client_config_path(
+        &crate::auth_commands::config_dir(),
+        &crate::profile::active().name,
+    )
+}
+
+/// Saves OAuth client configuration in the standard Google Cloud Console format
+/// to the active profile's directory.
 pub fn save_client_config(
+    client_id: &str,
+    client_secret: &str,
+    project_id: &str,
+) -> anyhow::Result<PathBuf> {
+    save_client_config_to(&client_config_path(), client_id, client_secret, project_id)
+}
+
+fn save_client_config_to(
+    path: &Path,
     client_id: &str,
     client_secret: &str,
     project_id: &str,
@@ -75,22 +94,25 @@ pub fn save_client_config(
         },
     };
 
-    let path = client_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     let json = serde_json::to_string_pretty(&config)?;
-    crate::fs_util::atomic_write(&path, json.as_bytes())
+    crate::fs_util::atomic_write(path, json.as_bytes())
         .map_err(|e| anyhow::anyhow!("Failed to write client config: {e}"))?;
 
-    Ok(path)
+    Ok(path.to_path_buf())
 }
 
-/// Loads OAuth client configuration from the standard Google Cloud Console format.
+/// Loads the active profile's OAuth client configuration (see
+/// [`resolved_client_config_path`]).
 pub fn load_client_config() -> anyhow::Result<InstalledConfig> {
-    let path = client_config_path();
-    let data = std::fs::read_to_string(&path)
+    load_client_config_from(&resolved_client_config_path())
+}
+
+fn load_client_config_from(path: &Path) -> anyhow::Result<InstalledConfig> {
+    let data = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Cannot read {}: {e}", path.display()))?;
     let file: ClientSecretFile = serde_json::from_str(&data)
         .map_err(|e| anyhow::anyhow!("Invalid client_secret.json format: {e}"))?;
@@ -253,5 +275,37 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Invalid client_secret.json format"));
+    }
+
+    #[test]
+    fn test_named_profile_client_config_falls_back_to_shared() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let resolve = |name| crate::profile::resolve_client_config_path(base, name);
+
+        save_client_config_to(
+            &base.join("client_secret.json"),
+            "shared-id",
+            "shared-secret",
+            "shared-project",
+        )
+        .unwrap();
+        let config = load_client_config_from(&resolve("work")).unwrap();
+        assert_eq!(config.client_id, "shared-id");
+
+        let write_target = crate::profile::client_config_candidates(base, "work")[0].clone();
+        let written =
+            save_client_config_to(&write_target, "work-id", "work-secret", "work-project").unwrap();
+        assert!(written.starts_with(base.join("profiles").join("work")));
+
+        let config = load_client_config_from(&resolve("work")).unwrap();
+        assert_eq!(config.client_id, "work-id");
+        assert_eq!(config.project_id, "work-project");
+
+        // Other profiles still see the shared client.
+        let config = load_client_config_from(&resolve("default")).unwrap();
+        assert_eq!(config.client_id, "shared-id");
+        let config = load_client_config_from(&resolve("home")).unwrap();
+        assert_eq!(config.client_id, "shared-id");
     }
 }

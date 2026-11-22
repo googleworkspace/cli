@@ -593,9 +593,9 @@ async fn handle_login_inner(
     // 2. Saved client_secret.json from `gws auth setup` or manual download
     let (client_id, client_secret, project_id) = resolve_client_credentials()?;
 
-    // Persist credentials to client_secret.json if not already saved,
-    // so they survive env var removal or shell session changes.
-    if !crate::oauth_config::client_config_path().exists() {
+    // Persist credentials to client_secret.json if not already saved (for this
+    // profile or shared), so they survive env var removal or shell session changes.
+    if !crate::oauth_config::resolved_client_config_path().exists() {
         let _ = crate::oauth_config::save_client_config(
             &client_id,
             &client_secret,
@@ -760,7 +760,7 @@ fn resolve_client_credentials() -> Result<(String, String, Option<String>), GwsE
                    2. Download client_secret.json from Google Cloud Console and save it to:\n     \
                       {}\n  \
                    3. Set env vars: GOOGLE_WORKSPACE_CLI_CLIENT_ID and GOOGLE_WORKSPACE_CLI_CLIENT_SECRET",
-                crate::oauth_config::client_config_path().display()
+                crate::oauth_config::resolved_client_config_path().display()
             ),
         )),
     }
@@ -1253,7 +1253,7 @@ async fn handle_status() -> Result<(), GwsError> {
     });
 
     // Show client config (client_secret.json) status
-    let config_path = crate::oauth_config::client_config_path();
+    let config_path = crate::oauth_config::resolved_client_config_path();
     let has_config = config_path.exists();
     output["client_config"] = json!(config_path.display().to_string());
     output["client_config_exists"] = json!(has_config);
@@ -1854,7 +1854,7 @@ mod tests {
         }
         // Result depends on whether client_secret.json exists on the machine
         let result = resolve_client_credentials();
-        if crate::oauth_config::client_config_path().exists() {
+        if crate::oauth_config::resolved_client_config_path().exists() {
             assert!(
                 result.is_ok(),
                 "Should succeed when client_secret.json exists"
@@ -2016,7 +2016,7 @@ mod tests {
         }
         // When no env vars AND no client_secret.json on disk, should fail
         let result = resolve_client_credentials();
-        if !crate::oauth_config::client_config_path().exists() {
+        if !crate::oauth_config::resolved_client_config_path().exists() {
             assert!(result.is_err());
             match result.unwrap_err() {
                 GwsError::Auth(msg) => assert!(msg.contains("No OAuth client configured")),

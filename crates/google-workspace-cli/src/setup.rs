@@ -1696,6 +1696,7 @@ pub async fn run_setup(args: &[String]) -> Result<(), GwsError> {
         "apis_enabled": ctx.enabled.len(),
         "apis_skipped": ctx.skipped.len(),
         "apis_failed": ctx.failed.iter().map(|(api, err)| json!({"api": api, "error": err})).collect::<Vec<_>>(),
+        "profile": crate::profile::active().name,
         "client_config": crate::oauth_config::client_config_path().display().to_string(),
     });
     println!(

@@ -35,6 +35,7 @@ pub const DEFAULT_PROFILE: &str = "default";
 pub const PROFILE_ENV_VAR: &str = "GOOGLE_WORKSPACE_CLI_PROFILE";
 const PROFILE_FLAG: &str = "--profile";
 const PROFILES_SUBDIR: &str = "profiles";
+pub const CLIENT_CONFIG_FILE: &str = "client_secret.json";
 const MAX_PROFILE_NAME_LEN: usize = 64;
 const TOKEN_ENV_VAR: &str = "GOOGLE_WORKSPACE_CLI_TOKEN";
 const CREDENTIALS_FILE_ENV_VAR: &str = "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE";
@@ -135,6 +136,30 @@ pub fn profile_dir_for(base: &Path, name: &str) -> PathBuf {
     } else {
         base.join(PROFILES_SUBDIR).join(name)
     }
+}
+
+/// OAuth client config locations to read, in priority order: the profile's
+/// own `client_secret.json`, then the shared one in the base directory (the
+/// same file for the default profile). The first entry is the write target.
+pub fn client_config_candidates(base: &Path, name: &str) -> Vec<PathBuf> {
+    let own = profile_dir_for(base, name).join(CLIENT_CONFIG_FILE);
+    let shared = base.join(CLIENT_CONFIG_FILE);
+    if own == shared {
+        vec![own]
+    } else {
+        vec![own, shared]
+    }
+}
+
+/// Returns the first existing client config candidate, or the write target
+/// if none exists.
+pub fn resolve_client_config_path(base: &Path, name: &str) -> PathBuf {
+    let candidates = client_config_candidates(base, name);
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .unwrap_or(&candidates[0])
+        .clone()
 }
 
 /// Extracts the global `--profile NAME` / `--profile=NAME` flag from argv and
@@ -417,6 +442,51 @@ mod tests {
             profile_dir_for(base, "work"),
             base.join("profiles").join("work")
         );
+    }
+
+    #[test]
+    fn client_config_candidates_default_is_shared_file_only() {
+        let base = Path::new("/cfg/gws");
+        assert_eq!(
+            client_config_candidates(base, DEFAULT_PROFILE),
+            vec![base.join("client_secret.json")]
+        );
+    }
+
+    #[test]
+    fn client_config_candidates_named_prefers_own_then_shared() {
+        let base = Path::new("/cfg/gws");
+        assert_eq!(
+            client_config_candidates(base, "work"),
+            vec![
+                base.join("profiles")
+                    .join("work")
+                    .join("client_secret.json"),
+                base.join("client_secret.json"),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_client_config_path_fallback_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let own = profile_dir_for(base, "work").join(CLIENT_CONFIG_FILE);
+        let shared = base.join(CLIENT_CONFIG_FILE);
+
+        // Nothing exists: the write target (profile's own file).
+        assert_eq!(resolve_client_config_path(base, "work"), own);
+        assert_eq!(resolve_client_config_path(base, DEFAULT_PROFILE), shared);
+
+        // Shared only: named profiles fall back to it.
+        std::fs::write(&shared, "{}").unwrap();
+        assert_eq!(resolve_client_config_path(base, "work"), shared);
+
+        // Profile's own file wins once it exists.
+        std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+        std::fs::write(&own, "{}").unwrap();
+        assert_eq!(resolve_client_config_path(base, "work"), own);
+        assert_eq!(resolve_client_config_path(base, DEFAULT_PROFILE), shared);
     }
 
     #[test]
