@@ -34,6 +34,7 @@ mod helpers;
 mod logging;
 mod oauth_config;
 mod output;
+mod profile;
 mod schema;
 mod services;
 mod setup;
@@ -60,8 +61,9 @@ async fn main() {
 }
 
 async fn run() -> Result<(), GwsError> {
-    let args: Vec<String> = std::env::args().collect();
-    auth_commands::set_active_profile(extract_profile_arg(&args)?)?;
+    let raw_args: Vec<String> = std::env::args().collect();
+    // Strip the global `--profile` flag once so the rest of dispatch never sees it.
+    let args = profile::init(&raw_args)?;
 
     if args.len() < 2 {
         print_usage();
@@ -71,8 +73,29 @@ async fn run() -> Result<(), GwsError> {
         ));
     }
 
-    // Find the first non-flag arg, skipping top-level flags and their values.
-    let (first_arg, first_arg_index) = find_first_command_arg(&args).ok_or_else(|| {
+    // Find the first non-flag arg (skip --api-version and its value)
+    let mut first_arg: Option<String> = None;
+    {
+        let mut skip_next = false;
+        for a in args.iter().skip(1) {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if a == "--api-version" {
+                skip_next = true;
+                continue;
+            }
+            if a.starts_with("--api-version=") {
+                continue;
+            }
+            if !a.starts_with("--") || a.as_str() == "--help" || a.as_str() == "--version" {
+                first_arg = Some(a.clone());
+                break;
+            }
+        }
+    }
+    let first_arg = first_arg.ok_or_else(|| {
         GwsError::Validation(
             "No service specified. Usage: gws <service> <resource> [sub-resource] <method> [flags]"
                 .to_string(),
@@ -93,34 +116,28 @@ async fn run() -> Result<(), GwsError> {
 
     // Handle the `schema` command
     if first_arg == "schema" {
-        let schema_args = strip_global_flags(&args[first_arg_index + 1..]);
-        if schema_args.is_empty() {
+        if args.len() < 3 {
             return Err(GwsError::Validation(
                 "Usage: gws schema <service.resource.method> (e.g., gws schema drive.files.list) [--resolve-refs]"
                     .to_string(),
             ));
         }
-        let resolve_refs = schema_args.iter().any(|arg| arg == "--resolve-refs");
-        let path = schema_args
-            .iter()
-            .find(|arg| arg.as_str() != "--resolve-refs")
-            .ok_or_else(|| {
-                GwsError::Validation(
-                    "Usage: gws schema <service.resource.method> [--resolve-refs]".to_string(),
-                )
-            })?;
+        let resolve_refs = args.iter().any(|arg| arg == "--resolve-refs");
+        // Remove the flag if it exists so it doesn't mess up path parsing, or just pass the path
+        // The path is args[2], flags might follow.
+        let path = &args[2];
         return schema::handle_schema_command(path, resolve_refs).await;
     }
 
     // Handle the `generate-skills` command
     if first_arg == "generate-skills" {
-        let gen_args = strip_global_flags(&args[first_arg_index + 1..]);
+        let gen_args: Vec<String> = args.iter().skip(2).cloned().collect();
         return generate_skills::handle_generate_skills(&gen_args).await;
     }
 
     // Handle the `auth` command
     if first_arg == "auth" {
-        let auth_args = strip_global_flags(&args[first_arg_index + 1..]);
+        let auth_args: Vec<String> = args.iter().skip(2).cloned().collect();
         return auth_commands::handle_auth_command(&auth_args).await;
     }
 
@@ -304,74 +321,6 @@ fn parse_pagination_config(matches: &clap::ArgMatches) -> executor::PaginationCo
     }
 }
 
-fn is_global_value_flag(arg: &str) -> bool {
-    matches!(arg, "--api-version" | "--profile")
-}
-
-fn is_global_equals_flag(arg: &str) -> bool {
-    arg.starts_with("--api-version=") || arg.starts_with("--profile=")
-}
-
-fn find_first_command_arg(args: &[String]) -> Option<(String, usize)> {
-    let mut skip_next = false;
-    for (idx, a) in args.iter().enumerate().skip(1) {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if is_global_value_flag(a) {
-            skip_next = true;
-            continue;
-        }
-        if is_global_equals_flag(a) {
-            continue;
-        }
-        if !a.starts_with("--") || is_help_flag(a) || is_version_flag(a) {
-            return Some((a.clone(), idx));
-        }
-    }
-    None
-}
-
-fn strip_global_flags(args: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut skip_next = false;
-    for arg in args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if is_global_value_flag(arg) {
-            skip_next = true;
-            continue;
-        }
-        if is_global_equals_flag(arg) {
-            continue;
-        }
-        out.push(arg.clone());
-    }
-    out
-}
-
-fn extract_profile_arg(args: &[String]) -> Result<Option<String>, GwsError> {
-    let mut profile = std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE").ok();
-    let mut iter = args.iter().skip(1);
-    while let Some(arg) = iter.next() {
-        if arg == "--profile" {
-            let value = iter.next().ok_or_else(|| {
-                GwsError::Validation("--profile requires a profile name".to_string())
-            })?;
-            profile = Some(value.clone());
-        } else if let Some(value) = arg.strip_prefix("--profile=") {
-            profile = Some(value.to_string());
-        }
-    }
-    if let Some(ref value) = profile {
-        auth_commands::validate_profile_name(value)?;
-    }
-    Ok(profile)
-}
-
 pub fn parse_service_and_version(
     args: &[String],
     first_arg: &str,
@@ -408,11 +357,11 @@ pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<St
             skip_next = false;
             continue;
         }
-        if is_global_value_flag(arg) {
+        if arg == "--api-version" {
             skip_next = true;
             continue;
         }
-        if is_global_equals_flag(arg) {
+        if arg.starts_with("--api-version=") {
             continue;
         }
         if !service_skipped && arg == service_name {
@@ -532,7 +481,7 @@ fn print_usage() {
     println!("ENVIRONMENT:");
     println!("    GOOGLE_WORKSPACE_CLI_TOKEN               Pre-obtained OAuth2 access token (highest priority)");
     println!("    GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE    Path to OAuth credentials JSON file");
-    println!("    GOOGLE_WORKSPACE_CLI_PROFILE             Named auth profile to use");
+    println!("    GOOGLE_WORKSPACE_CLI_PROFILE             Named auth profile to use (overridden by --profile)");
     println!("    GOOGLE_WORKSPACE_CLI_CLIENT_ID           OAuth client ID (for gws auth login)");
     println!(
         "    GOOGLE_WORKSPACE_CLI_CLIENT_SECRET       OAuth client secret (for gws auth login)"
@@ -750,60 +699,6 @@ mod tests {
         ];
         let filtered = filter_args_for_subcommand(&args, "drive");
         assert_eq!(filtered, vec!["gws", "files", "list"]);
-    }
-
-    #[test]
-    fn test_filter_args_strips_profile() {
-        let args: Vec<String> = vec![
-            "gws".into(),
-            "--profile".into(),
-            "work".into(),
-            "drive".into(),
-            "files".into(),
-            "list".into(),
-        ];
-        let filtered = filter_args_for_subcommand(&args, "drive");
-        assert_eq!(filtered, vec!["gws", "files", "list"]);
-    }
-
-    #[test]
-    fn test_first_command_skips_profile() {
-        let args: Vec<String> = vec![
-            "gws".into(),
-            "--profile".into(),
-            "work".into(),
-            "auth".into(),
-            "status".into(),
-        ];
-        assert_eq!(find_first_command_arg(&args), Some(("auth".to_string(), 3)));
-    }
-
-    #[test]
-    fn test_strip_global_flags_after_command() {
-        let args: Vec<String> = vec![
-            "status".into(),
-            "--profile".into(),
-            "work".into(),
-            "--format".into(),
-            "json".into(),
-        ];
-        assert_eq!(
-            strip_global_flags(&args),
-            vec!["status", "--format", "json"]
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_extract_profile_arg() {
-        unsafe {
-            std::env::remove_var("GOOGLE_WORKSPACE_CLI_PROFILE");
-        }
-        let args: Vec<String> = vec!["gws".into(), "--profile=work".into(), "auth".into()];
-        assert_eq!(
-            extract_profile_arg(&args).unwrap(),
-            Some("work".to_string())
-        );
     }
 
     #[test]

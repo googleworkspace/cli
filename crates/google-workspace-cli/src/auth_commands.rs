@@ -16,7 +16,6 @@ use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -335,63 +334,19 @@ pub fn config_dir() -> PathBuf {
     primary
 }
 
-static ACTIVE_PROFILE: OnceLock<String> = OnceLock::new();
-
-pub(crate) const DEFAULT_PROFILE: &str = "default";
-
-pub(crate) fn validate_profile_name(name: &str) -> Result<(), GwsError> {
-    if name.is_empty()
-        || name.starts_with('-')
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(GwsError::Validation(
-            "Profile names must start with a letter, number, or '_' and may only contain letters, numbers, '-' and '_'".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn set_active_profile(profile: Option<String>) -> Result<(), GwsError> {
-    if let Some(profile) = profile {
-        validate_profile_name(&profile)?;
-        let _ = ACTIVE_PROFILE.set(profile);
-    }
-    Ok(())
-}
-
-pub(crate) fn active_profile() -> String {
-    ACTIVE_PROFILE
-        .get()
-        .cloned()
-        .or_else(|| std::env::var("GOOGLE_WORKSPACE_CLI_PROFILE").ok())
-        .filter(|p| validate_profile_name(p).is_ok())
-        .unwrap_or_else(|| DEFAULT_PROFILE.to_string())
-}
-
-pub(crate) fn profile_dir() -> PathBuf {
-    let profile = active_profile();
-    if profile == DEFAULT_PROFILE {
-        config_dir()
-    } else {
-        config_dir().join("profiles").join(profile)
-    }
-}
-
 pub(crate) fn plain_credentials_path() -> PathBuf {
     if let Ok(path) = std::env::var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE") {
         return PathBuf::from(path);
     }
-    profile_dir().join("credentials.json")
+    crate::profile::profile_dir().join("credentials.json")
 }
 
 pub(crate) fn token_cache_path() -> PathBuf {
-    profile_dir().join("token_cache.json")
+    crate::profile::profile_dir().join("token_cache.json")
 }
 
 pub(crate) fn service_account_token_cache_path() -> PathBuf {
-    profile_dir().join("sa_token_cache.json")
+    crate::profile::profile_dir().join("sa_token_cache.json")
 }
 
 /// Which scope set to use for login.
@@ -701,7 +656,7 @@ async fn handle_login_inner(
     let output = json!({
         "status": "success",
         "message": "Authentication successful. Encrypted credentials saved.",
-        "profile": active_profile(),
+        "profile": crate::profile::active().name,
         "account": actual_email.as_deref().unwrap_or("(unknown)"),
         "credentials_file": enc_path.display().to_string(),
         "encryption": "AES-256-GCM (key in OS keyring or local `.encryption_key`; set GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file for headless)",
@@ -1278,8 +1233,8 @@ async fn handle_status() -> Result<(), GwsError> {
     };
 
     let mut output = json!({
-        "profile": active_profile(),
-        "profile_dir": profile_dir().display().to_string(),
+        "profile": crate::profile::active().name,
+        "profile_dir": crate::profile::profile_dir().display().to_string(),
         "auth_method": auth_method,
         "storage": storage,
         "keyring_backend": credential_store::active_backend_name(),
@@ -1533,13 +1488,13 @@ fn handle_logout() -> Result<(), GwsError> {
     let output = if removed.is_empty() {
         json!({
             "status": "success",
-            "profile": active_profile(),
+            "profile": crate::profile::active().name,
             "message": "No credentials found to remove.",
         })
     } else {
         json!({
             "status": "success",
-            "profile": active_profile(),
+            "profile": crate::profile::active().name,
             "message": "Logged out. All credentials and token caches removed.",
             "removed": removed,
         })
@@ -1957,43 +1912,6 @@ mod tests {
         let path = token_cache_path();
         assert!(path.ends_with("token_cache.json"));
         assert!(path.starts_with(config_dir()));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn profile_dir_defaults_to_config_dir() {
-        unsafe {
-            std::env::remove_var("GOOGLE_WORKSPACE_CLI_PROFILE");
-        }
-        assert_eq!(active_profile(), DEFAULT_PROFILE);
-        assert_eq!(profile_dir(), config_dir());
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn named_profile_uses_isolated_paths() {
-        unsafe {
-            std::env::set_var("GOOGLE_WORKSPACE_CLI_PROFILE", "work");
-        }
-
-        let dir = profile_dir();
-        assert!(dir.ends_with("profiles/work") || dir.ends_with(r"profiles\work"));
-        assert!(plain_credentials_path().starts_with(&dir));
-        assert!(token_cache_path().starts_with(&dir));
-        assert!(service_account_token_cache_path().starts_with(&dir));
-
-        unsafe {
-            std::env::remove_var("GOOGLE_WORKSPACE_CLI_PROFILE");
-        }
-    }
-
-    #[test]
-    fn validate_profile_name_rejects_traversal() {
-        assert!(validate_profile_name("work").is_ok());
-        assert!(validate_profile_name("../work").is_err());
-        assert!(validate_profile_name("work.profile").is_err());
-        assert!(validate_profile_name("--help").is_err());
-        assert!(validate_profile_name("").is_err());
     }
 
     #[tokio::test]
