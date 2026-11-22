@@ -583,6 +583,30 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for CliFlowDelega
     }
 }
 
+/// Decides whether `auth login` persists the OAuth client it used to the
+/// active profile's own client config (`own_path`).
+///
+/// - No client config at the resolved path: save (as before profiles existed).
+/// - Default profile, or a named profile with its own file: never overwrite.
+/// - Named profile falling back to the shared file: save only when the client
+///   used (e.g. from `GOOGLE_WORKSPACE_CLI_CLIENT_ID`) differs from the shared
+///   one, so a different organization's client sticks to this profile.
+fn should_persist_login_client(
+    is_default_profile: bool,
+    own_path: &Path,
+    resolved_path: &Path,
+    resolved_client_id: Option<&str>,
+    client_id: &str,
+) -> bool {
+    if !resolved_path.exists() {
+        return true;
+    }
+    if is_default_profile || own_path.exists() {
+        return false;
+    }
+    resolved_client_id != Some(client_id)
+}
+
 /// Inner login implementation that takes already-parsed options.
 async fn handle_login_inner(
     scope_mode: ScopeMode,
@@ -593,13 +617,23 @@ async fn handle_login_inner(
     // 2. Saved client_secret.json from `gws auth setup` or manual download
     let (client_id, client_secret, project_id) = resolve_client_credentials()?;
 
-    // Persist credentials to client_secret.json if not already saved (for this
-    // profile or shared), so they survive env var removal or shell session changes.
-    if !crate::oauth_config::resolved_client_config_path().exists() {
+    // Persist the client to client_secret.json so it survives env var removal
+    // or shell session changes (see `should_persist_login_client`).
+    let resolved_client = crate::oauth_config::load_client_config().ok();
+    let resolved_client_id = resolved_client.as_ref().map(|c| c.client_id.as_str());
+    if should_persist_login_client(
+        crate::profile::active().is_default(),
+        &crate::oauth_config::client_config_path(),
+        &crate::oauth_config::resolved_client_config_path(),
+        resolved_client_id,
+        &client_id,
+    ) {
+        // The resolved config's project only belongs to this client if the IDs match.
+        let same_client = resolved_client_id == Some(client_id.as_str());
         let _ = crate::oauth_config::save_client_config(
             &client_id,
             &client_secret,
-            project_id.as_deref().unwrap_or(""),
+            project_id.as_deref().filter(|_| same_client).unwrap_or(""),
         );
     }
 
@@ -700,9 +734,10 @@ async fn fetch_userinfo_email(access_token: &str) -> Option<String> {
 async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
     let enc_path = credential_store::encrypted_credentials_path();
     if !enc_path.exists() {
-        return Err(GwsError::Auth(
-            "No encrypted credentials found. Run 'gws auth login' first.".to_string(),
-        ));
+        return Err(GwsError::Auth(format!(
+            "No encrypted credentials found. Run '{}' first.",
+            crate::profile::auth_command("login")
+        )));
     }
 
     match credential_store::load_encrypted() {
@@ -1950,6 +1985,70 @@ mod tests {
             login_temp_credentials_path(&crate::profile::profile_dir_for(base, "default")),
             base.join("credentials.tmp")
         );
+    }
+
+    #[test]
+    fn persist_login_client_decisions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let candidates = |name| crate::profile::client_config_candidates(base, name);
+        let resolve = |name| crate::profile::resolve_client_config_path(base, name);
+        let work_own = candidates("work")[0].clone();
+        let default_own = candidates("default")[0].clone();
+
+        // Nothing saved anywhere: persist for both default and named profiles.
+        assert!(should_persist_login_client(
+            true,
+            &default_own,
+            &resolve("default"),
+            None,
+            "env-id"
+        ));
+        assert!(should_persist_login_client(
+            false,
+            &work_own,
+            &resolve("work"),
+            None,
+            "env-id"
+        ));
+
+        std::fs::write(base.join("client_secret.json"), "{}").unwrap();
+
+        // Shared exists, env client differs, named profile: save to profile dir.
+        assert!(should_persist_login_client(
+            false,
+            &work_own,
+            &resolve("work"),
+            Some("shared-id"),
+            "other-org-id"
+        ));
+        // Same client as the shared one: keep using the fallback.
+        assert!(!should_persist_login_client(
+            false,
+            &work_own,
+            &resolve("work"),
+            Some("shared-id"),
+            "shared-id"
+        ));
+        // Default profile never overwrites its existing file (unchanged).
+        assert!(!should_persist_login_client(
+            true,
+            &default_own,
+            &resolve("default"),
+            Some("shared-id"),
+            "other-org-id"
+        ));
+
+        // A named profile's own file is never overwritten.
+        std::fs::create_dir_all(work_own.parent().unwrap()).unwrap();
+        std::fs::write(&work_own, "{}").unwrap();
+        assert!(!should_persist_login_client(
+            false,
+            &work_own,
+            &resolve("work"),
+            Some("work-id"),
+            "other-org-id"
+        ));
     }
 
     #[test]

@@ -49,7 +49,10 @@ impl EncryptedTokenStorage {
                     "warning: failed to decrypt token cache ({}): {e:#}",
                     self.file_path.display()
                 );
-                eprintln!("hint: you may need to re-authenticate with `gws auth login`");
+                eprintln!(
+                    "hint: you may need to re-authenticate with `{}`",
+                    crate::profile::auth_command("login")
+                );
                 return HashMap::new();
             }
         };

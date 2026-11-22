@@ -85,13 +85,15 @@ async fn refresh_token_with_reqwest(
 /// Priority:
 /// 1. `GOOGLE_WORKSPACE_PROJECT_ID` environment variable.
 /// 2. `project_id` from the OAuth client configuration (`client_secret.json`).
-/// 3. `quota_project_id` from Application Default Credentials (ADC) — default
-///    profile only, so a named profile never bills to another identity's project.
+/// 3. `quota_project_id` from Application Default Credentials (ADC): an explicit
+///    `GOOGLE_APPLICATION_CREDENTIALS`, else the well-known gcloud file. Like
+///    credential loading, named profiles skip the implicit well-known file so
+///    they never bill to another identity's project.
 pub fn get_quota_project() -> Option<String> {
     quota_project_inner(crate::profile::active().is_default())
 }
 
-fn quota_project_inner(allow_adc: bool) -> Option<String> {
+fn quota_project_inner(allow_well_known_adc: bool) -> Option<String> {
     // 1. Explicit environment variable (highest priority)
     if let Ok(project_id) = std::env::var("GOOGLE_WORKSPACE_PROJECT_ID") {
         if !project_id.is_empty() {
@@ -107,13 +109,16 @@ fn quota_project_inner(allow_adc: bool) -> Option<String> {
     }
 
     // 3. Fallback to Application Default Credentials (ADC)
-    if !allow_adc {
-        return None;
-    }
     let path = std::env::var("GOOGLE_APPLICATION_CREDENTIALS")
         .ok()
         .map(PathBuf::from)
-        .or_else(adc_well_known_path)?;
+        .or_else(|| {
+            if allow_well_known_adc {
+                adc_well_known_path()
+            } else {
+                None
+            }
+        })?;
     let content = std::fs::read_to_string(path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
     json.get("quota_project_id")
@@ -1165,6 +1170,32 @@ mod tests {
             Some("well-known-project".to_string())
         );
         assert_eq!(quota_project_inner(false), None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_quota_project_named_profile_honors_explicit_adc_env_var() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_well_known_adc(tmp.path());
+        let explicit = tmp.path().join("explicit_adc.json");
+        std::fs::write(&explicit, r#"{"quota_project_id": "explicit-project"}"#).unwrap();
+
+        let _home_guard = EnvVarGuard::set("HOME", tmp.path());
+        let _env_guard = EnvVarGuard::remove("GOOGLE_WORKSPACE_PROJECT_ID");
+        let _config_guard = EnvVarGuard::set(
+            "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+            tmp.path().join("gws").to_str().unwrap(),
+        );
+        let _adc_guard = EnvVarGuard::set("GOOGLE_APPLICATION_CREDENTIALS", &explicit);
+
+        assert_eq!(
+            quota_project_inner(false),
+            Some("explicit-project".to_string())
+        );
+        assert_eq!(
+            quota_project_inner(true),
+            Some("explicit-project".to_string())
+        );
     }
 
     #[test]

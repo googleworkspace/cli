@@ -310,6 +310,20 @@ pub fn active() -> ActiveProfile {
         .unwrap_or_else(ActiveProfile::default_profile)
 }
 
+/// Formats a `gws auth <subcommand>` hint that targets the given profile.
+pub fn auth_command_for(profile_name: &str, subcommand: &str) -> String {
+    if profile_name == DEFAULT_PROFILE {
+        format!("gws auth {subcommand}")
+    } else {
+        format!("gws {PROFILE_FLAG} {profile_name} auth {subcommand}")
+    }
+}
+
+/// [`auth_command_for`] for the active profile.
+pub fn auth_command(subcommand: &str) -> String {
+    auth_command_for(&active().name, subcommand)
+}
+
 /// Directory holding the active profile's per-account files.
 pub fn profile_dir() -> PathBuf {
     profile_dir_for(&crate::auth_commands::config_dir(), &active().name)
@@ -682,6 +696,16 @@ mod tests {
 
         assert!(select(&argv(&["gws", "--profile", "work"]), None, true, false).is_err());
         assert!(select(&argv(&["gws", "auth"]), Some("../x"), false, false).is_err());
+    }
+
+    #[test]
+    fn auth_command_for_includes_profile_flag_for_named_profiles() {
+        assert_eq!(auth_command_for(DEFAULT_PROFILE, "login"), "gws auth login");
+        assert_eq!(
+            auth_command_for("work", "logout"),
+            "gws --profile work auth logout"
+        );
+        assert_eq!(auth_command("login"), "gws auth login");
     }
 
     #[test]
