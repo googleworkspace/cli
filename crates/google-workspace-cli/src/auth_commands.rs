@@ -178,8 +178,15 @@ fn read_refresh_token_from_cache(temp_path: &Path) -> Result<String, GwsError> {
     })
 }
 
+/// Temporary token cache written during `auth login`. It holds the new refresh
+/// token, so it lives in the profile's own directory: concurrent logins for
+/// different profiles must never share (or delete) each other's file.
+fn login_temp_credentials_path(profile_dir: &Path) -> PathBuf {
+    profile_dir.join("credentials.tmp")
+}
+
 async fn login_with_yup_oauth(
-    config_dir: &Path,
+    profile_dir: &Path,
     client_id: &str,
     client_secret: &str,
     scopes: &[String],
@@ -193,7 +200,7 @@ async fn login_with_yup_oauth(
         ..Default::default()
     };
 
-    let temp_path = config_dir.join("credentials.tmp");
+    let temp_path = login_temp_credentials_path(profile_dir);
     let _ = std::fs::remove_file(&temp_path);
 
     let result = async {
@@ -617,9 +624,9 @@ async fn handle_login_inner(
         }
     }
 
-    // Ensure config directory exists
-    let config = config_dir();
-    std::fs::create_dir_all(&config)
+    // Ensure the profile directory exists
+    let profile_dir = crate::profile::profile_dir();
+    std::fs::create_dir_all(&profile_dir)
         .map_err(|e| GwsError::Validation(format!("Failed to create config directory: {e}")))?;
 
     // If proxy env vars are set, use proxy-aware OAuth flow (reqwest)
@@ -627,7 +634,7 @@ async fn handle_login_inner(
     let (access_token, refresh_token) = if crate::auth::has_proxy_env() {
         login_with_proxy_support(&client_id, &client_secret, &scopes).await?
     } else {
-        login_with_yup_oauth(&config, &client_id, &client_secret, &scopes).await?
+        login_with_yup_oauth(&profile_dir, &client_id, &client_secret, &scopes).await?
     };
 
     // Build credentials in the standard authorized_user format
@@ -1465,8 +1472,23 @@ async fn handle_status() -> Result<(), GwsError> {
     Ok(())
 }
 
+/// Plaintext credentials file removed by `auth logout`. A named profile only
+/// ever removes files from its own directory, never a
+/// `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` that happens to be set.
+fn logout_plain_credentials_path(
+    profile: &crate::profile::ActiveProfile,
+    profile_dir: &Path,
+) -> PathBuf {
+    if profile.is_default() {
+        plain_credentials_path()
+    } else {
+        profile_dir.join("credentials.json")
+    }
+}
+
 fn handle_logout() -> Result<(), GwsError> {
-    let plain_path = plain_credentials_path();
+    let plain_path =
+        logout_plain_credentials_path(&crate::profile::active(), &crate::profile::profile_dir());
     let enc_path = credential_store::encrypted_credentials_path();
     let token_cache = token_cache_path();
     let sa_token_cache = service_account_token_cache_path();
@@ -1912,6 +1934,44 @@ mod tests {
         let path = token_cache_path();
         assert!(path.ends_with("token_cache.json"));
         assert!(path.starts_with(config_dir()));
+    }
+
+    #[test]
+    fn login_temp_credentials_path_is_per_profile() {
+        let base = Path::new("/cfg/gws");
+        let work = login_temp_credentials_path(&crate::profile::profile_dir_for(base, "work"));
+        let home = login_temp_credentials_path(&crate::profile::profile_dir_for(base, "home"));
+        assert_eq!(
+            work,
+            base.join("profiles").join("work").join("credentials.tmp")
+        );
+        assert_ne!(work, home);
+        assert_eq!(
+            login_temp_credentials_path(&crate::profile::profile_dir_for(base, "default")),
+            base.join("credentials.tmp")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn logout_named_profile_never_targets_credentials_file_env() {
+        unsafe {
+            std::env::set_var(
+                "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE",
+                "/elsewhere/creds.json",
+            );
+        }
+        let dir = Path::new("/cfg/gws/profiles/work");
+        let named = crate::profile::resolve_profile(None, Some("work")).unwrap();
+        let named_path = logout_plain_credentials_path(&named, dir);
+        let default_path =
+            logout_plain_credentials_path(&crate::profile::ActiveProfile::default_profile(), dir);
+        unsafe {
+            std::env::remove_var("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE");
+        }
+        assert_eq!(named_path, dir.join("credentials.json"));
+        // Unchanged behavior for the default profile.
+        assert_eq!(default_path, PathBuf::from("/elsewhere/creds.json"));
     }
 
     #[tokio::test]
