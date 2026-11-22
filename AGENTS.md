@@ -69,6 +69,7 @@ The repository is a Cargo workspace with two crates:
 | `auth.rs`           | OAuth2 token acquisition via env vars, encrypted credentials, or ADC     |
 | `credential_store.rs` | AES-256-GCM encryption/decryption of credential files                  |
 | `auth_commands.rs`  | `gws auth` subcommands: `login`, `logout`, `setup`, `status`, `export`   |
+| `profile.rs`        | Named auth profiles: `--profile` / env resolution, per-profile paths     |
 | `commands.rs`       | Recursive `clap::Command` builder from Discovery resources               |
 | `executor.rs`       | HTTP request construction, response handling, schema validation          |
 | `schema.rs`         | `gws schema` command — introspect API method schemas                     |
@@ -199,6 +200,7 @@ See [`src/helpers/README.md`](crates/google-workspace-cli/src/helpers/README.md)
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority; bypasses all credential file loading) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (no default; if unset, falls back to encrypted credentials in `~/.config/gws/`) |
+| `GOOGLE_WORKSPACE_CLI_PROFILE` | Named auth profile (default: `default`; overridden by the global `--profile` flag). Named profiles live in `~/.config/gws/profiles/<name>/` |
 | `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND` | Keyring backend: `keyring` (default, uses OS keyring with file fallback) or `file` (file only, for Docker/CI/headless) |
 
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard Google ADC path; used as fallback when no gws-specific credentials are configured |

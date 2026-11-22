@@ -116,6 +116,7 @@ The CLI supports multiple auth workflows so it works on your laptop, in CI, and 
 | A GCP project but no `gcloud` | [Manual OAuth setup](#manual-oauth-setup-google-cloud-console) |
 | An existing OAuth access token | [`GOOGLE_WORKSPACE_CLI_TOKEN`](#pre-obtained-access-token) |
 | Existing Credentials | [`GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`](#service-account-server-to-server) |
+| Several Google accounts (e.g. work and personal) | [`--profile`](#multiple-accounts-profiles) |
 
 ### Interactive (local desktop)
 
@@ -152,6 +153,8 @@ Use this when `gws auth setup` cannot automate project/client creation, or when 
    - Type: **Desktop app**
 5. Download the client JSON and save it to:
    - `~/.config/gws/client_secret.json`
+   - or, for a client used by one [profile](#multiple-accounts-profiles) only,
+     `~/.config/gws/profiles/<name>/client_secret.json`
 
 > [!IMPORTANT]
 > **You must add yourself as a test user.** In the OAuth consent screen, click
@@ -204,14 +207,54 @@ Useful when another tool (e.g. `gcloud`) already mints tokens for your environme
 export GOOGLE_WORKSPACE_CLI_TOKEN=$(gcloud auth print-access-token)
 ```
 
+### Multiple accounts (profiles)
+
+Use named profiles to keep several accounts signed in side by side. Each
+profile has its own credentials, token caches and timezone cache:
+
+```bash
+gws --profile work auth login        # sign in the "work" profile
+gws --profile work drive files list  # use it
+export GOOGLE_WORKSPACE_CLI_PROFILE=work
+gws auth status                      # shows "profile": "work" and its "profile_dir"
+gws --profile work auth logout       # only removes the "work" profile's files
+```
+
+- **Selection:** `--profile NAME` (a global flag, accepted anywhere before a
+  literal `--`) > `GOOGLE_WORKSPACE_CLI_PROFILE` (empty = unset) > `default`.
+- **Names:** 1–64 characters of lowercase letters, digits, `_` and `-`, not
+  starting with `-` (Windows device names such as `con` or `nul` are
+  rejected). An invalid name — from the flag or the env var — is an error;
+  gws never silently falls back to `default`.
+- **Storage:** `default` uses the config directory itself (`~/.config/gws`,
+  as before); any other profile uses `~/.config/gws/profiles/<name>/`. The
+  encryption key and the Discovery cache are shared.
+- **OAuth client:** each profile may have its own `client_secret.json` in its
+  profile directory (`gws --profile work auth setup` saves it there) and
+  otherwise falls back to the shared `~/.config/gws/client_secret.json`. Use a
+  separate client when accounts belong to different Workspace organizations,
+  since a client with an **Internal** consent screen only accepts accounts
+  from its own organization.
+- **No implicit ADC:** named profiles never use gcloud's well-known
+  Application Default Credentials
+  (`~/.config/gcloud/application_default_credentials.json`), so a profile
+  can't silently act as whichever account gcloud is logged in as. An
+  explicit `GOOGLE_APPLICATION_CREDENTIALS` is still honored.
+- `GOOGLE_WORKSPACE_CLI_TOKEN` and `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`
+  bypass profile storage. Combining them with an explicit `--profile NAME` is
+  an error; with a profile selected via `GOOGLE_WORKSPACE_CLI_PROFILE`, gws
+  prints a warning and the env credentials win.
+
 ### Precedence
 
-| Priority | Source                 | Set via                                 |
-| -------- | ---------------------- | --------------------------------------- |
-| 1        | Access token           | `GOOGLE_WORKSPACE_CLI_TOKEN`            |
-| 2        | Credentials file       | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` |
-| 3        | Encrypted credentials  | `gws auth login`                        |
-| 4        | Plaintext credentials  | `~/.config/gws/credentials.json`        |
+| Priority | Source                 | Set via                                                      |
+| -------- | ---------------------- | ------------------------------------------------------------ |
+| 1        | Access token           | `GOOGLE_WORKSPACE_CLI_TOKEN`                                 |
+| 2        | Credentials file       | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`                      |
+| 3        | Encrypted credentials  | `gws [--profile NAME] auth login` (stored in the profile dir) |
+| 4        | Plaintext credentials  | `credentials.json` in the profile dir (`~/.config/gws` for `default`) |
+| 5        | ADC file               | `GOOGLE_APPLICATION_CREDENTIALS`                             |
+| 6        | gcloud ADC             | `~/.config/gcloud/application_default_credentials.json` (`default` profile only) |
 
 Environment variables can also live in a `.env` file.
 
@@ -379,6 +422,7 @@ All variables are optional. See [`.env.example`](.env.example) for a copy-paste 
 |---|---|
 | `GOOGLE_WORKSPACE_CLI_TOKEN` | Pre-obtained OAuth2 access token (highest priority) |
 | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` | Path to OAuth credentials JSON (user or service account) |
+| `GOOGLE_WORKSPACE_CLI_PROFILE` | Named auth profile to use (default: `default`; overridden by `--profile`). See [Multiple accounts](#multiple-accounts-profiles) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_ID` | OAuth client ID (alternative to `client_secret.json`) |
 | `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET` | OAuth client secret (paired with `CLIENT_ID`) |
 | `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` | Override config directory (default: `~/.config/gws`) |
