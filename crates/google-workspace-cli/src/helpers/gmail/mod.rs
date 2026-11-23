@@ -13,13 +13,16 @@
 // limitations under the License.
 
 use super::Helper;
+pub mod code;
 pub mod forward;
+pub mod html_text;
 pub mod read;
 pub mod reply;
 pub mod send;
 pub mod triage;
 pub mod watch;
 
+use code::handle_code;
 use forward::handle_forward;
 use read::handle_read;
 use reply::handle_reply;
@@ -334,7 +337,16 @@ fn parse_original_message(msg: &Value) -> Result<OriginalMessage, GwsError> {
         .map(extract_payload_contents)
         .unwrap_or_default();
 
-    let body_text = extracted_text.unwrap_or(snippet);
+    // Prefer text/plain; for HTML-only messages convert the HTML to readable
+    // text; fall back to the snippet only when neither yields anything.
+    let body_text = extracted_text
+        .or_else(|| {
+            body_html
+                .as_deref()
+                .map(html_text::html_to_text)
+                .filter(|t| !t.trim().is_empty())
+        })
+        .unwrap_or(snippet);
 
     // Parse references: split on whitespace and strip any angle brackets, producing bare IDs
     let references = parsed_headers
@@ -369,6 +381,16 @@ pub(super) async fn fetch_message_metadata(
     token: &str,
     message_id: &str,
 ) -> Result<OriginalMessage, GwsError> {
+    let msg = fetch_message_json(client, token, message_id).await?;
+    parse_original_message(&msg)
+}
+
+/// Fetch a message in `format=full` and return the raw Gmail API JSON.
+pub(super) async fn fetch_message_json(
+    client: &reqwest::Client,
+    token: &str,
+    message_id: &str,
+) -> Result<Value, GwsError> {
     let url = format!(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}",
         crate::validate::encode_path_segment(message_id)
@@ -396,12 +418,70 @@ pub(super) async fn fetch_message_metadata(
         ));
     }
 
-    let msg: Value = resp
+    resp.json()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))
+}
+
+/// Search the mailbox and return the IDs of up to `max` matching messages,
+/// newest first (the Gmail API's default ordering).
+pub(super) async fn search_message_ids(
+    client: &reqwest::Client,
+    token: &str,
+    query: &str,
+    max: u32,
+) -> Result<Vec<String>, GwsError> {
+    let url = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+    let max = max.to_string();
+    let resp = crate::client::send_with_retry(|| {
+        client
+            .get(url)
+            .bearer_auth(token)
+            .query(&[("q", query), ("maxResults", max.as_str())])
+    })
+    .await
+    .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to search messages: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "(error body unreadable)".to_string());
+        return Err(build_api_error(status, &body, "Failed to search messages"));
+    }
+
+    let body: Value = resp
         .json()
         .await
-        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse message: {e}")))?;
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("Failed to parse search response: {e}")))?;
+    Ok(parse_message_ids(&body))
+}
 
-    parse_original_message(&msg)
+/// Extract message IDs from a `users.messages.list` response.
+pub(super) fn parse_message_ids(body: &Value) -> Vec<String> {
+    body.get("messages")
+        .and_then(|m| m.as_array())
+        .map(|msgs| {
+            msgs.iter()
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                .filter(|id| !id.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Validate a Gmail search query given on the command line.
+pub(super) fn validate_search_query(query: &str) -> Result<&str, GwsError> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Err(GwsError::Validation(
+            "Search query must not be empty".to_string(),
+        ));
+    }
+    crate::validate::reject_dangerous_chars(trimmed, "query")?;
+    Ok(trimmed)
 }
 
 /// Build a `GwsError::Api` from an HTTP error response body, parsing the
@@ -1792,14 +1872,33 @@ Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
 
         cmd = cmd.subcommand(
             Command::new("+read")
-                .about("[Helper] Read a message and extract its body or headers")
+                .about("[Helper] Read messages by ID or search query as plain text")
+                .arg(
+                    Arg::new("query")
+                        .help("Gmail search query; reads the newest matching message(s)")
+                        .value_name("QUERY")
+                        .conflicts_with("id"),
+                )
                 .arg(
                     Arg::new("id")
                         .long("id")
                         .alias("message-id")
-                        .required(true)
                         .help("The Gmail message ID to read")
                         .value_name("ID"),
+                )
+                .group(
+                    clap::ArgGroup::new("target")
+                        .args(["query", "id"])
+                        .required(true),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .help("With a query: how many of the newest matches to read (1-50)")
+                        .value_name("N")
+                        .value_parser(clap::value_parser!(u32).range(1..=50))
+                        .default_value("1")
+                        .conflicts_with("id"),
                 )
                 .arg(
                     Arg::new("headers")
@@ -1829,13 +1928,65 @@ Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
                 .after_help(
                     "\
 EXAMPLES:
+  gws gmail +read 'from:hello@example.com'
+  gws gmail +read 'subject:invoice newer_than:7d' --limit 3
+  gws gmail +read 'from:alerts@example.com' --format json | jq '.[0].body_text'
   gws gmail +read --id 18f1a2b3c4d
   gws gmail +read --id 18f1a2b3c4d --headers
-  gws gmail +read --id 18f1a2b3c4d --format json | jq '.body'
+  gws gmail +read --id 18f1a2b3c4d --format json | jq '.body_text'
 
 TIPS:
-  Converts HTML-only messages to plain text automatically.
-  Handles multipart/alternative and base64 decoding.",
+  With a query, prints From, To, Date, Subject, attachments, then the body
+  for each of the newest --limit matches (newest first); JSON is an array.
+  Prefers the text/plain part; HTML-only messages are converted to text,
+  keeping link targets. Attachments are listed by name and size.
+  Read-only — never modifies your mailbox.",
+                ),
+        );
+
+        cmd = cmd.subcommand(
+            Command::new("+code")
+                .about("[Helper] Print the one-time code from the newest matching email")
+                .arg(
+                    Arg::new("query")
+                        .help("Gmail search query identifying the sender, e.g. 'from:no-reply@example.com'")
+                        .value_name("QUERY")
+                        .required(true),
+                )
+                .arg(
+                    Arg::new("within")
+                        .long("within")
+                        .help("Only consider mail received this recently (e.g. 90s, 10m, 2h, 1d)")
+                        .value_name("DURATION")
+                        .default_value("10m"),
+                )
+                .arg(
+                    Arg::new("pattern")
+                        .long("pattern")
+                        .help("Regex for the code; capture group 1 is used when present (default: 4-8 digits, optionally split by one space)")
+                        .value_name("REGEX"),
+                )
+                .arg(
+                    Arg::new("wait")
+                        .long("wait")
+                        .help("Keep polling up to this long for a code to arrive (e.g. 60s, 2m)")
+                        .value_name("DURATION")
+                        .default_value("0s"),
+                )
+                .after_help(
+                    "\
+EXAMPLES:
+  code=$(gws gmail +code 'from:hello@example.com')
+  gws gmail +code 'from:no-reply@example.com' --within 5m --wait 90s
+  gws gmail +code 'subject:\"sign in\"' --pattern '[A-Z0-9]{6}'
+
+TIPS:
+  stdout carries only the code (spaces removed, e.g. \"123 456\" -> 123456),
+  so it never lands in a log when captured with $(...).
+  The subject is checked first, then the body (HTML is converted to text).
+  Only the newest matching message inside --within is examined.
+  No code: a message on stderr, nothing on stdout, exit status 1.
+  Read-only — never modifies your mailbox.",
                 ),
         );
 
@@ -1958,6 +2109,11 @@ TIPS:
 
             if let Some(matches) = matches.subcommand_matches("+read") {
                 handle_read(doc, matches).await?;
+                return Ok(true);
+            }
+
+            if let Some(matches) = matches.subcommand_matches("+code") {
+                handle_code(matches).await?;
                 return Ok(true);
             }
 
@@ -2240,8 +2396,43 @@ mod tests {
             }
         });
         let original = parse_original_message(&msg).unwrap();
-        assert_eq!(original.body_text, "Snippet fallback text");
+        assert_eq!(original.body_text, "HTML only");
         assert_eq!(original.body_html.unwrap(), "<p>HTML only</p>");
+    }
+
+    #[test]
+    fn test_parse_original_message_snippet_fallback_when_html_is_empty() {
+        let msg = json!({
+            "snippet": "Snippet fallback text",
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    { "name": "From", "value": "alice@example.com" },
+                    { "name": "Message-ID", "value": "<msg@example.com>" }
+                ],
+                "body": { "data": URL_SAFE.encode("<style>p{}</style>") }
+            }
+        });
+        let original = parse_original_message(&msg).unwrap();
+        assert_eq!(original.body_text, "Snippet fallback text");
+    }
+
+    #[test]
+    fn test_parse_message_ids() {
+        let body = json!({"messages": [{"id": "a"}, {"id": ""}, {"threadId": "t"}, {"id": "b"}]});
+        assert_eq!(parse_message_ids(&body), vec!["a", "b"]);
+        assert!(parse_message_ids(&json!({"resultSizeEstimate": 0})).is_empty());
+    }
+
+    #[test]
+    fn test_validate_search_query() {
+        assert_eq!(
+            validate_search_query("  from:a@b.com ").unwrap(),
+            "from:a@b.com"
+        );
+        assert!(validate_search_query("   ").is_err());
+        assert!(validate_search_query("from:a\u{0007}").is_err());
+        assert!(validate_search_query("from:a\u{202e}b").is_err());
     }
 
     // --- extract_plain_text_body tests ---
@@ -2331,6 +2522,7 @@ mod tests {
         assert!(subcommands.contains(&"+reply-all"));
         assert!(subcommands.contains(&"+forward"));
         assert!(subcommands.contains(&"+read"));
+        assert!(subcommands.contains(&"+code"));
     }
 
     #[test]
@@ -2423,7 +2615,8 @@ mod tests {
             original.references,
             vec!["ref-1@example.com", "ref-2@example.com"]
         );
-        assert_eq!(original.body_text, "Snippet fallback");
+        // HTML-only messages are converted to text rather than using the snippet.
+        assert_eq!(original.body_text, "HTML only");
         assert_eq!(original.body_html.as_deref(), Some("<p>HTML only</p>"));
     }
 
