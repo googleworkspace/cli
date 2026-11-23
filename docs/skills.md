@@ -27,6 +27,8 @@ Core Google Workspace API skills.
 | [gws-modelarmor](../skills/gws-modelarmor/SKILL.md) | Google Model Armor: Filter user-generated content for safety. |
 | [gws-workflow](../skills/gws-workflow/SKILL.md) | Google Workflow: Cross-service productivity workflows. |
 | [gws-script](../skills/gws-script/SKILL.md) | Manage Google Apps Script projects. |
+| [gws-searchconsole](../skills/gws-searchconsole/SKILL.md) | Google Search Console: Search performance, sitemaps and URL inspection. |
+| [gws-analytics](../skills/gws-analytics/SKILL.md) | Google Analytics Data: Google Analytics 4 reports and audience data. |
 
 ## Helpers
 
@@ -59,6 +61,9 @@ Shortcut commands for common operations.
 | [gws-workflow-weekly-digest](../skills/gws-workflow-weekly-digest/SKILL.md) | Google Workflow: Weekly summary: this week's meetings + unread email count. |
 | [gws-workflow-file-announce](../skills/gws-workflow-file-announce/SKILL.md) | Google Workflow: Announce a Drive file in a Chat space. |
 | [gws-script-push](../skills/gws-script-push/SKILL.md) | Google Apps Script: Upload local files to an Apps Script project. |
+| [gws-searchconsole-report](../skills/gws-searchconsole-report/SKILL.md) | Google Search Console: Clicks, impressions, CTR and position for a site. |
+| [gws-analytics-report](../skills/gws-analytics-report/SKILL.md) | Google Analytics Data: GA4 audience report: users, sessions and views by a dimension. |
+| [gws-analytics-properties](../skills/gws-analytics-properties/SKILL.md) | Google Analytics Data: List the Analytics accounts and GA4 properties you can access. |
 
 ## Personas
 

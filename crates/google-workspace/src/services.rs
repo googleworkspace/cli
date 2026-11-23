@@ -136,6 +136,18 @@ pub const SERVICES: &[ServiceEntry] = &[
         version: "v1",
         description: "Manage Google Apps Script projects",
     },
+    ServiceEntry {
+        aliases: &["searchconsole"],
+        api_name: "searchconsole",
+        version: "v1",
+        description: "Search performance, sitemaps and URL inspection",
+    },
+    ServiceEntry {
+        aliases: &["analytics"],
+        api_name: "analyticsdata",
+        version: "v1beta",
+        description: "Google Analytics 4 reports and audience data",
+    },
 ];
 
 /// Resolves a service alias to (api_name, version).
@@ -173,6 +185,18 @@ mod tests {
         assert_eq!(
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_service_reporting_apis() {
+        assert_eq!(
+            resolve_service("searchconsole").unwrap(),
+            ("searchconsole".to_string(), "v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("analytics").unwrap(),
+            ("analyticsdata".to_string(), "v1beta".to_string())
         );
     }
 

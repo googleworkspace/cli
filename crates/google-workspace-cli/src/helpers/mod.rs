@@ -16,6 +16,7 @@ use crate::error::GwsError;
 use clap::{ArgMatches, Command};
 use std::future::Future;
 use std::pin::Pin;
+pub mod analytics;
 pub mod calendar;
 pub mod chat;
 pub mod docs;
@@ -24,6 +25,7 @@ pub mod events;
 pub mod gmail;
 pub mod modelarmor;
 pub mod script;
+pub mod searchconsole;
 pub mod sheets;
 pub mod workflows;
 
@@ -123,6 +125,8 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
         "modelarmor" => Some(Box::new(modelarmor::ModelArmorHelper)),
         "workflow" => Some(Box::new(workflows::WorkflowHelper)),
+        "searchconsole" => Some(Box::new(searchconsole::SearchConsoleHelper)),
+        "analyticsdata" => Some(Box::new(analytics::AnalyticsHelper)),
         _ => None,
     }
 }
