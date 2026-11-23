@@ -25,6 +25,7 @@ gws calendar <resource> <method> [flags]
 |---------|-------------|
 | [`+insert`](../gws-calendar-insert/SKILL.md) | create a new event |
 | [`+agenda`](../gws-calendar-agenda/SKILL.md) | Show upcoming events across all calendars |
+| [`+free`](../gws-calendar-free/SKILL.md) | Find free time slots across your calendars |
 
 ## API Resources
 
