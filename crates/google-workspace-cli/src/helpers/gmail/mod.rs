@@ -1909,9 +1909,10 @@ Use fragment tags (<p>, <b>, <a>, etc.) — no <html>/<body> wrapper needed.
                 .arg(
                     Arg::new("format")
                         .long("format")
-                        .help("Output format (text, json)")
-                        .value_parser(["text", "json"])
-                        .default_value("text"),
+                        .help("Output format: text (default) or json")
+                        // No default_value: a "text" default would leak into the
+                        // global --format resolution and trigger a warning.
+                        .value_parser(["text", "json"]),
                 )
                 .arg(
                     Arg::new("html")
@@ -2523,6 +2524,14 @@ mod tests {
         assert!(subcommands.contains(&"+forward"));
         assert!(subcommands.contains(&"+read"));
         assert!(subcommands.contains(&"+code"));
+
+        // +read must not inject a "text" default into the global --format.
+        let read = cmd.find_subcommand("+read").unwrap();
+        let format = read
+            .get_arguments()
+            .find(|a| a.get_id() == "format")
+            .unwrap();
+        assert!(format.get_default_values().is_empty());
     }
 
     #[test]
