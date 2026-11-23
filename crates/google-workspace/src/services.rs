@@ -138,22 +138,68 @@ pub const SERVICES: &[ServiceEntry] = &[
     },
 ];
 
-/// Resolves a service alias to (api_name, version).
-pub fn resolve_service(name: &str) -> Result<(String, String), GwsError> {
-    for entry in SERVICES {
-        if entry.aliases.contains(&name) {
-            return Ok((entry.api_name.to_string(), entry.version.to_string()));
-        }
+/// Splits a service spec of the form `<service>` or `<service>:<version>`.
+///
+/// Returns the service part and the explicit version, if one was given.
+/// Nothing is validated here; see [`resolve_service_with_version`].
+pub fn split_service_spec(spec: &str) -> (&str, Option<&str>) {
+    match spec.split_once(':') {
+        Some((service, version)) => (service, Some(version)),
+        None => (spec, None),
     }
+}
+
+/// Resolves a service name and an optional explicit version to
+/// `(api_name, version)`.
+///
+/// - A registered alias resolves to its Discovery API name. An explicit
+///   version overrides the registry's default version.
+/// - A name that is not in the registry is treated as a raw Discovery API
+///   name, but only when an explicit version is given (for example
+///   `searchconsole:v1` or `analyticsdata:v1beta`). Both parts must pass
+///   [`validate_api_identifier`](crate::validate::validate_api_identifier),
+///   since they end up in cache filenames and discovery URLs.
+/// - An unlisted name without a version is an error, so typos in a
+///   registered alias still fail fast instead of fetching a missing API.
+pub fn resolve_service_with_version(
+    name: &str,
+    explicit_version: Option<&str>,
+) -> Result<(String, String), GwsError> {
+    if let Some(entry) = SERVICES.iter().find(|e| e.aliases.contains(&name)) {
+        let version = match explicit_version {
+            Some(v) => crate::validate::validate_api_identifier(v)?,
+            None => entry.version,
+        };
+        return Ok((entry.api_name.to_string(), version.to_string()));
+    }
+
+    match explicit_version {
+        Some(version) => {
+            let api_name = crate::validate::validate_api_identifier(name)?;
+            let version = crate::validate::validate_api_identifier(version)?;
+            Ok((api_name.to_string(), version.to_string()))
+        }
+        None => Err(unknown_service_error(name)),
+    }
+}
+
+/// Resolves a service spec (`<alias>` or `<api>:<version>`) to
+/// `(api_name, version)`.
+pub fn resolve_service(spec: &str) -> Result<(String, String), GwsError> {
+    let (name, version) = split_service_spec(spec);
+    resolve_service_with_version(name, version)
+}
+
+fn unknown_service_error(name: &str) -> GwsError {
     let all_names: Vec<&str> = SERVICES
         .iter()
         .flat_map(|e| e.aliases.iter().copied())
         .collect();
-    Err(GwsError::Validation(format!(
-        "Unknown service '{}'. Known services: {}. Use '<api>:<version>' syntax for unlisted APIs.",
+    GwsError::Validation(format!(
+        "Unknown service '{}'. Known services: {}. Use '<api>:<version>' syntax for unlisted APIs (e.g. 'searchconsole:v1').",
         name,
         all_names.join(", ")
-    )))
+    ))
 }
 
 #[cfg(test)]
@@ -183,6 +229,76 @@ mod tests {
         match err.unwrap_err() {
             GwsError::Validation(msg) => assert!(msg.contains("Unknown service")),
             _ => panic!("Expected Validation error"),
+        }
+    }
+
+    #[test]
+    fn test_split_service_spec() {
+        assert_eq!(split_service_spec("drive"), ("drive", None));
+        assert_eq!(
+            split_service_spec("searchconsole:v1"),
+            ("searchconsole", Some("v1"))
+        );
+        assert_eq!(split_service_spec("drive:"), ("drive", Some("")));
+    }
+
+    #[test]
+    fn test_resolve_service_unlisted_with_version() {
+        assert_eq!(
+            resolve_service("searchconsole:v1").unwrap(),
+            ("searchconsole".to_string(), "v1".to_string())
+        );
+        assert_eq!(
+            resolve_service("analyticsdata:v1beta").unwrap(),
+            ("analyticsdata".to_string(), "v1beta".to_string())
+        );
+        assert_eq!(
+            resolve_service_with_version("searchconsole", Some("v1")).unwrap(),
+            ("searchconsole".to_string(), "v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_service_known_with_version_override() {
+        assert_eq!(
+            resolve_service("drive:v2").unwrap(),
+            ("drive".to_string(), "v2".to_string())
+        );
+        // Aliases still map to their Discovery API name.
+        assert_eq!(
+            resolve_service_with_version("reports", Some("reports_v1")).unwrap(),
+            ("admin".to_string(), "reports_v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_service_unlisted_without_version_errors() {
+        match resolve_service("searchconsole").unwrap_err() {
+            GwsError::Validation(msg) => {
+                assert!(msg.contains("Unknown service 'searchconsole'"));
+                assert!(msg.contains("<api>:<version>"));
+            }
+            _ => panic!("Expected Validation error"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_service_rejects_unsafe_identifiers() {
+        for spec in [
+            "../etc:v1",
+            "evil/api:v1",
+            "searchconsole:../v1",
+            "searchconsole:v1/../../x",
+            "searchconsole:",
+            ":v1",
+            "drive:",
+            "drive:v3?x=1",
+            "api name:v1",
+        ] {
+            assert!(
+                matches!(resolve_service(spec), Err(GwsError::Validation(_))),
+                "expected {spec:?} to be rejected"
+            );
         }
     }
 }

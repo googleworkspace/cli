@@ -340,9 +340,7 @@ pub fn parse_service_and_version(
         }
     }
 
-    let (api_name, default_version) = services::resolve_service(service_arg)?;
-    let version = version_override.unwrap_or(default_version);
-    Ok((api_name, version))
+    services::resolve_service_with_version(service_arg, version_override.as_deref())
 }
 
 pub fn filter_args_for_subcommand(args: &[String], service_name: &str) -> Vec<String> {
@@ -524,6 +522,52 @@ fn is_version_flag(arg: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unlisted_colon_syntax() {
+        let args = argv(&["gws", "searchconsole:v1", "sites", "list"]);
+        assert_eq!(
+            parse_service_and_version(&args, "searchconsole:v1").unwrap(),
+            ("searchconsole".to_string(), "v1".to_string())
+        );
+        let filtered = filter_args_for_subcommand(&args, "searchconsole:v1");
+        assert_eq!(filtered, vec!["gws", "sites", "list"]);
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unlisted_api_version_flag() {
+        let args = argv(&[
+            "gws",
+            "analyticsdata",
+            "--api-version",
+            "v1beta",
+            "properties",
+            "runReport",
+        ]);
+        assert_eq!(
+            parse_service_and_version(&args, "analyticsdata").unwrap(),
+            ("analyticsdata".to_string(), "v1beta".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_service_and_version_flag_beats_colon() {
+        let args = argv(&["gws", "drive:v2", "--api-version", "v3", "files", "list"]);
+        assert_eq!(
+            parse_service_and_version(&args, "drive:v2").unwrap(),
+            ("drive".to_string(), "v3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_service_and_version_unlisted_without_version_errors() {
+        let args = argv(&["gws", "searchconsole", "sites", "list"]);
+        assert!(parse_service_and_version(&args, "searchconsole").is_err());
+    }
 
     #[test]
     fn test_parse_pagination_config_defaults() {
