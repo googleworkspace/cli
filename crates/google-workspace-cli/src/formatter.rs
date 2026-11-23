@@ -432,6 +432,155 @@ fn value_to_cell(value: &Value) -> String {
     }
 }
 
+/// A rendered report: what goes to stdout, plus an optional notice for stderr.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedReport {
+    /// Text for stdout.
+    pub stdout: String,
+    /// A human-facing notice (e.g. "no data in range") for stderr, used when
+    /// printing it on stdout would corrupt machine-readable output.
+    pub notice: Option<String>,
+}
+
+/// Render a report whose columns have a fixed, meaningful order.
+///
+/// `serde_json` objects sort their keys, so the generic [`format_value`]
+/// cannot keep column order (a report's first column is its dimension, and a
+/// form's columns follow its questions). This keeps it:
+///
+/// - `table`: an optional title line, then an aligned table in column order.
+///   With no rows it prints `empty_note` instead of an empty table.
+/// - `csv`: a header in column order, then one line per row. With no rows the
+///   header is still printed (so the output stays valid CSV) and `empty_note`
+///   is returned as a stderr notice.
+/// - `json` / `yaml`: `meta` plus `columns`, `rows` (one object per row) and
+///   `count`. With no rows a `note` field carries `empty_note`.
+pub fn render_report(
+    columns: &[String],
+    rows: &[Vec<Value>],
+    meta: &Value,
+    title: Option<&str>,
+    empty_note: &str,
+    format: &OutputFormat,
+) -> RenderedReport {
+    match format {
+        OutputFormat::Table => {
+            let mut out = String::new();
+            if let Some(t) = title {
+                let _ = writeln!(out, "{t}");
+            }
+            if rows.is_empty() {
+                let _ = writeln!(out, "{empty_note}");
+            } else {
+                if title.is_some() {
+                    out.push('\n');
+                }
+                let cells: Vec<Vec<String>> = rows
+                    .iter()
+                    .map(|r| r.iter().map(value_to_cell).collect())
+                    .collect();
+                out.push_str(&ordered_table(columns, &cells));
+            }
+            RenderedReport {
+                stdout: out,
+                notice: None,
+            }
+        }
+        OutputFormat::Csv => {
+            let mut out = String::new();
+            let header: Vec<String> = columns.iter().map(|c| csv_escape(c)).collect();
+            let _ = writeln!(out, "{}", header.join(","));
+            for row in rows {
+                let cells: Vec<String> = (0..columns.len())
+                    .map(|i| csv_escape(&value_to_cell(row.get(i).unwrap_or(&Value::Null))))
+                    .collect();
+                let _ = writeln!(out, "{}", cells.join(","));
+            }
+            RenderedReport {
+                stdout: out,
+                notice: rows.is_empty().then(|| empty_note.to_string()),
+            }
+        }
+        OutputFormat::Json | OutputFormat::Yaml => {
+            let objects: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    let mut obj = serde_json::Map::new();
+                    for (i, col) in columns.iter().enumerate() {
+                        obj.insert(col.clone(), row.get(i).cloned().unwrap_or(Value::Null));
+                    }
+                    Value::Object(obj)
+                })
+                .collect();
+            let mut envelope = match meta {
+                Value::Object(m) => m.clone(),
+                _ => serde_json::Map::new(),
+            };
+            envelope.insert(
+                "columns".to_string(),
+                Value::Array(columns.iter().cloned().map(Value::String).collect()),
+            );
+            envelope.insert("count".to_string(), Value::from(objects.len()));
+            envelope.insert("rows".to_string(), Value::Array(objects));
+            if rows.is_empty() {
+                envelope.insert("note".to_string(), Value::String(empty_note.to_string()));
+            }
+            let value = Value::Object(envelope);
+            let mut text = if *format == OutputFormat::Json {
+                serde_json::to_string_pretty(&value).unwrap_or_default()
+            } else {
+                format_yaml(&value)
+            };
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            RenderedReport {
+                stdout: text,
+                notice: None,
+            }
+        }
+    }
+}
+
+/// Aligned text table in the given column order (widths capped at 60 chars).
+fn ordered_table(columns: &[String], rows: &[Vec<String>]) -> String {
+    let mut widths: Vec<usize> = columns.iter().map(|c| c.chars().count()).collect();
+    for row in rows {
+        for (i, w) in widths.iter_mut().enumerate() {
+            let len = row.get(i).map(|c| c.chars().count()).unwrap_or(0);
+            *w = (*w).max(len).min(60);
+        }
+    }
+    let fit = |cell: &str, width: usize| -> String {
+        let one_line = cell.replace(['\n', '\r'], " ");
+        let len = one_line.chars().count();
+        let shown = if len > width {
+            let head: String = one_line.chars().take(width.saturating_sub(1)).collect();
+            format!("{head}…")
+        } else {
+            one_line
+        };
+        let pad = width.saturating_sub(shown.chars().count());
+        format!("{shown}{}", " ".repeat(pad))
+    };
+    let mut out = String::new();
+    let header: Vec<String> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| fit(c, widths[i]))
+        .collect();
+    let _ = writeln!(out, "{}", header.join("  ").trim_end());
+    let sep: Vec<String> = widths.iter().map(|w| "─".repeat(*w)).collect();
+    let _ = writeln!(out, "{}", sep.join("  "));
+    for row in rows {
+        let cells: Vec<String> = (0..columns.len())
+            .map(|i| fit(row.get(i).map(String::as_str).unwrap_or(""), widths[i]))
+            .collect();
+        let _ = writeln!(out, "{}", cells.join("  ").trim_end());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,5 +925,145 @@ mod tests {
             second.starts_with("---\n"),
             "continuation YAML pages must also start with ---"
         );
+    }
+    // ── render_report ────────────────────────────────────────────────
+
+    fn report_cols() -> Vec<String> {
+        vec!["query".to_string(), "clicks".to_string(), "ctr".to_string()]
+    }
+
+    #[test]
+    fn render_report_table_keeps_column_order() {
+        let rows = vec![vec![json!("mbprep"), json!(12), json!("4.0%")]];
+        let r = render_report(
+            &report_cols(),
+            &rows,
+            &json!({}),
+            Some("title line"),
+            "no data",
+            &OutputFormat::Table,
+        );
+        let lines: Vec<&str> = r.stdout.lines().collect();
+        assert_eq!(lines[0], "title line");
+        assert!(lines[2].starts_with("query"));
+        let q = lines[2].find("query").unwrap();
+        let c = lines[2].find("clicks").unwrap();
+        let t = lines[2].find("ctr").unwrap();
+        assert!(q < c && c < t, "columns out of order: {}", lines[2]);
+        assert!(lines[4].contains("mbprep") && lines[4].contains("12"));
+        assert!(r.notice.is_none());
+    }
+
+    #[test]
+    fn render_report_table_empty_prints_note_not_table() {
+        let r = render_report(
+            &report_cols(),
+            &[],
+            &json!({}),
+            None,
+            "No data in range.",
+            &OutputFormat::Table,
+        );
+        assert_eq!(r.stdout, "No data in range.\n");
+        assert!(!r.stdout.contains('─'));
+    }
+
+    #[test]
+    fn render_report_table_truncates_and_flattens_newlines() {
+        let long = "x".repeat(80);
+        let rows = vec![vec![json!(format!("a\nb {long}")), json!(1), json!("")]];
+        let r = render_report(
+            &report_cols(),
+            &rows,
+            &json!({}),
+            None,
+            "",
+            &OutputFormat::Table,
+        );
+        let data = r.stdout.lines().nth(2).unwrap();
+        assert!(data.starts_with("a b xxx"));
+        assert!(data.contains('…'));
+    }
+
+    #[test]
+    fn render_report_csv_orders_and_escapes() {
+        let rows = vec![vec![json!("a, b"), json!(3), json!("say \"hi\"")]];
+        let r = render_report(
+            &report_cols(),
+            &rows,
+            &json!({}),
+            Some("ignored in csv"),
+            "none",
+            &OutputFormat::Csv,
+        );
+        assert_eq!(
+            r.stdout,
+            "query,clicks,ctr\n\"a, b\",3,\"say \"\"hi\"\"\"\n"
+        );
+        assert!(r.notice.is_none());
+    }
+
+    #[test]
+    fn render_report_csv_empty_keeps_header_and_returns_notice() {
+        let r = render_report(
+            &report_cols(),
+            &[],
+            &json!({}),
+            None,
+            "No data in range.",
+            &OutputFormat::Csv,
+        );
+        assert_eq!(r.stdout, "query,clicks,ctr\n");
+        assert_eq!(r.notice.as_deref(), Some("No data in range."));
+    }
+
+    #[test]
+    fn render_report_json_envelope() {
+        let rows = vec![vec![json!("mbprep"), json!(12), json!(0.04)]];
+        let r = render_report(
+            &report_cols(),
+            &rows,
+            &json!({"site": "sc-domain:example.com"}),
+            None,
+            "none",
+            &OutputFormat::Json,
+        );
+        let v: Value = serde_json::from_str(&r.stdout).unwrap();
+        assert_eq!(v["site"], "sc-domain:example.com");
+        assert_eq!(v["count"], 1);
+        assert_eq!(v["columns"], json!(["query", "clicks", "ctr"]));
+        assert_eq!(v["rows"][0]["clicks"], 12);
+        assert!(v.get("note").is_none());
+    }
+
+    #[test]
+    fn render_report_json_empty_has_note() {
+        let r = render_report(
+            &report_cols(),
+            &[],
+            &json!({}),
+            None,
+            "No data in range.",
+            &OutputFormat::Json,
+        );
+        let v: Value = serde_json::from_str(&r.stdout).unwrap();
+        assert_eq!(v["count"], 0);
+        assert_eq!(v["rows"], json!([]));
+        assert_eq!(v["note"], "No data in range.");
+    }
+
+    #[test]
+    fn render_report_yaml_has_rows() {
+        let rows = vec![vec![json!("q"), json!(1), json!("x")]];
+        let r = render_report(
+            &report_cols(),
+            &rows,
+            &json!({}),
+            None,
+            "",
+            &OutputFormat::Yaml,
+        );
+        assert!(r.stdout.contains("count: 1"));
+        assert!(r.stdout.contains("query: \"q\""));
     }
 }

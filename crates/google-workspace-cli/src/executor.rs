@@ -812,6 +812,49 @@ fn handle_error_response<T>(
     })
 }
 
+/// Converts a non-success API response into a [`GwsError`], parsing Google's
+/// error envelope (code, message, reason, enable URL) when present.
+///
+/// For helpers that call an API directly rather than through
+/// [`execute_method`].
+pub(crate) fn api_error(status: reqwest::StatusCode, body: &str) -> GwsError {
+    match handle_error_response::<()>(status, body, &AuthMethod::OAuth) {
+        Err(e) => e,
+        Ok(()) => GwsError::Api {
+            code: status.as_u16(),
+            message: body.to_string(),
+            reason: "httpError".to_string(),
+            enable_url: None,
+        },
+    }
+}
+
+/// Sends a request (retrying 429s and transient network errors) and parses a
+/// JSON success body. A non-success status becomes a [`GwsError::Api`].
+///
+/// `what` names the call in transport errors, e.g. "Search Console query".
+pub(crate) async fn fetch_json(
+    build_request: impl Fn() -> reqwest::RequestBuilder,
+    what: &str,
+) -> Result<Value, GwsError> {
+    let resp = crate::client::send_with_retry(build_request)
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("{what} failed: {e}")))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("{what}: failed to read response: {e}")))?;
+    if !status.is_success() {
+        return Err(api_error(status, &body));
+    }
+    if body.trim().is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    serde_json::from_str(&body)
+        .map_err(|e| GwsError::Other(anyhow::anyhow!("{what}: invalid JSON response: {e}")))
+}
+
 /// Resolves the MIME type for the uploaded media content.
 ///
 /// Priority:
@@ -1990,6 +2033,87 @@ mod tests {
                 panic!("Should NOT get generic Auth error when OAuth was used, got: {msg}");
             }
             other => panic!("Expected Api error, got: {other:?}"),
+        }
+    }
+
+    /// Serves one canned HTTP response on a local port and returns its URL.
+    async fn serve_once(status_line: &'static str, body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let resp = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn fetch_json_parses_success_body() {
+        let url = serve_once("200 OK", r#"{"rows":[1]}"#).await;
+        let client = reqwest::Client::new();
+        let v = fetch_json(|| client.get(&url), "test call").await.unwrap();
+        assert_eq!(v["rows"][0], 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_json_empty_body_is_empty_object() {
+        let url = serve_once("200 OK", "").await;
+        let client = reqwest::Client::new();
+        let v = fetch_json(|| client.get(&url), "test call").await.unwrap();
+        assert_eq!(v, json!({}));
+    }
+
+    #[tokio::test]
+    async fn fetch_json_maps_error_status() {
+        let url = serve_once(
+            "404 Not Found",
+            r#"{"error":{"code":404,"message":"no such site","errors":[{"reason":"notFound"}]}}"#,
+        )
+        .await;
+        let client = reqwest::Client::new();
+        match fetch_json(|| client.get(&url), "test call").await {
+            Err(GwsError::Api { code, reason, .. }) => {
+                assert_eq!(code, 404);
+                assert_eq!(reason, "notFound");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn api_error_parses_google_envelope() {
+        let body =
+            r#"{"error":{"code":403,"message":"Forbidden","errors":[{"reason":"forbidden"}]}}"#;
+        match api_error(reqwest::StatusCode::FORBIDDEN, body) {
+            GwsError::Api {
+                code,
+                message,
+                reason,
+                ..
+            } => {
+                assert_eq!(code, 403);
+                assert_eq!(message, "Forbidden");
+                assert_eq!(reason, "forbidden");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn api_error_keeps_raw_body_when_not_json() {
+        match api_error(reqwest::StatusCode::BAD_GATEWAY, "upstream down") {
+            GwsError::Api { code, message, .. } => {
+                assert_eq!(code, 502);
+                assert_eq!(message, "upstream down");
+            }
+            other => panic!("unexpected: {other:?}"),
         }
     }
 
