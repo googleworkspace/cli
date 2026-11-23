@@ -26,6 +26,7 @@ pub mod modelarmor;
 pub mod script;
 pub mod sheets;
 pub mod workflows;
+pub mod youtube;
 
 /// Base URL for the Google Cloud Pub/Sub v1 API.
 ///
@@ -123,6 +124,7 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
         "modelarmor" => Some(Box::new(modelarmor::ModelArmorHelper)),
         "workflow" => Some(Box::new(workflows::WorkflowHelper)),
+        "youtube" => Some(Box::new(youtube::YouTubeHelper)),
         _ => None,
     }
 }

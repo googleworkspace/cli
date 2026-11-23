@@ -136,6 +136,12 @@ pub const SERVICES: &[ServiceEntry] = &[
         version: "v1",
         description: "Manage Google Apps Script projects",
     },
+    ServiceEntry {
+        aliases: &["youtube"],
+        api_name: "youtube",
+        version: "v3",
+        description: "Upload and manage YouTube videos, playlists and channels",
+    },
 ];
 
 /// Resolves a service alias to (api_name, version).
@@ -173,6 +179,14 @@ mod tests {
         assert_eq!(
             resolve_service("reports").unwrap(),
             ("admin".to_string(), "reports_v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_service_youtube() {
+        assert_eq!(
+            resolve_service("youtube").unwrap(),
+            ("youtube".to_string(), "v3".to_string())
         );
     }
 
