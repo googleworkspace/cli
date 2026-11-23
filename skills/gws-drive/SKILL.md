@@ -24,6 +24,8 @@ gws drive <resource> <method> [flags]
 | Command | Description |
 |---------|-------------|
 | [`+upload`](../gws-drive-upload/SKILL.md) | Upload a file with automatic metadata |
+| [`+path`](../gws-drive-path/SKILL.md) | Resolve a My Drive or shared-drive path to a file id |
+| [`+sync`](../gws-drive-sync/SKILL.md) | Make a Drive folder match a local directory |
 
 ## API Resources
 

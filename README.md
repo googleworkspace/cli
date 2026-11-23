@@ -300,7 +300,7 @@ Run `gws <service> --help` to see both Discovery methods and helper commands tog
 ```bash
 gws gmail --help      # shows +send, +reply, +reply-all, +forward, +triage, +watch …
 gws calendar --help   # shows +insert, +agenda …
-gws drive --help      # shows +upload …
+gws drive --help      # shows +upload, +path, +sync …
 ```
 
 **Full helper reference:**
@@ -315,9 +315,12 @@ gws drive --help      # shows +upload …
 | `gmail` | `+watch` | Watch for new emails and stream them as NDJSON |
 | `sheets` | `+append` | Append a row to a spreadsheet |
 | `sheets` | `+read` | Read values from a spreadsheet |
-| `docs` | `+write` | Append text to a document |
+| `docs` | `+write` | Write Markdown into a new or existing Doc as real formatting (or append plain text) |
+| `docs` | `+export` | Export a Doc as Markdown, plain text or HTML (images as links) |
 | `chat` | `+send` | Send a message to a space |
 | `drive` | `+upload` | Upload a file with automatic metadata |
+| `drive` | `+path` | Resolve a My Drive or shared-drive path to an id (`--create` makes missing folders) |
+| `drive` | `+sync` | Make a Drive folder match a local directory (updates in place, `--delete` trashes extras) |
 | `calendar` | `+insert` | Create a new event |
 | `calendar` | `+agenda` | Show upcoming events (uses Google account timezone; override with `--timezone`) |
 | `script` | `+push` | Replace all files in an Apps Script project with local files |
@@ -349,6 +352,13 @@ gws calendar +agenda
 
 # Upload a file to Drive
 gws drive +upload ./report.pdf --name "Q1 Report"
+
+# Mirror a local folder to Drive, keeping ids stable, and record the ids
+gws drive +sync ./out "Company/design/posters" --ids drive.json
+
+# Markdown to a Google Doc and back
+gws docs +write plan.md --new "Q1 plan" --folder "Company/strategy"
+gws docs +export "Company/strategy/Q1 plan" --output plan.md
 
 # Morning standup summary
 gws workflow +standup-report

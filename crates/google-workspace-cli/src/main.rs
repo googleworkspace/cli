@@ -174,20 +174,6 @@ async fn run() -> Result<(), GwsError> {
         GwsError::Validation(e.to_string())
     })?;
 
-    // Resolve --format flag
-    let output_format = match matches.get_one::<String>("format") {
-        Some(s) => match formatter::OutputFormat::parse(s) {
-            Ok(fmt) => fmt,
-            Err(unknown) => {
-                eprintln!(
-                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
-                );
-                formatter::OutputFormat::Json
-            }
-        },
-        None => formatter::OutputFormat::default(),
-    };
-
     // Resolve --sanitize template (flag or env var)
     let sanitize_template = matches
         .get_one::<String>("sanitize")
@@ -206,6 +192,21 @@ async fn run() -> Result<(), GwsError> {
             return Ok(());
         }
     }
+
+    // Resolve --format flag (after helper dispatch: some helpers, like
+    // `docs +export --format md`, give it their own meaning)
+    let output_format = match matches.get_one::<String>("format") {
+        Some(s) => match formatter::OutputFormat::parse(s) {
+            Ok(fmt) => fmt,
+            Err(unknown) => {
+                eprintln!(
+                    "warning: unknown output format '{unknown}'; falling back to json (valid options: json, table, yaml, csv)"
+                );
+                formatter::OutputFormat::Json
+            }
+        },
+        None => formatter::OutputFormat::default(),
+    };
 
     // Walk the subcommand tree to find the target method
     let (method, matched_args) = resolve_method_from_matches(&doc, &matches)?;

@@ -864,7 +864,7 @@ fn resolve_upload_mime(
 /// APIs still receive the correct header without buffering.
 ///
 /// Returns `(body, content_type, content_length)`.
-fn build_multipart_stream(
+pub(crate) fn build_multipart_stream(
     metadata: &Option<Value>,
     file_path: &str,
     file_size: u64,

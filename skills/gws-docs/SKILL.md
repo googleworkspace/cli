@@ -23,7 +23,8 @@ gws docs <resource> <method> [flags]
 
 | Command | Description |
 |---------|-------------|
-| [`+write`](../gws-docs-write/SKILL.md) | Append text to a document |
+| [`+write`](../gws-docs-write/SKILL.md) | Write Markdown into a Doc as real formatting (or append plain text) |
+| [`+export`](../gws-docs-export/SKILL.md) | Export a Doc as Markdown, plain text or HTML |
 
 ## API Resources
 
