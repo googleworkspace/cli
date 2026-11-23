@@ -48,6 +48,12 @@ Shortcut commands for common operations.
 | [gws-calendar-agenda](../skills/gws-calendar-agenda/SKILL.md) | Google Calendar: Show upcoming events across all calendars. |
 | [gws-docs-write](../skills/gws-docs-write/SKILL.md) | Google Docs: Append text to a document. |
 | [gws-chat-send](../skills/gws-chat-send/SKILL.md) | Google Chat: Send a message to a space. |
+| [gws-meet-recent](../skills/gws-meet-recent/SKILL.md) | Google Meet: List recent meetings with title, code, duration and head count. |
+| [gws-meet-attendees](../skills/gws-meet-attendees/SKILL.md) | Google Meet: List who joined a meeting, when, and for how long. |
+| [gws-meet-transcript](../skills/gws-meet-transcript/SKILL.md) | Google Meet: Print a meeting transcript as speaker-labelled text. |
+| [gws-meet-notes](../skills/gws-meet-notes/SKILL.md) | Google Meet: Print Gemini 'Take notes for me' notes for a meeting. |
+| [gws-meet-recording](../skills/gws-meet-recording/SKILL.md) | Google Meet: List a meeting's recordings and optionally download them. |
+| [gws-meet-new](../skills/gws-meet-new/SKILL.md) | Google Meet: Create a meeting link, optionally with a Calendar event. |
 | [gws-events-subscribe](../skills/gws-events-subscribe/SKILL.md) | Google Workspace Events: Subscribe to Workspace events and stream them as NDJSON. |
 | [gws-events-renew](../skills/gws-events-renew/SKILL.md) | Google Workspace Events: Renew/reactivate Workspace Events subscriptions. |
 | [gws-modelarmor-sanitize-prompt](../skills/gws-modelarmor-sanitize-prompt/SKILL.md) | Google Model Armor: Sanitize a user prompt through a Model Armor template. |

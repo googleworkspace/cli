@@ -320,6 +320,12 @@ gws drive --help      # shows +upload …
 | `drive` | `+upload` | Upload a file with automatic metadata |
 | `calendar` | `+insert` | Create a new event |
 | `calendar` | `+agenda` | Show upcoming events (uses Google account timezone; override with `--timezone`) |
+| `meet` | `+recent` | Recent meetings with Calendar title, meeting code, duration and head count |
+| `meet` | `+attendees` | Who joined a meeting, first join, last leave and total time |
+| `meet` | `+transcript` | Speaker-labelled transcript text (falls back to the transcript Doc) |
+| `meet` | `+notes` | Gemini "Take notes for me" notes (smart notes, else the Calendar notes Doc) |
+| `meet` | `+recording` | List a meeting's recordings and download them with `--download` |
+| `meet` | `+new` | Create a meeting link, optionally with a Calendar event (`--title`) |
 | `script` | `+push` | Replace all files in an Apps Script project with local files |
 | `workflow` | `+standup-report` | Today's meetings + open tasks as a standup summary |
 | `workflow` | `+meeting-prep` | Prepare for your next meeting: agenda, attendees, and linked docs |

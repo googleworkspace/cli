@@ -750,7 +750,7 @@ pub fn extract_enable_url(message: &str) -> Option<String> {
     Some(url.to_string())
 }
 
-fn handle_error_response<T>(
+pub(crate) fn handle_error_response<T>(
     status: reqwest::StatusCode,
     error_body: &str,
     auth_method: &AuthMethod,

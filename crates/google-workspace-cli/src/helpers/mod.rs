@@ -22,6 +22,7 @@ pub mod docs;
 pub mod drive;
 pub mod events;
 pub mod gmail;
+pub mod meet;
 pub mod modelarmor;
 pub mod script;
 pub mod sheets;
@@ -109,6 +110,13 @@ pub trait Helper: Send + Sync {
     fn helper_only(&self) -> bool {
         false
     }
+
+    /// Extra `--format` values this service's helpers understand beyond the
+    /// shared json/table/yaml/csv (e.g. `text` for `meet +transcript`), so the
+    /// global parser does not warn about them.
+    fn extra_formats(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
@@ -118,6 +126,7 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "docs" => Some(Box::new(docs::DocsHelper)),
         "chat" => Some(Box::new(chat::ChatHelper)),
         "drive" => Some(Box::new(drive::DriveHelper)),
+        "meet" => Some(Box::new(meet::MeetHelper)),
         "calendar" => Some(Box::new(calendar::CalendarHelper)),
         "script" | "apps-script" => Some(Box::new(script::ScriptHelper)),
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
