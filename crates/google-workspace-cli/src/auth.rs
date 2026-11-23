@@ -133,6 +133,42 @@ enum Credential {
     ServiceAccount(yup_oauth2::ServiceAccountKey),
 }
 
+/// Returns a stable, non-secret digest identifying a credential, used to bind
+/// cached access tokens to the credential that minted them.
+///
+/// For a user credential the refresh token identifies the grant, so a new
+/// `gws auth login` (another account, or the same account with other scopes)
+/// yields a new fingerprint. For a service account the key ID identifies the
+/// key. The digest is a truncated SHA-256, so it reveals nothing about the
+/// secrets it is derived from.
+fn credential_fingerprint(creds: &Credential) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    let mut field = |value: &str| {
+        // Length-prefix each field so different splits can never collide.
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    };
+    match creds {
+        Credential::AuthorizedUser(secret) => {
+            field("authorized_user");
+            field(&secret.client_id);
+            field(&secret.refresh_token);
+        }
+        Credential::ServiceAccount(key) => {
+            field("service_account");
+            field(&key.client_email);
+            field(key.private_key_id.as_deref().unwrap_or(""));
+            field(&key.private_key);
+        }
+    }
+    hasher.finalize()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Fetches access tokens for a fixed set of scopes.
 ///
 /// Long-running helpers use this trait so they can request a fresh token before
@@ -245,6 +281,7 @@ async fn get_token_inner(
     creds: Credential,
     token_cache_path: &std::path::Path,
 ) -> anyhow::Result<String> {
+    let fingerprint = credential_fingerprint(&creds);
     match creds {
         Credential::AuthorizedUser(ref secret) => {
             // If proxy env vars are set, use reqwest directly (it supports proxy)
@@ -260,9 +297,12 @@ async fn get_token_inner(
 
             // No proxy - use yup-oauth2 (faster, has token caching)
             let auth = yup_oauth2::AuthorizedUserAuthenticator::builder(secret.clone())
-                .with_storage(Box::new(crate::token_storage::EncryptedTokenStorage::new(
-                    token_cache_path.to_path_buf(),
-                )))
+                .with_storage(Box::new(
+                    crate::token_storage::EncryptedTokenStorage::new(
+                        token_cache_path.to_path_buf(),
+                    )
+                    .with_credential_fingerprint(fingerprint),
+                ))
                 .build()
                 .await
                 .context("Failed to build authorized user authenticator")?;
@@ -279,9 +319,11 @@ async fn get_token_inner(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| "token_cache.json".to_string());
             let sa_cache = token_cache_path.with_file_name(format!("sa_{tc_filename}"));
-            let builder = yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(
-                Box::new(crate::token_storage::EncryptedTokenStorage::new(sa_cache)),
-            );
+            let builder =
+                yup_oauth2::ServiceAccountAuthenticator::builder(key).with_storage(Box::new(
+                    crate::token_storage::EncryptedTokenStorage::new(sa_cache)
+                        .with_credential_fingerprint(fingerprint),
+                ));
 
             let auth = builder
                 .build()
@@ -438,6 +480,43 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    fn user_credential(client_id: &str, refresh_token: &str) -> Credential {
+        Credential::AuthorizedUser(yup_oauth2::authorized_user::AuthorizedUserSecret {
+            client_id: client_id.to_string(),
+            client_secret: "secret".to_string(),
+            refresh_token: refresh_token.to_string(),
+            key_type: "authorized_user".to_string(),
+        })
+    }
+
+    #[test]
+    fn test_credential_fingerprint_tracks_the_grant() {
+        let a = credential_fingerprint(&user_credential("client", "refresh-a"));
+        // Stable for the same credential.
+        assert_eq!(
+            a,
+            credential_fingerprint(&user_credential("client", "refresh-a"))
+        );
+        // A re-login (new refresh token) or another client changes it.
+        assert_ne!(
+            a,
+            credential_fingerprint(&user_credential("client", "refresh-b"))
+        );
+        assert_ne!(
+            a,
+            credential_fingerprint(&user_credential("other", "refresh-a"))
+        );
+        // Field boundaries are unambiguous.
+        assert_ne!(
+            credential_fingerprint(&user_credential("ab", "c")),
+            credential_fingerprint(&user_credential("a", "bc"))
+        );
+        // Short hex digest that never embeds the secret.
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(!a.contains("refresh"));
+    }
 
     /// RAII guard that saves the current value of an environment variable and
     /// restores it when dropped. This ensures cleanup even if a test panics.
