@@ -19,6 +19,12 @@ metadata:
 gws forms <resource> <method> [flags]
 ```
 
+## Helper Commands
+
+| Command | Description |
+|---------|-------------|
+| [`+responses`](../gws-forms-responses/SKILL.md) | A form's responses: one row each, question titles as columns |
+
 ## API Resources
 
 ### forms

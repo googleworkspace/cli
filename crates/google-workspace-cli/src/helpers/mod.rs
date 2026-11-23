@@ -21,6 +21,7 @@ pub mod chat;
 pub mod docs;
 pub mod drive;
 pub mod events;
+pub mod forms;
 pub mod gmail;
 pub mod modelarmor;
 pub mod script;
@@ -123,6 +124,7 @@ pub fn get_helper(service: &str) -> Option<Box<dyn Helper>> {
         "workspaceevents" => Some(Box::new(events::EventsHelper)),
         "modelarmor" => Some(Box::new(modelarmor::ModelArmorHelper)),
         "workflow" => Some(Box::new(workflows::WorkflowHelper)),
+        "forms" => Some(Box::new(forms::FormsHelper)),
         _ => None,
     }
 }
