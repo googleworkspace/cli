@@ -16,7 +16,7 @@
 
 use super::api::{list_all, meet_url, MeetApi};
 use super::records::{
-    format_duration, list_participants, not_found, participant_kind, participant_name,
+    format_duration, list_participants, not_found, parse_time, participant_kind, participant_name,
     resolve_record, space_info, span_seconds, str_field, RecordRef,
 };
 use crate::error::GwsError;
@@ -24,12 +24,35 @@ use chrono::{DateTime, Utc};
 use futures_util::stream::{self, StreamExt};
 use serde_json::{json, Value};
 
-/// Total seconds across a participant's sessions (open sessions run to `now`).
+/// Time a participant was in the call: the union of their sessions, so
+/// joining from two devices at once is not counted twice. Open sessions run
+/// to `now`.
 pub(super) fn total_session_seconds(sessions: &[Value], now: DateTime<Utc>) -> i64 {
-    sessions
+    let mut spans: Vec<(DateTime<Utc>, DateTime<Utc>)> = sessions
         .iter()
-        .map(|s| span_seconds(str_field(s, "startTime"), str_field(s, "endTime"), now))
-        .sum()
+        .filter_map(|s| {
+            let start = str_field(s, "startTime").and_then(parse_time)?;
+            let end = str_field(s, "endTime").and_then(parse_time).unwrap_or(now);
+            (end > start).then_some((start, end))
+        })
+        .collect();
+    spans.sort();
+    let mut total = 0;
+    let mut current: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+    for (start, end) in spans {
+        current = match current {
+            Some((cs, ce)) if start <= ce => Some((cs, ce.max(end))),
+            Some((cs, ce)) => {
+                total += (ce - cs).num_seconds();
+                Some((start, end))
+            }
+            None => Some((start, end)),
+        };
+    }
+    if let Some((cs, ce)) = current {
+        total += (ce - cs).num_seconds();
+    }
+    total
 }
 
 pub(super) async fn attendees(
@@ -107,7 +130,6 @@ pub(super) async fn attendees(
 mod tests {
     use super::super::api::fake::FakeApi;
     use super::super::api::MEET_BASE;
-    use super::super::records::parse_time;
     use super::*;
 
     fn now() -> DateTime<Utc> {
@@ -135,6 +157,19 @@ mod tests {
         ];
         assert_eq!(total_session_seconds(&s, now()), 1200);
         assert_eq!(total_session_seconds(&[], now()), 0);
+    }
+
+    #[test]
+    fn overlapping_sessions_count_once() {
+        // Two devices at once (10:00-10:30 and 10:10-10:20), then a rejoin.
+        let s = vec![
+            json!({"startTime": "2026-01-01T10:10:00Z", "endTime": "2026-01-01T10:20:00Z"}),
+            json!({"startTime": "2026-01-01T10:00:00Z", "endTime": "2026-01-01T10:30:00Z"}),
+            json!({"startTime": "2026-01-01T10:30:00Z", "endTime": "2026-01-01T10:40:00Z"}),
+            json!({"startTime": "2026-01-01T11:00:00Z", "endTime": "2026-01-01T11:05:00Z"}),
+            json!({"endTime": "2026-01-01T11:05:00Z"}),
+        ];
+        assert_eq!(total_session_seconds(&s, now()), 2400 + 300);
     }
 
     #[tokio::test]
