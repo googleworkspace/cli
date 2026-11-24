@@ -1,5 +1,11 @@
 # @googleworkspace/cli
 
+## 0.23.0
+
+### Minor Changes
+
+- a3768d0: Add `--range` flag to `sheets +append` for targeting specific sheet tabs
+
 ## 0.22.5
 
 ### Patch Changes

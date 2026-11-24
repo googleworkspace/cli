@@ -2,7 +2,7 @@
 name: persona-customer-support
 description: "Manage customer support — track tickets, respond, escalate issues."
 metadata:
-  version: 0.22.5
+  version: 0.23.0
   openclaw:
     category: "persona"
     requires:

@@ -2,7 +2,7 @@
 name: gws-gmail
 description: "Gmail: Send, read, and manage email."
 metadata:
-  version: 0.22.5
+  version: 0.23.0
   openclaw:
     category: "productivity"
     requires:
@@ -36,8 +36,8 @@ gws gmail <resource> <method> [flags]
 ### users
 
   - `getProfile` — Gets the current user's Gmail profile.
-  - `stop` — Stop receiving push notifications for the given user mailbox.
-  - `watch` — Set up or update a push notification watch on the given user mailbox.
+  - `stop` — Turn off push notification delivery for the given user mailbox. For more information, see [Configure push notifications in Gmail API](https://developers.google.com/workspace/gmail/api/guides/push).
+  - `watch` — Set up or update a push notification watch on the given user mailbox. For more information, see [Configure push notifications in Gmail API](https://developers.google.com/workspace/gmail/api/guides/push).
   - `drafts` — Operations on the 'drafts' resource
   - `history` — Operations on the 'history' resource
   - `labels` — Operations on the 'labels' resource

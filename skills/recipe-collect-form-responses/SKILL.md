@@ -2,7 +2,7 @@
 name: recipe-collect-form-responses
 description: "Retrieve and review responses from a Google Form."
 metadata:
-  version: 0.22.5
+  version: 0.23.0
   openclaw:
     category: "recipe"
     domain: "productivity"
