@@ -501,6 +501,60 @@ If a required Google API is not enabled for your GCP project, you will see a
 > You can also run `gws auth setup` which walks you through enabling all required
 > APIs for your project automatically.
 
+## Moving to the official Google Workspace CLI
+
+### Which should I use?
+
+| If you need… | Use |
+| --- | --- |
+| An AI agent working in Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, or Contacts | `gwscli` |
+| Google Workspace AI Controls and approvals applied to agent actions | `gwscli` |
+| Support from Google | `gwscli` |
+| An API or method `gwscli` doesn't cover, or direct service-account key files | `gws` (or mint a domain-wide delegation token for `--oauth_token`). [Tell us](https://forms.gle/4rSpc9941Cecg1BUA) what you need. |
+
+
+### Let your agent help you switch
+
+Paste this into your agent. You'll still run the sign-in and setup steps yourself.
+
+```
+Help me move from the gws CLI to the official Google Workspace CLI (gwscli).
+1. Install gwscli by following https://developers.google.com/workspace/guides/workspace-cli.
+2. Remove the skills installed from googleworkspace/cli (gws-*, persona-* and recipe-* folders)
+   and install the gwscli skills.
+3. Find scripts in this project that call gws. For each one, show me the gwscli version and wait
+   for my OK before changing the file. If gwscli has no equivalent, tell me instead of guessing.
+Stop and ask me to run any sign-in or setup command myself.
+```
+
+### Command equivalents
+
+| Task | gws | gwscli |
+| --- | --- | --- |
+| Set up | `gws auth setup` | Enable the Google Workspace services listed on the setup page, and mark your OAuth client as agentic. Full steps: [Set up authentication](https://developers.google.com/workspace/guides/workspace-cli#authentication) |
+| Sign in | `gws auth login -s drive,gmail` | `gwscli auth login drive gmail` (add `--bundle=readonly` for read-only) |
+| Use an existing token | `GOOGLE_WORKSPACE_CLI_TOKEN` | `--oauth_token` |
+| Recent files | `gws drive files list --params '{"pageSize": 10}'` | `gwscli drive list_recent_files --pageSize 10` |
+| Search email | `gws gmail users threads list --params '{"userId": "me", "q": "is:unread"}'` | `gwscli gmail search_threads --query "is:unread"` |
+| Send a Chat message | `gws chat spaces messages create --params '{"parent": "spaces/xyz"}' --json '{"text": "Hi"}'` | `gwscli chat send_message --conversationId spaces/xyz --messageText "Hi"` |
+| Inspect a command | `gws schema drive.files.list` | `gwscli drive search_files --help` (or `--schema`) |
+| Agent skills | `npx skills add https://github.com/googleworkspace/cli` | `gwscli skills install --dir <skills folder>` |
+
+Full setup guide: [Get started with the Google Workspace CLI](https://developers.google.com/workspace/guides/workspace-cli)
+
+### FAQ
+
+**Will gws keep working?**
+Yes, you can continue to use `gws`. Future development will be concentrated on the official CLI, however.
+
+**Can I reuse the Google Cloud project and OAuth client I set up for gws?**
+Yes. In that project, enable the Google Workspace services listed on the [setup page](https://developers.google.com/workspace/guides/workspace-cli), and mark the OAuth client as agentic (set its is_agentic setting to true).
+
+**Does gwscli cover every Google Workspace API like gws?**
+No. `gwscli` has a curated set of commands designed for agents rather than one command per API
+method. Run `gwscli --help` to see what's available, and [tell us](https://forms.gle/4rSpc9941Cecg1BUA) what's missing.
+
+
 ## Development
 
 ```bash
