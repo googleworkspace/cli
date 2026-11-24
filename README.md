@@ -1,5 +1,10 @@
 <h1 align="center">gws</h1>
 
+
+
+**One CLI for all of Google Workspace — built for humans and AI agents.**<br>
+Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
+
 > [!NOTE]
 > The official Google Workspace CLI (`gwscli`) is now available. It's supported by Google and built for AI agents. Give it a try and [tell us](https://forms.gle/4rSpc9941Cecg1BUA) what's missing.
 >
@@ -9,12 +14,6 @@
 >
 > `gws` is a community project and is not an officially supported Google product. It keeps working, and you can move when you're ready.
 
-
-**One CLI for all of Google Workspace — built for humans and AI agents.**<br>
-Drive, Gmail, Calendar, and every Workspace API. Zero boilerplate. Structured JSON output. 40+ agent skills included.
-
-> [!NOTE]
-> This is **not** an officially supported Google product.
 
 <p>
   <a href="https://www.npmjs.com/package/@googleworkspace/cli"><img src="https://img.shields.io/npm/v/@googleworkspace/cli" alt="npm version"></a>
