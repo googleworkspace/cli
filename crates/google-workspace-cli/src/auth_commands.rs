@@ -690,28 +690,40 @@ async fn handle_export(unmasked: bool) -> Result<(), GwsError> {
 
     match credential_store::load_encrypted() {
         Ok(contents) => {
-            if unmasked {
-                println!("{contents}");
-            } else if let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if let Some(obj) = creds.as_object_mut() {
-                    for key in ["client_secret", "refresh_token"] {
-                        if let Some(val) = obj.get_mut(key) {
-                            if let Some(s) = val.as_str() {
-                                *val = json!(mask_secret(s));
-                            }
-                        }
-                    }
-                }
-                println!("{}", serde_json::to_string_pretty(&creds).unwrap());
-            } else {
-                println!("{contents}");
+            let (export, masked) = format_auth_export(contents, unmasked);
+            if masked {
+                eprintln!(
+                    "Warning: the JSON export contains masked credentials and cannot authenticate."
+                );
             }
+            println!("{export}");
             Ok(())
         }
         Err(e) => Err(GwsError::Auth(format!(
             "Failed to decrypt credentials: {e}. May have been created on a different machine.",
         ))),
     }
+}
+
+fn format_auth_export(contents: String, unmasked: bool) -> (String, bool) {
+    if unmasked {
+        return (contents, false);
+    }
+    let Ok(mut creds) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return (contents, false);
+    };
+    let mut masked = false;
+    if let Some(obj) = creds.as_object_mut() {
+        for key in ["client_secret", "refresh_token"] {
+            if let Some(val) = obj.get_mut(key) {
+                if let Some(s) = val.as_str() {
+                    *val = json!(mask_secret(s));
+                    masked = true;
+                }
+            }
+        }
+    }
+    (serde_json::to_string_pretty(&creds).unwrap(), masked)
 }
 
 /// Resolve OAuth client credentials from env vars or saved config file.
@@ -2358,6 +2370,24 @@ mod tests {
         ];
         let result = filter_redundant_restrictive_scopes(scopes.clone());
         assert_eq!(result, scopes);
+    }
+
+    #[test]
+    fn auth_export_distinguishes_masked_credentials() {
+        let source = serde_json::json!({
+            "client_id": "demo-app",
+            "client_secret": "demo-client-secret",
+            "refresh_token": "demo-refresh-token"
+        })
+        .to_string();
+        let (body, masked) = format_auth_export(source.clone(), false);
+        assert!(masked);
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(json["client_id"], "demo-app");
+        assert_eq!(json["client_secret"], mask_secret("demo-client-secret"));
+        assert_eq!(json["refresh_token"], mask_secret("demo-refresh-token"));
+        assert_eq!(format_auth_export(source.clone(), true), (source, false));
+        assert!(!format_auth_export(r#"{"client_id":"demo-app"}"#.to_owned(), false).1);
     }
 
     #[test]
